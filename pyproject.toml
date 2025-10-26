@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "setuptools-scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sequince"
+description = "Modular, composable Sequential Monte Carlo framework."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Michael J. Williams" }]
+dependencies = [
+    "scipy>=1.8",
+    "numpy>=1.22",
+    "emcee>=3.1",
+]
+dynamic = [
+    "version"
+]
+
+[project.urls]
+Homepage = "https://github.com/mj-will/sequince"
+Repository = "https://github.com/mj-will/sequince"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sequince*"]
+
+[tools.setuptools_scm]
+
+[project.optional-dependencies]
+tests = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.ruff]
+line-length = 79
+indent-width = 4
+target-version = "py39"
+
+[tool.ruff.lint]
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+extend-select = ["I"]
