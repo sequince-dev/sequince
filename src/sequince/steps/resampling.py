@@ -30,7 +30,6 @@ class ResamplingStep(SMCStep):
     ) -> ParticleState:
         if not self._should_resample(state):
             return state
-        print("Resampling at step", context.t)
         weights = state.weights
         indices = self._choose_ancestors(weights, rng)
         return state.resample(indices)
