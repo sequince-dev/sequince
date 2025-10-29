@@ -11,6 +11,7 @@ license = { file = "LICENSE" }
 authors = [{ name = "Michael J. Williams" }]
 dependencies = [
     "scipy>=1.8",
+    "matplotlib>=3.5",
     "numpy>=1.22",
     "emcee>=3.1",
 ]
@@ -19,8 +20,8 @@ dynamic = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mj-will/sequince"
-Repository = "https://github.com/mj-will/sequince"
+Homepage = "https://github.com/sequince-dev/sequince"
+Repository = "https://github.com/sequince-dev/sequince"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
