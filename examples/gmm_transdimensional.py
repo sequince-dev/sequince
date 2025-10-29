@@ -144,8 +144,9 @@ def component_sampler(
     bounds: tuple[float, float] = context.static["mean_bounds"]
     data = context.static["data"]
     spread = context.static["component_std"]
+    logit_prior_scale = float(context.static["logit_prior_scale"])
 
-    new_logits = rng.normal(loc=0.0, scale=0.4, size=(n, 1))
+    new_logits = rng.normal(loc=0.0, scale=logit_prior_scale, size=(n, 1))
     anchors = rng.choice(data, size=(n, 1))
     new_means = anchors + rng.normal(scale=spread, size=(n, 1))
     new_means = np.clip(new_means, bounds[0], bounds[1])
