@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.special import gammaln, logsumexp, softmax
 
-from sequince import ParticleState, SequentialMonteCarlo
+from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     ContinueWhile,
@@ -111,26 +111,6 @@ def gmm_log_likelihood(
     )
     log_mix = logsumexp(log_weights[:, np.newaxis, :] + log_component, axis=2)
     return np.sum(log_mix, axis=1)
-
-
-def tempered_log_posterior(
-    position: np.ndarray,
-    context: StepContext,
-) -> float:
-    """Tempered log posterior for a single particle position."""
-    if position.ndim == 1:
-        position = position[np.newaxis, :]
-
-    log_prior_val = float(log_prior(position, context)[0])
-    if not np.isfinite(log_prior_val):
-        return float("-inf")
-
-    temperature = float(context.static.get("temperature", 0.0))
-    if temperature <= 0.0:
-        return 0.0
-
-    log_like = gmm_log_likelihood(position, context)[0]
-    return log_prior_val + temperature * log_like
 
 
 def component_sampler(
@@ -303,6 +283,11 @@ def main() -> None:
         metadata={"temperature": 0.0, "components": 1},
     )
 
+    posterior = TemperedPosterior(
+        log_prior=log_prior,
+        log_likelihood=gmm_log_likelihood,
+    )
+
     target_components = 4
     trigger_temperature = 0.999
 
@@ -313,13 +298,13 @@ def main() -> None:
                 trigger_temperature=trigger_temperature,
             ),
             AdaptiveTemperedWeighting(
-                gmm_log_likelihood,
+                posterior,
                 target_ess_ratio=0.7,
                 max_temperature=1.0,
                 min_delta=0.02,
             ),
             SystematicResampling(always_resample=True),
-            EmceeMutation(tempered_log_posterior, n_steps=8),
+            EmceeMutation(posterior, n_steps=8),
             ContinueWhile(
                 make_continue_annealing_predicate(
                     target_components=target_components,
@@ -330,7 +315,7 @@ def main() -> None:
         auto_normalize=True,
     )
 
-    states = smc.run(
+    results = smc.run(
         initial_state,
         rng=rng,
         static_context={
@@ -345,17 +330,17 @@ def main() -> None:
         },
     )
 
-    final_state = states[-1]
+    final_state = results.final_state
     est_weights, est_means = posterior_summary(final_state)
     print("Posterior mixture weights:", np.round(est_weights, 3))
     print("Posterior component means:", np.round(est_means, 3))
     print(f"Final log evidence: {final_state.log_evidence:.2f}")
 
-    iterations = np.arange(len(states))
-    component_counts = [s.particles.shape[1] // 2 for s in states]
-    temperatures = [s.metadata.get("temperature", 0.0) for s in states]
+    iterations = np.arange(len(results))
+    component_counts = [s.particles.shape[1] // 2 for s in results.states]
+    temperatures = [s.metadata.get("temperature", 0.0) for s in results.states]
     temperature_deltas = [
-        s.metadata.get("temperature_delta", 0.0) for s in states
+        s.metadata.get("temperature_delta", 0.0) for s in results.states
     ]
 
     x_grid = np.linspace(mean_bounds[0], mean_bounds[1], 400)
@@ -378,7 +363,9 @@ def main() -> None:
             {
                 "iteration": int(iter_idx - 1),
                 "components": int(component_counts[iter_idx - 1]),
-                "log_evidence": float(states[iter_idx - 1].log_evidence),
+                "log_evidence": float(
+                    results.states[iter_idx - 1].log_evidence
+                ),
             }
             for iter_idx in new_component_iters
             if iter_idx > 0
@@ -388,7 +375,7 @@ def main() -> None:
         print("No component expansions detected during run.")
 
     evidence_by_components = {}
-    for comp_count, state in zip(component_counts, states):
+    for comp_count, state in zip(component_counts, results.states):
         evidence_by_components[comp_count] = float(state.log_evidence)
     if evidence_by_components:
         print("Log evidence by active component count:")

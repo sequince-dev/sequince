@@ -1,6 +1,7 @@
+import matplotlib.pyplot as plt
 import numpy as np
 
-from sequince import ParticleState, SequentialMonteCarlo
+from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     EmceeMutation,
@@ -34,14 +35,6 @@ def log_prior(particles: np.ndarray, context) -> np.ndarray:
     ).sum(axis=-1)
 
 
-def tempered_log_posterior(position: np.ndarray, context) -> float:
-    """Tempered log posterior for the multivariate normal model."""
-    temperature = context.static.get("temperature", 1.0)
-    log_like = log_likelihood(position, context)
-    log_p = log_prior(position, context)
-    return log_p + temperature * log_like
-
-
 def main() -> None:
     rng = np.random.default_rng(seed=123)
 
@@ -56,15 +49,23 @@ def main() -> None:
         particles=initial_particles, log_weights=initial_log_weights
     )
 
+    # Small helper to create the tempered posterior
+    # This allows the different steps to use either the log prior, log likelihood,
+    # or the full tempered posterior as needed.
+    posterior = TemperedPosterior(
+        log_prior=log_prior,
+        log_likelihood=log_likelihood,
+    )
+
     smc = SequentialMonteCarlo(
         steps=[
-            AdaptiveTemperedWeighting(log_likelihood, target_ess_ratio=0.8),
+            AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
             SystematicResampling(always_resample=True),
-            EmceeMutation(tempered_log_posterior, n_steps=10),
+            EmceeMutation(posterior, n_steps=20, vectorize=True),
         ]
     )
 
-    states = smc.run(
+    results = smc.run(
         initial_state,
         rng=rng,
         static_context={
@@ -73,7 +74,7 @@ def main() -> None:
             "temperature": 0.0,
         },
     )
-    posterior_state = states[-1]
+    posterior_state = results.final_state
 
     log_evidence = posterior_state.log_evidence
     print(f"Estimated log evidence: {log_evidence:.4f}")
@@ -86,11 +87,10 @@ def main() -> None:
     print(f"Posterior mean estimate: {mean_estimate}")
     print(f"Posterior covariance estimate:\n{cov_estimate}")
 
-    # Get temperatures used
-    temperatures = [
-        state.metadata.get("temperature", None) for state in states
-    ]
-    print(f"Temperatures used: {temperatures}")
+    fig, axes = plt.subplots(2, 1)
+    results.plot_log_evidence(ax=axes[1])
+    results.plot_metadata_history("temperature", ax=axes[0])
+    fig.savefig("adaptive_temperature_history.png")
 
 
 if __name__ == "__main__":
