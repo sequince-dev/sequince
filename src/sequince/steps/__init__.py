@@ -1,5 +1,7 @@
 """Composable SMC steps."""
 
+from .control import ContinueWhile
+from .dimensionality import DimensionalityExpansion
 from .mutation import EmceeMutation
 from .resampling import (
     MultinomialResampling,
@@ -14,6 +16,8 @@ from .weighting import (
 )
 
 __all__ = [
+    "ContinueWhile",
+    "DimensionalityExpansion",
     "EmceeMutation",
     "MultinomialResampling",
     "StratifiedResampling",
