@@ -17,9 +17,9 @@ def _call_log_prob(
     context: StepContext,
 ) -> float:
     try:
-        return float(fn(position, context))
+        return fn(position, context)
     except TypeError:
-        return float(fn(position))
+        return fn(position)
 
 
 class EmceeMutation(SMCStep):
@@ -31,6 +31,7 @@ class EmceeMutation(SMCStep):
         *,
         n_steps: int = 1,
         move: Optional[emcee.moves.Move] = None,
+        run_kwargs: dict = None,
         **kwargs,
     ):
         if n_steps < 1:
@@ -38,6 +39,7 @@ class EmceeMutation(SMCStep):
         self._log_prob_fn = log_prob_fn
         self._n_steps = n_steps
         self._move = move or emcee.moves.StretchMove()
+        self._run_kwargs = run_kwargs or {}
         self._kwargs = kwargs
 
     def apply(
@@ -68,7 +70,10 @@ class EmceeMutation(SMCStep):
         )
 
         state_result = sampler.run_mcmc(
-            initial_positions, self._n_steps, progress=False
+            initial_positions,
+            self._n_steps,
+            progress=False,
+            **self._run_kwargs,
         )
         new_positions = state_result.coords
 
