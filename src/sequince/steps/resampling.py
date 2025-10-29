@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -8,6 +9,8 @@ from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
     from ..state import ParticleState
+
+logger = logging.getLogger(__name__)
 
 
 class ResamplingStep(SMCStep):
@@ -28,8 +31,21 @@ class ResamplingStep(SMCStep):
         context: StepContext,
         rng: np.random.Generator,
     ) -> ParticleState:
+        ess = state.effective_sample_size()
+        n = state.log_weights.shape[0]
+        ess_ratio = ess / n if n else 0.0
         if not self._should_resample(state):
+            logger.debug(
+                "%s skipped resampling (ESS ratio=%.4f).",
+                self.__class__.__name__,
+                ess_ratio,
+            )
             return state
+        logger.debug(
+            "%s performing resampling (ESS ratio=%.4f).",
+            self.__class__.__name__,
+            ess_ratio,
+        )
         weights = state.weights
         indices = self._choose_ancestors(weights, rng)
         return state.resample(indices)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import numpy as np
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
 
 LogLikelihoodFn = Callable[..., np.ndarray]
 TemperatureSchedule = Callable[..., float]
+
+logger = logging.getLogger(__name__)
 
 
 def _as_float_array(value: Any) -> np.ndarray:
@@ -75,6 +78,11 @@ class LogLikelihoodWeighting(SMCStep):
         )
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
+        logger.debug(
+            "LogLikelihoodWeighting: mean increment %.6f (normalize_after=%s).",
+            float(np.mean(increments)),
+            self._normalize_after,
+        )
         return updated_state
 
 
@@ -126,6 +134,11 @@ class TemperedWeighting(SMCStep):
                 "Temperature schedule must align with particle count."
             )
 
+        logger.debug(
+            "TemperedWeighting: temperature %.4f applied; mean increment %.6f.",
+            temperature,
+            float(np.mean(increments)),
+        )
         updated_state = state.with_updates(
             log_weights=state.log_weights + increments
         )
@@ -176,6 +189,11 @@ class FixedTemperedWeighting(SMCStep):
         context.static["temperature_delta"] = self._temperature_increment
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
+        logger.debug(
+            "FixedTemperedWeighting: increment %.4f -> temperature %.4f.",
+            self._temperature_increment,
+            metadata["temperature"],
+        )
         return updated_state
 
 
@@ -243,9 +261,20 @@ class AdaptiveTemperedWeighting(SMCStep):
 
         context.static["temperature"] = metadata["temperature"]
         context.static["temperature_delta"] = delta
+        new_ess_ratio = _ess_ratio_from_log_weights(new_log_weights)
+        logger.debug(
+            "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, ESS ratio=%.4f.",
+            delta,
+            metadata["temperature"],
+            new_ess_ratio,
+        )
         if metadata["temperature"] >= self._max_temperature or np.isclose(
             metadata["temperature"], self._max_temperature
         ):
+            logger.debug(
+                "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop.",
+                self._max_temperature,
+            )
             context.request_stop()
         return updated_state
 

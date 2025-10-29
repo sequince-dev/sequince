@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
 import numpy as np
@@ -12,6 +13,8 @@ if TYPE_CHECKING:
 
 
 ComponentSampler = Callable[..., np.ndarray]
+
+logger = logging.getLogger(__name__)
 
 
 class DimensionalityExpansion(SMCStep):
@@ -82,6 +85,10 @@ class DimensionalityExpansion(SMCStep):
                 "Component sampler must return one row per particle."
             )
         if self._expected_block_size is not None:
+            logger.debug(
+                "DimensionalityExpansion: expecting block size %d.",
+                self._expected_block_size,
+            )
             if new_block.shape[1] != self._expected_block_size:
                 raise ValueError(
                     "Component sampler returned unexpected block size: "
@@ -106,6 +113,10 @@ class DimensionalityExpansion(SMCStep):
             context.static["temperature"] = 0.0
             context.static["temperature_delta"] = 0.0
             log_evidence = 0.0
+            logger.debug(
+                "DimensionalityExpansion reset temperature after adding %d dimensions.",
+                new_block.shape[1],
+            )
         else:
             log_evidence = state.log_evidence
 
@@ -113,6 +124,12 @@ class DimensionalityExpansion(SMCStep):
             context.static[self._context_key] = total_dims
         if self._context_delta_key is not None:
             context.static[self._context_delta_key] = new_block.shape[1]
+
+        logger.info(
+            "DimensionalityExpansion appended %d dims (total=%d).",
+            new_block.shape[1],
+            total_dims,
+        )
 
         return state.with_updates(
             particles=expanded_particles,
@@ -154,4 +171,8 @@ class DimensionalityExpansion(SMCStep):
             else:
                 args.append(state)
 
+        logger.debug(
+            "Invoking component sampler %s for dimensionality expansion.",
+            getattr(sampler, "__name__", sampler.__class__.__name__),
+        )
         return sampler(*args, **kwargs)

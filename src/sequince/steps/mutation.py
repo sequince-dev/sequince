@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
 import emcee
@@ -9,6 +10,8 @@ from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
     from ..state import ParticleState
+
+logger = logging.getLogger(__name__)
 
 
 def _call_log_prob(
@@ -57,6 +60,12 @@ class EmceeMutation(SMCStep):
             squeeze_last = False
 
         n_walkers, ndim = initial_positions.shape
+        logger.debug(
+            "EmceeMutation starting: %d walkers, %d dimensions, %d steps.",
+            n_walkers,
+            ndim,
+            self._n_steps,
+        )
 
         def log_prob(position: np.ndarray) -> float:
             return _call_log_prob(self._log_prob_fn, position, context)
@@ -87,5 +96,10 @@ class EmceeMutation(SMCStep):
             np.mean(sampler.acceptance_fraction)
         )
         metadata["emcee_steps"] = self._n_steps
-
+        acceptance = metadata["emcee_acceptance"]
+        logger.debug(
+            "EmceeMutation completed: acceptance=%.3f after %d steps.",
+            acceptance,
+            self._n_steps,
+        )
         return state.with_updates(particles=new_particles, metadata=metadata)

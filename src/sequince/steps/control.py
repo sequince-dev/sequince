@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
@@ -8,6 +9,8 @@ from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
     from ..state import ParticleState
+
+logger = logging.getLogger(__name__)
 
 
 class ContinueWhile(SMCStep):
@@ -33,4 +36,11 @@ class ContinueWhile(SMCStep):
     ) -> "ParticleState":
         if self._predicate(state, context):
             context.stop_requested = False
+            logger.debug(
+                "ContinueWhile cleared stop flag at iteration %d.", context.t
+            )
+        else:
+            logger.debug(
+                "ContinueWhile left stop flag set at iteration %d.", context.t
+            )
         return state

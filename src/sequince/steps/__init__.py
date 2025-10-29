@@ -2,6 +2,7 @@
 
 from .control import ContinueWhile
 from .dimensionality import DimensionalityExpansion
+from .log import LoggingStep
 from .mutation import EmceeMutation
 from .resampling import (
     MultinomialResampling,
@@ -26,4 +27,5 @@ __all__ = [
     "TemperedWeighting",
     "AdaptiveTemperedWeighting",
     "FixedTemperedWeighting",
+    "LoggingStep",
 ]
