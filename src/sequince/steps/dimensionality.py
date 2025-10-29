@@ -105,6 +105,9 @@ class DimensionalityExpansion(SMCStep):
             metadata.pop("temperature_delta", None)
             context.static["temperature"] = 0.0
             context.static["temperature_delta"] = 0.0
+            log_evidence = 0.0
+        else:
+            log_evidence = state.log_evidence
 
         if self._context_key is not None:
             context.static[self._context_key] = total_dims
@@ -114,6 +117,7 @@ class DimensionalityExpansion(SMCStep):
         return state.with_updates(
             particles=expanded_particles,
             metadata=metadata,
+            log_evidence=log_evidence,
         )
 
     def _invoke_sampler(
