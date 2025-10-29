@@ -31,12 +31,14 @@ class EmceeMutation(SMCStep):
         *,
         n_steps: int = 1,
         move: Optional[emcee.moves.Move] = None,
+        **kwargs,
     ):
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
         self._log_prob_fn = log_prob_fn
         self._n_steps = n_steps
         self._move = move or emcee.moves.StretchMove()
+        self._kwargs = kwargs
 
     def apply(
         self,
@@ -62,8 +64,7 @@ class EmceeMutation(SMCStep):
             ndim,
             log_prob,
             moves=self._move,
-            vectorize=False,
-            # seed=int(rng.integers(0, np.iinfo(np.uint32).max)),
+            **self._kwargs,
         )
 
         state_result = sampler.run_mcmc(
