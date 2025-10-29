@@ -14,7 +14,7 @@ from typing import Callable, Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.special import logsumexp, softmax
+from scipy.special import gammaln, logsumexp, softmax
 
 from sequince import ParticleState, SequentialMonteCarlo
 from sequince.steps import (
@@ -43,19 +43,47 @@ def generate_gmm_data(
     return rng.normal(loc=means[assignments], scale=std, size=n_samples)
 
 
-def log_prior(position: np.ndarray, context: StepContext) -> float:
-    """Uniform prior over component means within specified bounds."""
-    if position.ndim == 1:
-        position = position[np.newaxis, :]
+def log_prior(position: np.ndarray, context: StepContext) -> np.ndarray:
+    """Factorized prior over logits (Gaussian) and means (uniform)."""
+    points = np.atleast_2d(position)
 
     bounds: tuple[float, float] = context.static["mean_bounds"]
-    n_components = position.shape[1] // 2
-    means = position[:, n_components:]
-    if np.all((means >= bounds[0]) & (means <= bounds[1])):
-        # Normalizing constant for uniform prior over means
-        return -np.log(bounds[1] - bounds[0]) * n_components
-    else:
-        return float("-inf")
+    n_components = points.shape[1] // 2
+    logits = points[:, :n_components]
+    means = points[:, n_components:]
+
+    width = bounds[1] - bounds[0]
+    if width <= 0.0:
+        raise ValueError("mean_bounds must define a positive-width interval.")
+
+    scale = float(context.static.get("logit_prior_scale", 2.0))
+    if scale <= 0.0:
+        raise ValueError("logit_prior_scale must be positive.")
+
+    in_bounds = np.all((means >= bounds[0]) & (means <= bounds[1]), axis=1)
+    log_prior_vals = np.full(points.shape[0], -np.inf, dtype=float)
+
+    valid_logits = logits[in_bounds]
+    if valid_logits.size > 0:
+        norm_const = np.log(np.sqrt(2.0 * np.pi) * scale)
+        log_prior_means = -n_components * np.log(width)
+        log_prior_logits = -0.5 * np.sum((valid_logits / scale) ** 2, axis=1)
+        log_prior_logits -= n_components * norm_const
+
+        rate = float(context.static.get("component_count_rate", 3.0))
+        if rate <= 0.0:
+            raise ValueError("component_count_rate must be positive.")
+        log_component_count = (
+            n_components * np.log(rate) - rate - gammaln(n_components + 1)
+        )
+
+        log_prior_vals[in_bounds] = (
+            log_prior_means + log_prior_logits + log_component_count
+        )
+
+    if position.ndim == 1:
+        return np.array(log_prior_vals[0], ndmin=1)
+    return log_prior_vals
 
 
 def gmm_log_likelihood(
@@ -93,7 +121,7 @@ def tempered_log_posterior(
     if position.ndim == 1:
         position = position[np.newaxis, :]
 
-    log_prior_val = log_prior(position, context)
+    log_prior_val = float(log_prior(position, context)[0])
     if not np.isfinite(log_prior_val):
         return float("-inf")
 
@@ -102,7 +130,7 @@ def tempered_log_posterior(
         return 0.0
 
     log_like = gmm_log_likelihood(position, context)[0]
-    return temperature * log_like
+    return log_prior_val + temperature * log_like
 
 
 def component_sampler(
@@ -254,17 +282,18 @@ def main() -> None:
     )
 
     n_particles = 2_000
-    data_mean = np.mean(observations)
     mean_bounds = (
         observations.min() - 3.0 * component_std,
         observations.max() + 3.0 * component_std,
     )
 
-    initial_logits = rng.normal(loc=0.0, scale=0.3, size=(n_particles, 1))
-    initial_means = rng.normal(
-        loc=data_mean, scale=1.5 * component_std, size=(n_particles, 1)
+    logit_prior_scale = 2.0
+    initial_logits = rng.normal(
+        loc=0.0, scale=logit_prior_scale, size=(n_particles, 1)
     )
-    initial_means = np.clip(initial_means, mean_bounds[0], mean_bounds[1])
+    initial_means = rng.uniform(
+        low=mean_bounds[0], high=mean_bounds[1], size=(n_particles, 1)
+    )
     initial_particles = np.concatenate([initial_logits, initial_means], axis=1)
     log_weights = np.full(n_particles, -np.log(n_particles))
     initial_state = ParticleState(
@@ -310,6 +339,8 @@ def main() -> None:
             "temperature_delta": 0.0,
             "components": 1,
             "mean_bounds": mean_bounds,
+            "logit_prior_scale": logit_prior_scale,
+            "component_count_rate": 3.0,
         },
     )
 
@@ -364,6 +395,17 @@ def main() -> None:
             print(
                 f"  components={comp}: log_evidence={evidence_by_components[comp]:.3f}"
             )
+
+    log_bayes_factors = {}
+    base_evidence = evidence_by_components.get(1, None)
+    if base_evidence is not None:
+        for comp, log_evid in evidence_by_components.items():
+            if comp == 1:
+                continue
+            log_bayes_factors[comp] = log_evid - base_evidence
+        print("Bayes factors vs. 1-component model:")
+        for comp in sorted(log_bayes_factors):
+            print(f"  components={comp}: ln BF={log_bayes_factors[comp]:.3f}")
 
     fig, axes = plt.subplots(nrows=3, figsize=(10, 9))
 
@@ -434,8 +476,8 @@ def main() -> None:
     ax_delta.legend(loc="upper right")
 
     fig.tight_layout()
-    fig.savefig("gmm_dimensionality_adaptive_mcmc.png", dpi=150)
-    print("Saved gmm_dimensionality_adaptive_mcmc.png")
+    fig.savefig("gmm_transdimensional.png", dpi=150)
+    print("Saved gmm_transdimensional.png")
 
 
 if __name__ == "__main__":
