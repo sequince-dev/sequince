@@ -9,6 +9,7 @@ import numpy as np
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    from ..posterior import TemperedPosterior
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class EmceeMutation(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., float],
+        log_prob_fn: Callable[..., float] | "TemperedPosterior",
         *,
         n_steps: int = 1,
         move: Optional[emcee.moves.Move] = None,
@@ -39,7 +40,10 @@ class EmceeMutation(SMCStep):
     ):
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
-        self._log_prob_fn = log_prob_fn
+        if hasattr(log_prob_fn, "log_prob"):
+            self._log_prob_fn = log_prob_fn.log_prob  # type: ignore[union-attr]
+        else:
+            self._log_prob_fn = log_prob_fn  # type: ignore[assignment]
         self._n_steps = n_steps
         self._move = move or emcee.moves.StretchMove()
         self._run_kwargs = run_kwargs or {}

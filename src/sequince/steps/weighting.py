@@ -10,10 +10,11 @@ from ..utils import _call_with_optional_context
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    from ..posterior import TemperedPosterior
     from ..state import ParticleState
 
 
-LogLikelihoodFn = Callable[..., np.ndarray]
+IncrementFn = Callable[..., np.ndarray]
 TemperatureSchedule = Callable[..., float]
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,24 @@ def _ess_ratio_from_log_weights(log_weights: np.ndarray) -> float:
         weights = np.full(n, 1.0 / n)
     ess = 1.0 / np.sum(np.square(weights))
     return ess / log_weights.shape[0]
+
+
+def _resolve_increment_fn(
+    increment: IncrementFn | "TemperedPosterior",
+) -> IncrementFn:
+    if hasattr(increment, "log_increment"):
+        posterior = increment  # type: ignore[assignment]
+
+        def _wrapped(
+            particles: np.ndarray, context: StepContext
+        ) -> np.ndarray:
+            # type: ignore[attr-defined]
+            return posterior.log_increment(particles, context)  # type: ignore[union-attr]
+
+        return _wrapped
+    if callable(increment):
+        return increment
+    raise TypeError("log_increment_fn must be callable or TemperedPosterior.")
 
 
 class LogLikelihoodWeighting(SMCStep):
@@ -87,21 +106,21 @@ class LogLikelihoodWeighting(SMCStep):
 
 
 class TemperedWeighting(SMCStep):
-    """Apply tempering by scaling log-likelihood increments with a temperature schedule.
+    """Apply tempering by scaling log-weight increments with a temperature schedule.
 
-    Both the log-likelihood callable and the temperature schedule accept the
+    Both the increment callable and the temperature schedule accept the
     current ``StepContext`` when they require it.
     """
 
     def __init__(
         self,
-        log_likelihood_fn: LogLikelihoodFn,
+        log_increment_fn: IncrementFn | "TemperedPosterior",
         temperature_schedule: TemperatureSchedule,
         *,
         normalize_after: bool = True,
         clip_temperature: Optional[tuple[float, float]] = None,
     ):
-        self._log_likelihood_fn = log_likelihood_fn
+        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
         self._schedule = temperature_schedule
         self._normalize_after = normalize_after
         self._clip = clip_temperature
@@ -123,15 +142,15 @@ class TemperedWeighting(SMCStep):
             lo, hi = self._clip
             temperature = float(np.clip(temperature, lo, hi))
 
-        log_like = _call_with_optional_context(
-            self._log_likelihood_fn,
+        log_increments = _call_with_optional_context(
+            self._log_increment_fn,
             (state.particles,),
             context,
         )
-        increments = _as_float_array(log_like) * temperature
+        increments = _as_float_array(log_increments) * temperature
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
-                "Temperature schedule must align with particle count."
+                "Increment function must return one value per particle."
             )
 
         logger.debug(
@@ -152,14 +171,14 @@ class FixedTemperedWeighting(SMCStep):
 
     def __init__(
         self,
-        log_likelihood_fn: LogLikelihoodFn,
+        log_increment_fn: IncrementFn | "TemperedPosterior",
         *,
         temperature_increment: float,
         normalize_after: bool = True,
     ):
         if temperature_increment < 0.0:
             raise ValueError("temperature_increment must be non-negative.")
-        self._log_likelihood_fn = log_likelihood_fn
+        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
         self._temperature_increment = temperature_increment
         self._normalize_after = normalize_after
 
@@ -169,15 +188,17 @@ class FixedTemperedWeighting(SMCStep):
         context: StepContext,
         rng: np.random.Generator,
     ) -> ParticleState:
-        log_like = _call_with_optional_context(
-            self._log_likelihood_fn,
+        log_increments = _call_with_optional_context(
+            self._log_increment_fn,
             (state.particles,),
             context,
         )
-        increments = _as_float_array(log_like) * self._temperature_increment
+        increments = (
+            _as_float_array(log_increments) * self._temperature_increment
+        )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
-                "Log-likelihood function must return one value per particle."
+                "Increment function must return one value per particle."
             )
         metadata = dict(state.metadata)
         current_temp = metadata.get("temperature", 0.0)
@@ -202,7 +223,7 @@ class AdaptiveTemperedWeighting(SMCStep):
 
     def __init__(
         self,
-        log_likelihood_fn: LogLikelihoodFn,
+        log_increment_fn: IncrementFn | "TemperedPosterior",
         *,
         target_ess_ratio: float = 0.7,
         max_temperature: float = 1.0,
@@ -215,7 +236,7 @@ class AdaptiveTemperedWeighting(SMCStep):
         if max_temperature <= 0.0:
             raise ValueError("max_temperature must be positive.")
 
-        self._log_likelihood_fn = log_likelihood_fn
+        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
         self._target_ess_ratio = target_ess_ratio
         self._max_temperature = max_temperature
         self._min_delta = min_delta
@@ -236,12 +257,12 @@ class AdaptiveTemperedWeighting(SMCStep):
             context.request_stop()
             return state
 
-        log_like = _call_with_optional_context(
-            self._log_likelihood_fn,
+        log_increments = _call_with_optional_context(
+            self._log_increment_fn,
             (state.particles,),
             context,
         )
-        increments = _as_float_array(log_like)
+        increments = _as_float_array(log_increments)
 
         if np.allclose(increments, 0.0):
             delta = remaining

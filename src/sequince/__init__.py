@@ -3,6 +3,7 @@
 import importlib.metadata
 import logging
 
+from .posterior import TemperedPosterior
 from .result import SMCResults
 from .smc import SequentialMonteCarlo
 from .state import ParticleState
@@ -18,6 +19,5 @@ __all__ = [
     "ParticleState",
     "SequentialMonteCarlo",
     "SMCResults",
-    "configure_logging",
-    "get_logger",
+    "TemperedPosterior",
 ]
