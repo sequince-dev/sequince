@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from sequince.state import ParticleState
+from sequince.steps import ContinueWhile, DimensionalityExpansion
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import EmceeMutation
 from sequince.steps.resampling import (
@@ -179,3 +180,70 @@ def test_emcee_mutation_runs_single_step(
     assert mutated.particles.shape == particle_state.particles.shape
     assert "emcee_acceptance" in mutated.metadata
     assert mutated.metadata["emcee_steps"] == 1
+
+
+def test_dimensionality_expansion_appends_block(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    def sampler(
+        state: ParticleState, *, rng: np.random.Generator
+    ) -> np.ndarray:
+        n = state.particles.shape[0]
+        return np.full((n, 2), fill_value=0.5)
+
+    context = context_factory(static={"temperature": 0.8})
+    initial_state = particle_state.with_updates(
+        metadata=dict(particle_state.metadata, temperature=0.8)
+    )
+
+    step = DimensionalityExpansion(
+        sampler,
+        expected_block_size=2,
+        metadata_key="dims",
+        context_key="dims",
+        context_delta_key="dim_delta",
+    )
+    expanded = step(initial_state, context, rng)
+
+    assert expanded.particles.shape[1] == initial_state.particles.shape[1] + 2
+    assert np.allclose(expanded.particles[:, -2:], 0.5)
+    assert expanded.metadata["dims"] == expanded.particles.shape[1]
+    assert expanded.metadata["added_dimensions"] == 2
+    assert expanded.metadata["last_dimension_delta"] == 2
+    assert context.static["dims"] == expanded.particles.shape[1]
+    assert context.static["dim_delta"] == 2
+    assert expanded.metadata["temperature"] == 0.0
+    assert context.static["temperature"] == 0.0
+    assert context.static["temperature_delta"] == 0.0
+
+
+def test_continue_while_overrides_stop_request(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    predicate_calls: list[tuple[float, int]] = []
+
+    def predicate(state: ParticleState, context: StepContext) -> bool:
+        temperature = float(state.metadata.get("temperature", 0.0))
+        predicate_calls.append((temperature, context.t))
+        return temperature < 1.0
+
+    step = ContinueWhile(predicate)
+
+    context = context_factory(t=0)
+    context.request_stop()
+    state = particle_state.with_updates(metadata={"temperature": 0.5})
+
+    result = step(state, context, rng)
+
+    assert result is state
+    assert not context.stop_requested
+
+    context_late = context_factory(t=1)
+    context_late.request_stop()
+    late_state = particle_state.with_updates(metadata={"temperature": 1.0})
+
+    final_result = step(late_state, context_late, rng)
+
+    assert final_result is late_state
+    assert context_late.stop_requested
+    assert predicate_calls == [(0.5, 0), (1.0, 1)]
