@@ -12,6 +12,7 @@ from typing import (
 
 import numpy as np
 
+from .result import SMCResults
 from .state import ParticleState
 from .steps.base import StepContext
 from .utils import _ensure_rng
@@ -44,7 +45,7 @@ class SequentialMonteCarlo:
         num_steps: Optional[int] = None,
         rng: Optional[np.random.Generator] = None,
         static_context: Optional[MutableMapping[str, Any]] = None,
-    ) -> List[ParticleState]:
+    ) -> SMCResults:
         rng = _ensure_rng(rng)
         static_context = static_context or {}
 
@@ -86,4 +87,4 @@ class SequentialMonteCarlo:
 
             t += 1
 
-        return produced_states
+        return SMCResults(states=produced_states)
