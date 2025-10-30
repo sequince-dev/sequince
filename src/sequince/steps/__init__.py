@@ -3,7 +3,7 @@
 from .control import ContinueWhile
 from .dimensionality import DimensionalityExpansion
 from .log import LoggingStep
-from .mutation import EmceeMutation
+from .mutation import EmceeMutation, MiniPCNMutation
 from .resampling import (
     MultinomialResampling,
     StratifiedResampling,
@@ -20,6 +20,7 @@ __all__ = [
     "ContinueWhile",
     "DimensionalityExpansion",
     "EmceeMutation",
+    "MiniPCNMutation",
     "MultinomialResampling",
     "StratifiedResampling",
     "SystematicResampling",
