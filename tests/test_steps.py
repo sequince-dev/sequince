@@ -6,7 +6,7 @@ import pytest
 from sequince.state import ParticleState
 from sequince.steps import ContinueWhile, DimensionalityExpansion
 from sequince.steps.base import StepContext
-from sequince.steps.mutation import EmceeMutation
+from sequince.steps.mutation import EmceeMutation, MiniPCNMutation
 from sequince.steps.resampling import (
     MultinomialResampling,
     SystematicResampling,
@@ -180,6 +180,23 @@ def test_emcee_mutation_runs_single_step(
     assert mutated.particles.shape == particle_state.particles.shape
     assert "emcee_acceptance" in mutated.metadata
     assert mutated.metadata["emcee_steps"] == 1
+
+
+def test_minipcn_mutation_runs_single_step(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    pytest.importorskip("minipcn")
+
+    def log_prob(position: np.ndarray, context: StepContext) -> float:
+        return float(-0.5 * np.sum(position**2))
+
+    context = context_factory(static={"temperature": 1.0})
+    step = MiniPCNMutation(log_prob, n_steps=1)
+    mutated = step(particle_state, context, rng)
+
+    assert mutated.particles.shape == particle_state.particles.shape
+    assert "minipcn_acceptance" in mutated.metadata
+    assert mutated.metadata["minipcn_steps"] == 1
 
 
 def test_dimensionality_expansion_appends_block(
