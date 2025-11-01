@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sequince"
 description = "Modular, composable Sequential Monte Carlo framework."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "Michael J. Williams" }]
 dependencies = [
@@ -30,12 +30,22 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["sequince*"]
 
-[tools.setuptools_scm]
+[tool.setuptools_scm]
 
 [project.optional-dependencies]
-tests = [
+minipcn = [
+    "minipcn",
+]
+
+[dependency-groups]
+test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+]
+dev = [
+    "pre-commit",
+    {include-group = "test"},
+
 ]
 
 [tool.ruff]
