@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..state import ParticleState
 
 
-IncrementFn = Callable[..., np.ndarray]
+IncrementFn = Callable[..., np.ndarray | float]
 TemperatureSchedule = Callable[..., float]
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def _resolve_increment_fn(
 
         def _wrapped(
             particles: np.ndarray, context: StepContext
-        ) -> np.ndarray:
+        ) -> np.ndarray | float:
             # type: ignore[attr-defined]
             return posterior.log_increment(particles, context)  # type: ignore[union-attr]
 
