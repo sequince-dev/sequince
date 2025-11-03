@@ -38,7 +38,24 @@ class MutationStep(SMCStep):
 
 
 class EmceeMutation(MutationStep):
-    """Run emcee ensemble MCMC moves to rejuvenate particles."""
+    """Run emcee ensemble MCMC moves to rejuvenate particles.
+
+    Parameters
+    ----------
+    log_prob_fn
+        Function to compute the log-probability of a particle position, or a
+        `TemperedPosterior` instance.
+    n_steps
+        Number of emcee steps to perform.
+    move
+        An emcee Move instance to use for proposing new positions.  If ``None``
+        (default) uses the ``StretchMove``.
+    run_kwargs
+        Additional keyword arguments to pass to the ``emcee.EnsembleSampler.run_mcmc``
+        method.
+    **kwargs
+        Additional keyword arguments to pass to the ``emcee.EnsembleSampler``
+    """
 
     def __init__(
         self,

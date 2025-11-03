@@ -13,7 +13,25 @@ if TYPE_CHECKING:
 
 
 class LoggingStep(SMCStep):
-    """A simple step that logs a message at each iteration."""
+    """A simple step that logs a message at each iteration.
+
+    Examples
+    --------
+    >>> def log_fn(state, context):
+    ...     return f"Iteration {context.t}: ESS={state.effective_sample_size():.2f}"
+    >>> step = LoggingStep(str_fn=log_fn, level=logging.INFO, frequency=1)
+    >>> smc = SequentialMonteCarlo(steps=[..., step, ...])
+
+    Parameters
+    ----------
+    str_fn:
+        A function that takes the current ``ParticleState`` and ``StepContext``
+        and returns a string message to log.
+    level:
+        The logging level to use (e.g., ``logging.INFO``).
+    frequency:
+        How often to log the message (in terms of SMC iterations).
+    """
 
     def __init__(
         self,

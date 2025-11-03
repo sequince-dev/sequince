@@ -26,6 +26,16 @@ class SequentialMonteCarlo:
 
     Users supply an ordered collection of SMC steps that will be called in sequence at
     each iteration. Steps can mutate the state or return a new one.
+
+    Parameters
+    ----------
+    steps:
+        A sequence of callables implementing SMC steps.  Each callable should accept
+        three arguments: the current ``ParticleState``, the current ``StepContext``,
+        and a ``np.random.Generator`` instance, and return a new ``ParticleState``.
+    auto_normalize:
+        If ``True`` (default) automatically normalize the particle weights at the end
+        of each iteration.
     """
 
     def __init__(
