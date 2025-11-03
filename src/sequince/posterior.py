@@ -69,7 +69,7 @@ class TemperedPosterior:
         context: "StepContext",
     ) -> np.ndarray:
         """Return the tempered log posterior evaluated at the current β."""
-        beta = float(context.static.get("temperature", 0.0))
+        beta = float(context.shared.get("temperature", 0.0))
         log_prior = _evaluate(self.log_prior, particles, context)
         log_like = _evaluate(self.log_likelihood, particles, context)
         if self.log_proposal is None:

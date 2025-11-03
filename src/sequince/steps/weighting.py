@@ -206,8 +206,8 @@ class FixedTemperedWeighting(SMCStep):
         updated_state = state.with_updates(
             log_weights=state.log_weights + increments, metadata=metadata
         )
-        context.static["temperature"] = metadata["temperature"]
-        context.static["temperature_delta"] = self._temperature_increment
+        context.shared["temperature"] = metadata["temperature"]
+        context.shared["temperature_delta"] = self._temperature_increment
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
         logger.debug(
@@ -252,8 +252,8 @@ class AdaptiveTemperedWeighting(SMCStep):
         current_temp = state.metadata.get("temperature", 0.0)
         remaining = self._max_temperature - current_temp
         if remaining <= 0.0:
-            context.static["temperature"] = current_temp
-            context.static["temperature_delta"] = 0.0
+            context.shared["temperature"] = current_temp
+            context.shared["temperature_delta"] = 0.0
             context.request_stop()
             return state
 
@@ -280,8 +280,8 @@ class AdaptiveTemperedWeighting(SMCStep):
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
 
-        context.static["temperature"] = metadata["temperature"]
-        context.static["temperature_delta"] = delta
+        context.shared["temperature"] = metadata["temperature"]
+        context.shared["temperature_delta"] = delta
         new_ess_ratio = _ess_ratio_from_log_weights(new_log_weights)
         logger.debug(
             "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, ESS ratio=%.4f.",

@@ -40,7 +40,7 @@ def make_standard_bayesian_smc(
 
     The returned sampler applies adaptive tempering, ESS-triggered resampling,
     and mutation moves tailored for standard Bayesian inference workflows.
-    A ``TemperedPosterior`` instance and a static context dictionary tracking
+    A ``TemperedPosterior`` instance and a shared context dictionary tracking
     the current temperature are returned alongside the sampler for convenience.
 
     Parameters
@@ -149,10 +149,10 @@ def make_standard_bayesian_smc(
 
     sampler = SequentialMonteCarlo(steps=steps, auto_normalize=auto_normalize)
 
-    static_context: Dict[str, Any] = {
+    shared_context: Dict[str, Any] = {
         "temperature": 0.0,
         "temperature_delta": 0.0,
         "max_temperature": max_temperature,
     }
 
-    return sampler, posterior, static_context
+    return sampler, posterior, shared_context

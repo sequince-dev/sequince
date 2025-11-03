@@ -17,7 +17,7 @@ class StepContext:
 
     t: int
     observation: Any = None
-    static: MutableMapping[str, Any] = field(default_factory=dict)
+    shared: MutableMapping[str, Any] = field(default_factory=dict)
     stop_requested: bool = False
 
     def request_stop(self) -> None:
