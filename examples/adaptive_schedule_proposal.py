@@ -15,8 +15,8 @@ from sequince.steps import (
 
 def log_likelihood(particles: np.ndarray, context) -> np.ndarray:
     """Log-likelihood of a multivariate normal observation."""
-    mu = context.static["mu"]
-    sigma = context.static["sigma"]
+    mu = context.shared["mu"]
+    sigma = context.shared["sigma"]
     dims = particles.shape[1]
     residual = particles - mu
     return -0.5 * np.sum(
@@ -26,8 +26,8 @@ def log_likelihood(particles: np.ndarray, context) -> np.ndarray:
 
 def log_prior(particles: np.ndarray, context) -> np.ndarray:
     """Uniform prior inside the hyper-rectangle, -inf outside."""
-    lower = context.static["prior_lower"]
-    upper = context.static["prior_upper"]
+    lower = context.shared["prior_lower"]
+    upper = context.shared["prior_upper"]
     in_bounds = (particles >= lower) & (particles <= upper)
     norm = -np.log(upper - lower) * particles.shape[1]
     return np.where(np.all(in_bounds, axis=1), norm, -np.inf)
@@ -35,8 +35,8 @@ def log_prior(particles: np.ndarray, context) -> np.ndarray:
 
 def log_proposal(particles: np.ndarray, context) -> np.ndarray:
     """Gaussian proposal centred away from the true mean."""
-    proposal_mean = context.static["proposal_mean"]
-    proposal_sigma = context.static["proposal_sigma"]
+    proposal_mean = context.shared["proposal_mean"]
+    proposal_sigma = context.shared["proposal_sigma"]
     dims = particles.shape[1]
     residual = particles - proposal_mean
     return -0.5 * np.sum(
@@ -83,7 +83,7 @@ def main() -> None:
     results = smc.run(
         initial_state,
         rng=rng,
-        static_context={
+        shared_context={
             "mu": mu,
             "sigma": sigma,
             "prior_lower": prior_lower,

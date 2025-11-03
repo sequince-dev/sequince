@@ -28,8 +28,8 @@ def log_likelihood(particles: np.ndarray, context) -> np.ndarray:
 
 def log_prior(particles: np.ndarray, context) -> np.ndarray:
     """Uniform prior over a bounded region."""
-    lower_bound = context.static["lower_bound"]
-    upper_bound = context.static["upper_bound"]
+    lower_bound = context.shared["lower_bound"]
+    upper_bound = context.shared["upper_bound"]
     return np.where(
         (particles >= lower_bound) & (particles <= upper_bound), 0.0, -np.inf
     ).sum(axis=-1)
@@ -68,7 +68,7 @@ def main() -> None:
     results = smc.run(
         initial_state,
         rng=rng,
-        static_context={
+        shared_context={
             "lower_bound": lower_bound,
             "upper_bound": upper_bound,
             "temperature": 0.0,

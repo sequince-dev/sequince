@@ -17,11 +17,13 @@ import numpy as np
 from scipy.special import gammaln, logsumexp, softmax
 
 from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
+from sequince.logging_utils import configure_logging
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     ContinueWhile,
     DimensionalityExpansion,
-    EmceeMutation,
+    LoggingStep,
+    MiniPCNMutation,
     SystematicResampling,
 )
 from sequince.steps.base import StepContext
@@ -47,7 +49,7 @@ def log_prior(position: np.ndarray, context: StepContext) -> np.ndarray:
     """Factorized prior over logits (Gaussian) and means (uniform)."""
     points = np.atleast_2d(position)
 
-    bounds: tuple[float, float] = context.static["mean_bounds"]
+    bounds: tuple[float, float] = context.shared["mean_bounds"]
     n_components = points.shape[1] // 2
     logits = points[:, :n_components]
     means = points[:, n_components:]
@@ -56,7 +58,7 @@ def log_prior(position: np.ndarray, context: StepContext) -> np.ndarray:
     if width <= 0.0:
         raise ValueError("mean_bounds must define a positive-width interval.")
 
-    scale = float(context.static.get("logit_prior_scale", 2.0))
+    scale = float(context.shared.get("logit_prior_scale", 2.0))
     if scale <= 0.0:
         raise ValueError("logit_prior_scale must be positive.")
 
@@ -70,7 +72,7 @@ def log_prior(position: np.ndarray, context: StepContext) -> np.ndarray:
         log_prior_logits = -0.5 * np.sum((valid_logits / scale) ** 2, axis=1)
         log_prior_logits -= n_components * norm_const
 
-        rate = float(context.static.get("component_count_rate", 3.0))
+        rate = float(context.shared.get("component_count_rate", 3.0))
         if rate <= 0.0:
             raise ValueError("component_count_rate must be positive.")
         log_component_count = (
@@ -90,8 +92,8 @@ def gmm_log_likelihood(
     particles: np.ndarray, context: StepContext
 ) -> np.ndarray:
     """Log likelihood of the dataset under a shared-variance mixture."""
-    data = context.static["data"]
-    std = context.static["component_std"]
+    data = context.shared["data"]
+    std = context.shared["component_std"]
     variance = std**2
 
     n_particles, param_dim = particles.shape
@@ -121,10 +123,10 @@ def component_sampler(
 ) -> np.ndarray:
     """Draw a new component's logit and mean from data-informed proposals."""
     n = state.particles.shape[0]
-    bounds: tuple[float, float] = context.static["mean_bounds"]
-    data = context.static["data"]
-    spread = context.static["component_std"]
-    logit_prior_scale = float(context.static["logit_prior_scale"])
+    bounds: tuple[float, float] = context.shared["mean_bounds"]
+    data = context.shared["data"]
+    spread = context.shared["component_std"]
+    logit_prior_scale = float(context.shared["logit_prior_scale"])
 
     new_logits = rng.normal(loc=0.0, scale=logit_prior_scale, size=(n, 1))
     anchors = rng.choice(data, size=(n, 1))
@@ -206,10 +208,10 @@ class TemperatureTriggeredExpansion(DimensionalityExpansion):
         )
 
         expanded = expanded.with_updates(particles=reordered)
-        context.static["components"] = expanded.particles.shape[1] // 2
+        context.shared["components"] = expanded.particles.shape[1] // 2
         # Reset temperature bookkeeping so the next annealing cycle starts at 0.
-        context.static["temperature"] = 0.0
-        context.static["temperature_delta"] = 0.0
+        context.shared["temperature"] = 0.0
+        context.shared["temperature_delta"] = 0.0
         metadata = dict(expanded.metadata)
         metadata["temperature"] = 0.0
         metadata.pop("temperature_delta", None)
@@ -248,7 +250,25 @@ def mixture_density(
     return normal @ weights
 
 
+def logging_str_fn(state: ParticleState, context: StepContext) -> str:
+    temperature = context.shared["temperature"]
+    components = context.shared["components"]
+    ess = state.effective_sample_size()
+    n_particles = state.log_weights.shape[0]
+    ess_ratio = ess / n_particles if n_particles else 0.0
+    log_evidence = state.log_evidence
+    return (
+        f"it {context.t}:, "
+        f"Temperature: {temperature:.4f}, "
+        f"Components: {components}, "
+        f"ESS: {ess:.1f} ({ess_ratio:.3f}), "
+        f"Log Evidence: {log_evidence:.1f}"
+    )
+
+
 def main() -> None:
+    configure_logging()
+
     rng = np.random.default_rng(seed=2048)
 
     true_weights = np.array([0.2, 0.5, 0.3])
@@ -262,7 +282,7 @@ def main() -> None:
         rng=rng,
     )
 
-    n_particles = 2_000
+    n_particles = 500
     mean_bounds = (
         observations.min() - 3.0 * component_std,
         observations.max() + 3.0 * component_std,
@@ -288,7 +308,7 @@ def main() -> None:
         log_likelihood=gmm_log_likelihood,
     )
 
-    target_components = 4
+    target_components = 5
     trigger_temperature = 0.999
 
     smc = SequentialMonteCarlo(
@@ -301,10 +321,11 @@ def main() -> None:
                 posterior,
                 target_ess_ratio=0.7,
                 max_temperature=1.0,
-                min_delta=0.02,
+                min_delta=1e-4,
             ),
             SystematicResampling(always_resample=True),
-            EmceeMutation(posterior, n_steps=8),
+            MiniPCNMutation(posterior, n_steps=20),
+            LoggingStep(logging_str_fn),
             ContinueWhile(
                 make_continue_annealing_predicate(
                     target_components=target_components,
@@ -318,7 +339,7 @@ def main() -> None:
     results = smc.run(
         initial_state,
         rng=rng,
-        static_context={
+        shared_context={
             "data": observations,
             "component_std": component_std,
             "temperature": 0.0,
