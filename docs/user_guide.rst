@@ -3,7 +3,7 @@ User guide
 
 The Sequential Monte Carlo (SMC) loop in ``sequince`` is built from a set of
 composable *steps*. Each step inspects the current :class:`~sequince.state.ParticleState`,
-optionally consumes observations and static configuration, and returns an updated
+optionally consumes observations and shared configuration, and returns an updated
 state. The :class:`~sequince.smc.SequentialMonteCarlo` class drives the loop by
 executing the configured steps at every iteration.
 
@@ -18,7 +18,7 @@ build a useful pipeline is to reuse the pre-built helper:
 
     from sequince import make_standard_bayesian_smc
 
-    smc, posterior, static_context = make_standard_bayesian_smc(
+    smc, posterior, shared_context = make_standard_bayesian_smc(
         log_prior,
         log_likelihood,
         mutation="emcee",
@@ -88,6 +88,7 @@ Custom steps
 To implement bespoke logic, derive from
 :class:`~sequince.steps.base.SMCStep`. Override the ``__call__`` method to
 perform work and return the new state. The base class offers utilities for
-logging, stopping the overall run, and accessing metadata stored on the context.
+logging, stopping the overall run, and accessing metadata stored on the context,
+including the mutable ``StepContext.shared`` dictionary for cross-step state.
 
 See :mod:`sequince.steps` for a catalogue of the built-in components.

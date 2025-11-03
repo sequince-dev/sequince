@@ -33,7 +33,7 @@ the usage demonstrated in the README
     def log_likelihood(theta):
         ...
 
-    smc, posterior, static_context = make_standard_bayesian_smc(
+    smc, posterior, shared_context = make_standard_bayesian_smc(
         log_prior,
         log_likelihood,
     )
@@ -50,7 +50,7 @@ the usage demonstrated in the README
     results = smc.run(
         initial_state,
         rng=np.random.default_rng(),
-        static_context=static_context,
+        shared_context=shared_context,
     )
     samples = results.posterior_samples(1_000)
 
