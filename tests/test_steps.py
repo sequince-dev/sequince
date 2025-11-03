@@ -3,8 +3,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from sequince.proposals import GaussianRandomWalk
 from sequince.state import ParticleState
-from sequince.steps import ContinueWhile, DimensionalityExpansion
+from sequince.steps import (
+    AdaptGaussianProposal,
+    ContinueWhile,
+    DimensionalityExpansion,
+    WasteFreeResampleMove,
+)
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import EmceeMutation, MiniPCNMutation
 from sequince.steps.resampling import (
@@ -197,6 +203,187 @@ def test_minipcn_mutation_runs_single_step(
     assert mutated.particles.shape == particle_state.particles.shape
     assert "minipcn_acceptance" in mutated.metadata
     assert mutated.metadata["minipcn_steps"] == 1
+
+
+def test_adapt_gaussian_proposal_updates_scale(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    metadata = dict(particle_state.metadata)
+    metadata["waste_free_acceptance"] = 0.6
+    state = particle_state.with_updates(metadata=metadata)
+    context = context_factory(static={})
+
+    adapter = AdaptGaussianProposal(
+        initial_scale=0.5,
+        target_acceptance=0.3,
+        adaptation_rate=0.2,
+        scale_key="proposal_scale",
+        min_scale=0.05,
+        max_scale=5.0,
+        scale_metadata_key="proposal_scale",
+    )
+
+    updated = adapter(state, context, rng)
+
+    assert updated.metadata["proposal_scale"] > 0.5
+    assert (
+        context.static["proposal_scale"] == updated.metadata["proposal_scale"]
+    )
+
+
+def test_adapt_gaussian_proposal_adds_covariance(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    context = context_factory(static={})
+    adapter = AdaptGaussianProposal(
+        covariance_key="proposal_cov",
+        mean_key="proposal_mean",
+        covariance_jitter=1e-5,
+    )
+
+    adapter(particle_state, context, rng)
+
+    cov = context.static["proposal_cov"]
+    mean = context.static["proposal_mean"]
+    dims = particle_state.particles.shape[1]
+    assert cov.shape == (dims, dims)
+    assert np.all(np.isfinite(cov))
+    assert mean.shape == (dims,)
+
+
+def test_waste_free_resample_move_returns_uniform_weights(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
+        pts = np.asarray(particles, dtype=float)
+        if pts.ndim == 1:
+            pts = pts[:, np.newaxis]
+        return -0.5 * np.sum(pts**2, axis=1)
+
+    context = context_factory(static={"temperature": 1.0})
+    proposal = GaussianRandomWalk(scale=0.5)
+    step = WasteFreeResampleMove(log_prob, proposal)
+
+    updated = step(particle_state, context, rng)
+
+    n = particle_state.particles.shape[0]
+    assert np.allclose(updated.log_weights, -np.log(n))
+    assert "waste_free_acceptance" in updated.metadata
+    assert updated.metadata["waste_free_proposal_repeats"] == 1
+    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 1
+    total_selected = (
+        updated.metadata["waste_free_selected_parents"]
+        + updated.metadata["waste_free_selected_proposals"]
+    )
+    assert total_selected == n
+
+
+def test_waste_free_resample_move_handles_one_dimensional_particles(
+    rng,
+) -> None:
+    particles = np.array([-1.0, -0.2, 0.5, 1.3])
+    n = particles.size
+    state = ParticleState(
+        particles=particles,
+        log_weights=np.full(n, -np.log(n)),
+        metadata={"temperature": 0.0},
+    )
+
+    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
+        pts = np.asarray(particles, dtype=float)
+        return -0.5 * (pts**2)
+
+    context = StepContext(t=0, static={})
+    proposal = GaussianRandomWalk(scale=0.3)
+    step = WasteFreeResampleMove(
+        log_prob,
+        proposal,
+        resample_ancestors=False,
+    )
+
+    updated = step(state, context, rng)
+    assert updated.particles.shape == particles.shape
+    assert np.allclose(updated.log_weights, -np.log(n))
+    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 1
+    assert updated.metadata["waste_free_proposal_repeats"] == 1
+
+
+def test_waste_free_resample_move_multiple_proposals(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
+        pts = np.asarray(particles, dtype=float)
+        if pts.ndim == 1:
+            pts = pts[:, np.newaxis]
+        return -0.5 * np.sum(pts**2, axis=1)
+
+    context = context_factory(static={"temperature": 1.0})
+    step = WasteFreeResampleMove(
+        log_prob,
+        GaussianRandomWalk(scale=0.4),
+        proposals_per_particle=3,
+    )
+
+    updated = step(particle_state, context, rng)
+
+    n = particle_state.particles.shape[0]
+    assert np.allclose(updated.log_weights, -np.log(n))
+    assert updated.metadata["waste_free_proposal_repeats"] == 3
+    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 3
+    assert len(updated.metadata["waste_free_selected_proposals_by_round"]) == 3
+    assert (
+        sum(updated.metadata["waste_free_selected_proposals_by_round"])
+        == updated.metadata["waste_free_selected_proposals"]
+    )
+    assert context.static["waste_free_total_proposals"] == n * 3
+
+
+def test_waste_free_resample_move_supports_dynamic_proposal(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
+        pts = np.asarray(particles, dtype=float)
+        return -0.5 * np.sum(np.atleast_2d(pts) ** 2, axis=-1)
+
+    context = context_factory(static={"proposal_scale": 0.15})
+
+    def factory(parents: np.ndarray, ctx: StepContext) -> GaussianRandomWalk:
+        scale = float(ctx.static.get("proposal_scale", 0.15))
+        ctx.static.setdefault("factory_scales", []).append(scale)
+        return GaussianRandomWalk(scale=scale)
+
+    adapter = AdaptGaussianProposal(
+        scale_key="proposal_scale",
+        initial_scale=0.15,
+        target_acceptance=None,
+    )
+
+    # First update ensures the scale key is present.
+    adapter(particle_state, context, rng)
+
+    step = WasteFreeResampleMove(
+        log_prob,
+        factory,
+        proposals_per_particle=2,
+    )
+
+    step(particle_state, context, rng)
+
+    assert context.static["factory_scales"]
+    assert all(
+        scale == context.static["proposal_scale"]
+        for scale in context.static["factory_scales"]
+    )  # noqa: PLR2004
 
 
 def test_dimensionality_expansion_appends_block(
