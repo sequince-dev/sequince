@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import emcee
 import numpy as np
@@ -65,8 +65,8 @@ class EmceeMutation(MutationStep):
         log_prob_fn: Callable[..., float] | "TemperedPosterior",
         *,
         n_steps: int = 1,
-        move: Optional[emcee.moves.Move] = None,
-        run_kwargs: Optional[dict[str, Any]] = None,
+        move: emcee.moves.Move | None = None,
+        run_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ):
         super().__init__(log_prob_fn)

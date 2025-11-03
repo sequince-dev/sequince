@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, MutableMapping, Optional
+from typing import TYPE_CHECKING, Any, MutableMapping
 
 import numpy as np
 
@@ -32,7 +32,7 @@ class SMCStep:
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: Optional[np.random.Generator] = None,
+        rng: np.random.Generator | int | None = None,
     ) -> "ParticleState":
         return self.apply(state, context, _ensure_rng(rng))
 

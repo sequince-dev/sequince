@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -55,15 +55,15 @@ class AdaptGaussianProposal(SMCStep):
 
     scale_key: str = "waste_free_scale"
     initial_scale: float = 1.0
-    target_acceptance: Optional[float] = 0.3
+    target_acceptance: float | None = 0.3
     adaptation_rate: float = 0.1
     min_scale: float = 1e-3
     max_scale: float = 10.0
     acceptance_metadata_key: str = "waste_free_acceptance"
-    acceptance_context_key: Optional[str] = "waste_free_acceptance"
-    scale_metadata_key: Optional[str] = "waste_free_scale"
-    covariance_key: Optional[str] = None
-    mean_key: Optional[str] = None
+    acceptance_context_key: str | None = "waste_free_acceptance"
+    scale_metadata_key: str | None = "waste_free_scale"
+    covariance_key: str | None = None
+    mean_key: str | None = None
     covariance_jitter: float = 1e-6
 
     def apply(

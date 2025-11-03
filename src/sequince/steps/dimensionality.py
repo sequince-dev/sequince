@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
@@ -52,10 +52,10 @@ class DimensionalityExpansion(SMCStep):
         self,
         component_sampler: ComponentSampler,
         *,
-        expected_block_size: Optional[int] = None,
+        expected_block_size: int | None = None,
         metadata_key: str = "dimensions",
-        context_key: Optional[str] = "dimensions",
-        context_delta_key: Optional[str] = "dimension_delta",
+        context_key: str | None = "dimensions",
+        context_delta_key: str | None = "dimension_delta",
         reset_temperature: bool = True,
     ):
         self._component_sampler = component_sampler

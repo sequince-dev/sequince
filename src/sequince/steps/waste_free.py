@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -73,10 +73,10 @@ class WasteFreeResampleMove(SMCStep):
         else:
             self._log_prob_fn = log_prob_fn
         if hasattr(proposal, "sample") and hasattr(proposal, "log_density"):
-            self._proposal: Optional[ProposalKernel] = proposal  # type: ignore[assignment]
-            self._proposal_factory: Optional[
-                Callable[[np.ndarray, StepContext], ProposalKernel]
-            ] = None
+            self._proposal: ProposalKernel | None = proposal  # type: ignore[assignment]
+            self._proposal_factory: (
+                Callable[[np.ndarray, StepContext], ProposalKernel] | None
+            ) = None
         elif callable(proposal):
             self._proposal = None
             self._proposal_factory = proposal  # type: ignore[assignment]

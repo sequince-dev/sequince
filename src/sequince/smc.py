@@ -1,15 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import (
-    Any,
-    Callable,
-    Iterable,
-    List,
-    MutableMapping,
-    Optional,
-    Sequence,
-)
+from typing import Any, Callable, Iterable, List, MutableMapping, Sequence
 
 import numpy as np
 
@@ -54,10 +46,10 @@ class SequentialMonteCarlo:
     def run(
         self,
         initial_state: ParticleState,
-        observations: Optional[Iterable[Any]] = None,
-        num_steps: Optional[int] = None,
-        rng: Optional[np.random.Generator] = None,
-        shared_context: Optional[MutableMapping[str, Any]] = None,
+        observations: Iterable[Any] | None = None,
+        num_steps: int | None = None,
+        rng: np.random.Generator | int | None = None,
+        shared_context: MutableMapping[str, Any] | None = None,
     ) -> SMCResults:
         rng = _ensure_rng(rng)
         shared_context = shared_context or {}

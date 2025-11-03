@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict
 
 import numpy as np
 import pytest
@@ -48,7 +48,7 @@ def context_factory() -> Callable[..., StepContext]:
         t: int = 0,
         *,
         observation: object = None,
-        shared: Optional[Dict[str, object]] = None,
+        shared: Dict[str, object] | None = None,
     ) -> StepContext:
         if shared is None:
             shared = {}
