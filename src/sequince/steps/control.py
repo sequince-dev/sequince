@@ -20,6 +20,12 @@ class ContinueWhile(SMCStep):
     predicate evaluates to ``True`` for the current ``ParticleState`` and
     ``StepContext``.  When the predicate returns ``False`` the stop flag remains
     untouched, allowing the run to terminate.
+
+    Parameters
+    ----------
+    predicate:
+        A callable receiving the current ``ParticleState`` and ``StepContext``
+        and returning a boolean indicating whether to continue the SMC loop.
     """
 
     def __init__(

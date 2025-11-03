@@ -14,7 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 class ResamplingStep(SMCStep):
-    """Base class for resampling steps with an optional ESS trigger."""
+    """Base class for resampling steps with an optional ESS trigger.
+
+    Parameters
+    ----------
+    ess_threshold:
+        Resample when the effective sample size (ESS) ratio falls below this
+        threshold.  If ``None`` (default) resampling is never triggered based on
+        ESS.
+    always_resample:
+        When ``True`` always resample regardless of ESS (overrides
+        ``ess_threshold``).
+    """
 
     def __init__(
         self,

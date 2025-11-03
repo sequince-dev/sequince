@@ -219,7 +219,31 @@ class FixedTemperedWeighting(SMCStep):
 
 
 class AdaptiveTemperedWeighting(SMCStep):
-    """Adaptively choose the next temperature using an ESS target."""
+    """Adaptively choose the next temperature using an ESS target.
+
+    The temperature increment is chosen such that the effective sample size
+    (ESS) ratio after weighting reaches the specified target value
+    (``target_ess_ratio``), up to the maximum temperature (``max_temperature``).
+    If the maximum temperature is reached, the SMC run is requested to stop.
+
+    Parameters
+    ----------
+    log_increment_fn:
+        A callable or ``TemperedPosterior`` providing the log-weight increments.
+    target_ess_ratio:
+        The target ESS ratio (ESS / n) to achieve after weighting; must be in
+        the interval (0, 1].
+    max_temperature:
+        The maximum temperature to reach; once this temperature is reached,
+        the SMC run is requested to stop.
+    min_delta:
+        The minimum temperature increment to apply at each step.
+    normalize_after:
+        Whether to normalize the particle weights after updating.
+    max_bisection_iter:
+        The maximum number of bisection iterations to perform when finding
+        the temperature increment.
+    """
 
     def __init__(
         self,

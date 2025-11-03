@@ -22,6 +22,21 @@ ProposalFactory = Callable[[np.ndarray, StepContext], ProposalKernel]
 class WasteFreeResampleMove(SMCStep):
     """Combine resampling and mutation using waste-free recycling of proposals.
 
+    Examples
+    --------
+    >>> from sequince.posteriors import TemperedPosterior
+    >>> from sequince.proposals import GaussianRandomWalk
+    >>> from sequince.steps import WasteFreeResampleMove
+    >>> tempered_post = TemperedPosterior(log_likelihood, log_prior)
+    >>> proposal = GaussianRandomWalk(scale=0.5)
+    >>> step = WasteFreeResampleMove(
+    ...     log_prob_fn=tempered_post,
+    ...     proposal=proposal,
+    ...     resample_ancestors=True,
+    ...     proposals_per_particle=3,
+    ... )
+    >>> smc = SequentialMonteCarlo(steps=[..., step, ...])
+
     References
     ----------
     .. [1] Dau, H., & Chopin, N. (2021). Waste-free Sequential Monte Carlo. arXiv:2011.02328
