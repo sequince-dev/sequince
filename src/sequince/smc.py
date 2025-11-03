@@ -47,10 +47,10 @@ class SequentialMonteCarlo:
         observations: Optional[Iterable[Any]] = None,
         num_steps: Optional[int] = None,
         rng: Optional[np.random.Generator] = None,
-        static_context: Optional[MutableMapping[str, Any]] = None,
+        shared_context: Optional[MutableMapping[str, Any]] = None,
     ) -> SMCResults:
         rng = _ensure_rng(rng)
-        static_context = static_context or {}
+        shared_context = shared_context or {}
 
         logger.info(
             "Starting SMC run with %d steps (auto_normalize=%s)",
@@ -91,7 +91,7 @@ class SequentialMonteCarlo:
                 logger.debug("Iterations remaining: %d", steps_remaining)
 
             context = StepContext(
-                t=t, observation=observation, static=static_context
+                t=t, observation=observation, shared=shared_context
             )
             for step in self._steps:
                 step_name = getattr(step, "__name__", step.__class__.__name__)

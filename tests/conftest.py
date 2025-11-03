@@ -48,11 +48,11 @@ def context_factory() -> Callable[..., StepContext]:
         t: int = 0,
         *,
         observation: object = None,
-        static: Optional[Dict[str, object]] = None,
+        shared: Optional[Dict[str, object]] = None,
     ) -> StepContext:
-        if static is None:
-            static = {}
-        return StepContext(t=t, observation=observation, static=static)
+        if shared is None:
+            shared = {}
+        return StepContext(t=t, observation=observation, shared=shared)
 
     return _factory
 

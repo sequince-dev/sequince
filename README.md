@@ -32,7 +32,7 @@ def log_likelihood(theta):
     ...
 
 
-smc, posterior, static_context = make_standard_bayesian_smc(
+smc, posterior, shared_context = make_standard_bayesian_smc(
     log_prior,
     log_likelihood,
 )
@@ -46,7 +46,7 @@ initial_state = ParticleState(
 )
 
 rng = np.random.default_rng()
-results = smc.run(initial_state, rng=rng, static_context=static_context)
+results = smc.run(initial_state, rng=rng, shared_context=shared_context)
 samples = results.posterior_samples(1_000, rng=rng)
 ```
 
