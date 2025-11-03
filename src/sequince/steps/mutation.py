@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
 import emcee
 import numpy as np
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def _call_log_prob(
-    fn: Callable[..., float],
+    fn: LogProbFn,
     position: np.ndarray,
     context: StepContext,
 ) -> float:
@@ -26,15 +26,18 @@ def _call_log_prob(
         return fn(position)
 
 
+LogProbFn = Callable[..., float]
+
+
 class MutationStep(SMCStep):
     def __init__(
         self, log_prob_fn: Callable[..., float] | "TemperedPosterior"
     ):
         super().__init__()
         if hasattr(log_prob_fn, "log_prob"):
-            self._log_prob_fn = log_prob_fn.log_prob  # type: ignore[union-attr]
+            self._log_prob_fn = cast(LogProbFn, log_prob_fn.log_prob)
         else:
-            self._log_prob_fn = log_prob_fn  # type: ignore[assignment]
+            self._log_prob_fn = cast(LogProbFn, log_prob_fn)
 
 
 class EmceeMutation(MutationStep):
@@ -46,7 +49,7 @@ class EmceeMutation(MutationStep):
         *,
         n_steps: int = 1,
         move: Optional[emcee.moves.Move] = None,
-        run_kwargs: dict = None,
+        run_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
     ):
         super().__init__(log_prob_fn)
@@ -54,8 +57,8 @@ class EmceeMutation(MutationStep):
             raise ValueError("n_steps must be >= 1.")
         self._n_steps = n_steps
         self._move = move or emcee.moves.StretchMove()
-        self._run_kwargs = run_kwargs or {}
-        self._kwargs = kwargs
+        self._run_kwargs: dict[str, Any] = run_kwargs or {}
+        self._kwargs: dict[str, Any] = kwargs
 
     def apply(
         self,

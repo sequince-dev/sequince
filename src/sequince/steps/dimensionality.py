@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import numpy as np
 
@@ -147,7 +147,7 @@ class DimensionalityExpansion(SMCStep):
         signature = inspect.signature(sampler)
         params = signature.parameters
 
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         if "context" in params:
             kwargs["context"] = context
         if "rng" in params:
@@ -163,7 +163,7 @@ class DimensionalityExpansion(SMCStep):
             }
         ]
 
-        args = []
+        args: list[Any] = []
         if positional_params:
             first_name = positional_params[0].name
             if first_name in {"particles", "coords", "positions"}:

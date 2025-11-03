@@ -95,7 +95,7 @@ class SMCResults:
 
     def posterior_samples(
         self,
-        n_samples: int = None,
+        n_samples: int | None = None,
         *,
         rng: np.random.Generator | int | None = None,
         with_replacement: bool = True,

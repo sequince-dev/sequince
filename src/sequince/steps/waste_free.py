@@ -94,13 +94,15 @@ class WasteFreeResampleMove(SMCStep):
 
         if self._resample:
             weights = state.weights
-            ancestor_indices = rng.choice(n, size=n, replace=True, p=weights)
+            ancestor_indices: np.ndarray = np.asarray(
+                rng.choice(n, size=n, replace=True, p=weights)
+            )
             logger.debug(
                 "WasteFreeResampleMove drew ancestors with effective ESS %.4f.",
                 float(state.effective_sample_size()),
             )
         else:
-            ancestor_indices = np.arange(n)
+            ancestor_indices = np.arange(n, dtype=int)
 
         parent_particles = particles[ancestor_indices]
 
@@ -244,11 +246,11 @@ class WasteFreeResampleMove(SMCStep):
         if self._proposal_factory is not None:
             kernel = self._proposal_factory(parent_particles, context)
         else:
+            if self._proposal is None:
+                raise RuntimeError(
+                    "Proposal factory did not return a valid ProposalKernel."
+                )
             kernel = self._proposal
-        if kernel is None:
-            raise RuntimeError(
-                "Proposal factory did not return a valid ProposalKernel."
-            )
         if not hasattr(kernel, "sample") or not hasattr(kernel, "log_density"):
             raise TypeError(
                 "Resolved proposal must implement sample() and log_density()."

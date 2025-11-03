@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
@@ -10,12 +10,16 @@ if TYPE_CHECKING:
 
 
 def _ensure_rng(
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | int | None = None,
 ) -> np.random.Generator:
     """Return the provided RNG or create a default generator."""
-    if rng is None:
-        return np.random.default_rng()
-    return rng
+    if isinstance(rng, np.random.Generator):
+        return rng
+    if isinstance(rng, int) or rng is None:
+        return np.random.default_rng(rng)
+    raise TypeError(
+        "rng must be an instance of numpy.random.Generator, an int seed, or None."
+    )
 
 
 def _call_with_optional_context(

@@ -72,7 +72,7 @@ class MultinomialResampling(ResamplingStep):
         self, weights: np.ndarray, rng: np.random.Generator
     ) -> np.ndarray:
         n = weights.shape[0]
-        return rng.choice(n, size=n, p=weights)
+        return np.asarray(rng.choice(n, size=n, p=weights))
 
 
 class StratifiedResampling(ResamplingStep):

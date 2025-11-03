@@ -10,7 +10,7 @@ from .utils import _call_with_optional_context
 if TYPE_CHECKING:
     from .steps.base import StepContext
 
-ArrayLikeFn = Callable[..., np.ndarray]
+ArrayLikeFn = Callable[..., float | np.ndarray]
 
 
 def _evaluate(
@@ -49,7 +49,7 @@ class TemperedPosterior:
         self,
         particles: np.ndarray,
         context: "StepContext",
-    ) -> np.ndarray:
+    ) -> float | np.ndarray:
         """Return the log-weight increment required by the tempering step."""
         log_like = _evaluate(self.log_likelihood, particles, context)
         if self.log_proposal is None:
@@ -67,7 +67,7 @@ class TemperedPosterior:
         self,
         particles: np.ndarray,
         context: "StepContext",
-    ) -> np.ndarray:
+    ) -> float | np.ndarray:
         """Return the tempered log posterior evaluated at the current β."""
         beta = float(context.shared.get("temperature", 0.0))
         log_prior = _evaluate(self.log_prior, particles, context)
