@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -19,7 +19,7 @@ class ResamplingStep(SMCStep):
     def __init__(
         self,
         *,
-        ess_threshold: Optional[float] = 0.5,
+        ess_threshold: float | None = 0.5,
         always_resample: bool = False,
     ):
         self._ess_threshold = ess_threshold

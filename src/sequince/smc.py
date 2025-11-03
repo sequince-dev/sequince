@@ -1,15 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import (
-    Any,
-    Callable,
-    Iterable,
-    List,
-    MutableMapping,
-    Optional,
-    Sequence,
-)
+from typing import Any, Callable, Iterable, List, MutableMapping, Sequence
 
 import numpy as np
 
@@ -26,6 +18,16 @@ class SequentialMonteCarlo:
 
     Users supply an ordered collection of SMC steps that will be called in sequence at
     each iteration. Steps can mutate the state or return a new one.
+
+    Parameters
+    ----------
+    steps:
+        A sequence of callables implementing SMC steps.  Each callable should accept
+        three arguments: the current ``ParticleState``, the current ``StepContext``,
+        and a ``np.random.Generator`` instance, and return a new ``ParticleState``.
+    auto_normalize:
+        If ``True`` (default) automatically normalize the particle weights at the end
+        of each iteration.
     """
 
     def __init__(
@@ -44,10 +46,10 @@ class SequentialMonteCarlo:
     def run(
         self,
         initial_state: ParticleState,
-        observations: Optional[Iterable[Any]] = None,
-        num_steps: Optional[int] = None,
-        rng: Optional[np.random.Generator] = None,
-        shared_context: Optional[MutableMapping[str, Any]] = None,
+        observations: Iterable[Any] | None = None,
+        num_steps: int | None = None,
+        rng: np.random.Generator | int | None = None,
+        shared_context: MutableMapping[str, Any] | None = None,
     ) -> SMCResults:
         rng = _ensure_rng(rng)
         shared_context = shared_context or {}

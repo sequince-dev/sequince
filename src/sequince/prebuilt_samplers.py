@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Literal, Tuple
 
 from .posterior import TemperedPosterior
 from .smc import SequentialMonteCarlo
@@ -22,18 +22,18 @@ def make_standard_bayesian_smc(
     log_prior: Callable[..., Any],
     log_likelihood: Callable[..., Any],
     *,
-    log_proposal: Optional[Callable[..., Any]] = None,
+    log_proposal: Callable[..., Any] | None = None,
     target_ess_ratio: float = 0.7,
     max_temperature: float = 1.0,
     min_delta: float = 1e-4,
     resampling: ResamplingStrategy = "systematic",
-    resampling_ess_threshold: Optional[float] = 0.5,
+    resampling_ess_threshold: float | None = 0.5,
     always_resample: bool = False,
     mutation: MutationStrategy | SMCStep = "emcee",
     mutation_n_steps: int = 5,
     mutation_move: Any = None,
-    mutation_run_kwargs: Optional[Dict[str, Any]] = None,
-    mutation_kwargs: Optional[Dict[str, Any]] = None,
+    mutation_run_kwargs: Dict[str, Any] | None = None,
+    mutation_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
 ) -> Tuple[SequentialMonteCarlo, TemperedPosterior, Dict[str, Any]]:
     """Return a SequentialMonteCarlo instance configured with standard SMC steps.
@@ -116,7 +116,7 @@ def make_standard_bayesian_smc(
         always_resample=always_resample,
     )
 
-    mutation_step: Optional[SMCStep]
+    mutation_step: SMCStep | None
     if isinstance(mutation, SMCStep):
         mutation_step = mutation
     elif mutation == "emcee":

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
@@ -43,7 +43,7 @@ class TemperedPosterior:
 
     log_prior: ArrayLikeFn
     log_likelihood: ArrayLikeFn
-    log_proposal: Optional[ArrayLikeFn] = None
+    log_proposal: ArrayLikeFn | None = None
 
     def log_increment(
         self,

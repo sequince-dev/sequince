@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 from scipy.special import logsumexp
@@ -118,7 +118,7 @@ class TemperedWeighting(SMCStep):
         temperature_schedule: TemperatureSchedule,
         *,
         normalize_after: bool = True,
-        clip_temperature: Optional[tuple[float, float]] = None,
+        clip_temperature: tuple[float, float] | None = None,
     ):
         self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
         self._schedule = temperature_schedule
