@@ -213,3 +213,64 @@ class SMCResults:
         axis.set_ylabel(key)
         axis.set_title(f"Metadata '{key}' over iterations")
         return axis
+
+    def plot_corner(
+        self,
+        *,
+        state_index: int = -1,
+        parameter_inds: Sequence[int] | None = None,
+        filename: str | None = None,
+        **corner_kwargs: Any,
+    ) -> Any:
+        """
+        Plot a corner plot of the particles in the specified state.
+
+        Parameters
+        ----------
+        state_index
+            Index of the state to plot (default is -1, the final state).
+        parameter_inds
+            Indices of the parameters to include in the corner plot.
+            If ``None`` (default) all parameters are included.
+        filename
+            If provided, the plot is saved to this file instead of being returned.
+        corner_kwargs
+            Additional keyword arguments passed to the `corner` function.
+
+        Returns
+        -------
+        fig
+            The corner plot figure, if `filename` is not provided.
+        """
+        import matplotlib.pyplot as plt
+        from corner import corner
+
+        state = self.states[state_index]
+        particles = _as_2d(state.particles)
+
+        default_kwargs = dict(
+            bins=32,
+            smooth=0.9,
+            color="#02979d",  # TODO: configurable
+            truth_color="#f5b754",
+            quantiles=[0.16, 0.5, 0.84],
+            levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-9 / 2.0)),
+            plot_density=True,
+            plot_datapoints=True,
+            fill_contours=True,
+            show_titles=True,
+            hist_kwargs=dict(density=True),
+        )
+
+        if parameter_inds is not None:
+            particles = particles[:, parameter_inds]
+
+        if corner_kwargs:
+            default_kwargs.update(corner_kwargs)
+
+        fig = corner(particles, **default_kwargs)
+        if filename is not None:
+            fig.savefig(filename)
+            plt.close(fig)
+        else:
+            return fig
