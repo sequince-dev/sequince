@@ -218,6 +218,7 @@ class SMCResults:
         self,
         *,
         state_index: int = -1,
+        include_weights: bool = False,
         parameter_inds: Sequence[int] | None = None,
         filename: str | None = None,
         **corner_kwargs: Any,
@@ -229,6 +230,8 @@ class SMCResults:
         ----------
         state_index
             Index of the state to plot (default is -1, the final state).
+        include_weights
+            If ``True``, include particle weights in the corner plot.
         parameter_inds
             Indices of the parameters to include in the corner plot.
             If ``None`` (default) all parameters are included.
@@ -251,15 +254,16 @@ class SMCResults:
         default_kwargs = dict(
             bins=32,
             smooth=0.9,
-            color="#02979d",  # TODO: configurable
-            truth_color="#f5b754",
+            color="#EFBF35",
+            truth_color="#6B8E23",
             quantiles=[0.16, 0.5, 0.84],
             levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-9 / 2.0)),
             plot_density=True,
             plot_datapoints=True,
             fill_contours=True,
             show_titles=True,
-            hist_kwargs=dict(density=True),
+            hist_kwargs=dict(density=True, linewidth=2),
+            weights=state.weights if include_weights else None,
         )
 
         if parameter_inds is not None:
