@@ -1,13 +1,13 @@
 import logging
 from typing import TYPE_CHECKING, Callable
 
-import numpy as np
-
 from .base import SMCStep
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from orng import ArrayRNG
+
     from ..state import ParticleState
     from .base import StepContext
 
@@ -48,7 +48,7 @@ class LoggingStep(SMCStep):
         self,
         state: "ParticleState",
         context: "StepContext",
-        rng: "np.random.Generator",
+        rng: "ArrayRNG",
     ) -> "ParticleState":
         if context.t % self._frequency != 0:
             return state

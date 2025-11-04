@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+from .._array_api import asarray, namespace, to_numpy
+from .._typing import Array
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    from orng import ArrayRNG
+
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
@@ -40,7 +42,7 @@ class ResamplingStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
         ess = state.effective_sample_size()
         n = state.log_weights.shape[0]
@@ -61,9 +63,7 @@ class ResamplingStep(SMCStep):
         indices = self._choose_ancestors(weights, rng)
         return state.resample(indices)
 
-    def _choose_ancestors(
-        self, weights: np.ndarray, rng: np.random.Generator
-    ) -> np.ndarray:
+    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
         raise NotImplementedError
 
     def _should_resample(self, state: ParticleState) -> bool:
@@ -79,33 +79,56 @@ class ResamplingStep(SMCStep):
 class MultinomialResampling(ResamplingStep):
     """Draw ancestors with replacement according to the weights."""
 
-    def _choose_ancestors(
-        self, weights: np.ndarray, rng: np.random.Generator
-    ) -> np.ndarray:
-        n = weights.shape[0]
-        return np.asarray(rng.choice(n, size=n, p=weights))
+    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
+        xp = namespace(weights)
+        probs = asarray(weights, xp=xp)
+        n = probs.shape[0]
+        draws = rng.choice(n, size=n, p=probs)
+        return asarray(draws, xp=xp)
 
 
 class StratifiedResampling(ResamplingStep):
     """Stratified resampling for reduced variance."""
 
-    def _choose_ancestors(
-        self, weights: np.ndarray, rng: np.random.Generator
-    ) -> np.ndarray:
-        n = weights.shape[0]
-        positions = (np.arange(n) + rng.random(n)) / n
-        cumulative = np.cumsum(weights)
-        return np.searchsorted(cumulative, positions, side="right")
+    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
+        xp = namespace(weights)
+        probs = asarray(weights, xp=xp)
+        n = probs.shape[0]
+        offsets = xp.arange(n, dtype=probs.dtype)
+        jitter = asarray(rng.random((n,)), xp=xp)
+        positions = (offsets + jitter) / n
+        cumulative = _cumulative_sum(probs, xp=xp)
+        return _searchsorted(cumulative, positions, xp=xp)
 
 
 class SystematicResampling(ResamplingStep):
     """Systematic resampling for reduced variance."""
 
-    def _choose_ancestors(
-        self, weights: np.ndarray, rng: np.random.Generator
-    ) -> np.ndarray:
-        n = weights.shape[0]
-        start = rng.random()
-        positions = (start + np.arange(n)) / n
-        cumulative = np.cumsum(weights)
-        return np.searchsorted(cumulative, positions, side="right")
+    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
+        xp = namespace(weights)
+        probs = asarray(weights, xp=xp)
+        n = probs.shape[0]
+        start = asarray(rng.random(), xp=xp)
+        offsets = xp.arange(n, dtype=probs.dtype)
+        positions = (start + offsets) / n
+        cumulative = _cumulative_sum(probs, xp=xp)
+        return _searchsorted(cumulative, positions, xp=xp)
+
+
+def _cumulative_sum(array: Array, *, xp):
+    if hasattr(xp, "cumsum"):
+        return xp.cumsum(array)
+    return asarray(_np_cumsum(array), xp=xp)
+
+
+def _np_cumsum(array: Array):
+    return to_numpy(array).cumsum()
+
+
+def _searchsorted(cumulative: Array, positions: Array, *, xp):
+    if hasattr(xp, "searchsorted"):
+        return xp.searchsorted(cumulative, positions, side="right")
+    indices = to_numpy(cumulative)
+    pos = to_numpy(positions)
+    result = indices.searchsorted(pos, side="right")
+    return asarray(result, xp=xp)

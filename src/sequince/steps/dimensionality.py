@@ -4,15 +4,17 @@ import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-import numpy as np
-
+from .._array_api import asarray, namespace
+from .._typing import Array
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    from orng import ArrayRNG
+
     from ..state import ParticleState
 
 
-ComponentSampler = Callable[..., np.ndarray]
+ComponentSampler = Callable[..., Array]
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +71,19 @@ class DimensionalityExpansion(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
-        current_particles = np.asarray(state.particles)
+        xp = namespace(state.particles)
+        current_particles = asarray(state.particles, xp=xp)
         if current_particles.ndim == 1:
-            current_particles = current_particles[:, np.newaxis]
+            current_particles = xp.reshape(
+                current_particles, (current_particles.shape[0], 1)
+            )
 
         new_block = self._invoke_sampler(state, context, rng)
-        new_block = np.asarray(new_block)
+        new_block = asarray(new_block, xp=xp)
         if new_block.ndim == 1:
-            new_block = new_block[:, np.newaxis]
+            new_block = xp.reshape(new_block, (new_block.shape[0], 1))
 
         if new_block.shape[0] != current_particles.shape[0]:
             raise ValueError(
@@ -96,7 +101,7 @@ class DimensionalityExpansion(SMCStep):
                     f"{self._expected_block_size})."
                 )
 
-        expanded_particles = np.concatenate(
+        expanded_particles = xp.concatenate(
             [current_particles, new_block], axis=1
         )
         metadata = dict(state.metadata)
@@ -141,8 +146,8 @@ class DimensionalityExpansion(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
-    ) -> np.ndarray:
+        rng: "ArrayRNG",
+    ) -> Array:
         sampler = self._component_sampler
         signature = inspect.signature(sampler)
         params = signature.parameters

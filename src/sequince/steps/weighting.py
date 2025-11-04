@@ -1,43 +1,58 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Any, Callable
 
-import numpy as np
-from scipy.special import logsumexp
-
+from .._array_api import asarray, logsumexp, namespace, to_numpy
+from .._typing import Array
 from ..utils import _call_with_optional_context
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    try:
+        from array_api_compat.typing import Array
+    except Exception:  # pragma: no cover
+        from typing import Any as Array
+    from orng import ArrayRNG
+
     from ..posterior import TemperedPosterior
     from ..state import ParticleState
+else:  # pragma: no cover
+    from typing import Any as Array
+
+    from orng import ArrayRNG
 
 
-IncrementFn = Callable[..., np.ndarray | float]
+IncrementFn = Callable[..., Array | float]
 TemperatureSchedule = Callable[..., float]
 
 logger = logging.getLogger(__name__)
 
 
-def _as_float_array(value: Any) -> np.ndarray:
-    """Convert a value to a 1d float array."""
-    array = np.asarray(value, dtype=float)
-    if array.ndim != 1:
+def _as_1d_array(value: Any, *, xp) -> Array:
+    """Convert a value to a 1d array in the provided namespace."""
+    arr = asarray(value, xp=xp)
+    if arr.ndim == 0:
+        return xp.reshape(arr, (1,))
+    if arr.ndim != 1:
         raise ValueError("Weight updates must be one-dimensional.")
-    return array
+    return arr
 
 
-def _ess_ratio_from_log_weights(log_weights: np.ndarray) -> float:
+def _ess_ratio_from_log_weights(log_weights: Any) -> float:
     """Return ESS ratio (ESS / n) given log weights."""
-    log_norm = logsumexp(log_weights)
-    if np.isfinite(log_norm):
-        weights = np.exp(log_weights - log_norm)
+    xp = namespace(log_weights)
+    lw = asarray(log_weights, xp=xp)
+    log_norm = logsumexp(lw, xp=xp)
+    log_norm_scalar = float(log_norm)
+    if math.isfinite(log_norm_scalar):
+        weights = xp.exp(lw - log_norm_scalar)
     else:
-        n = log_weights.shape[0]
-        weights = np.full(n, 1.0 / n)
-    ess = 1.0 / np.sum(np.square(weights))
-    return ess / log_weights.shape[0]
+        n = lw.shape[0]
+        weights = xp.full((n,), 1.0 / n, dtype=lw.dtype)
+    ess = 1.0 / float(to_numpy(xp.sum(xp.square(weights))))
+    return ess / lw.shape[0]
 
 
 def _resolve_increment_fn(
@@ -46,9 +61,7 @@ def _resolve_increment_fn(
     if hasattr(increment, "log_increment"):
         posterior = increment  # type: ignore[assignment]
 
-        def _wrapped(
-            particles: np.ndarray, context: StepContext
-        ) -> np.ndarray | float:
+        def _wrapped(particles: Array, context: StepContext) -> Array | float:
             # type: ignore[attr-defined]
             return posterior.log_increment(particles, context)  # type: ignore[union-attr]
 
@@ -79,14 +92,15 @@ class LogLikelihoodWeighting(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
+        xp = namespace(state.log_weights)
         log_like = _call_with_optional_context(
             self._log_likelihood_fn,
             (state.particles,),
             context,
         )
-        increments = _as_float_array(log_like)
+        increments = _as_1d_array(log_like, xp=xp)
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
                 "Log-likelihood function must return one value per particle."
@@ -99,7 +113,7 @@ class LogLikelihoodWeighting(SMCStep):
             updated_state, _ = updated_state.normalize()
         logger.debug(
             "LogLikelihoodWeighting: mean increment %.6f (normalize_after=%s).",
-            float(np.mean(increments)),
+            float(to_numpy(xp.sum(increments) / increments.shape[0])),
             self._normalize_after,
         )
         return updated_state
@@ -129,7 +143,7 @@ class TemperedWeighting(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
         temperature = float(
             _call_with_optional_context(
@@ -140,14 +154,15 @@ class TemperedWeighting(SMCStep):
         )
         if self._clip is not None:
             lo, hi = self._clip
-            temperature = float(np.clip(temperature, lo, hi))
+            temperature = float(max(lo, min(hi, temperature)))
 
         log_increments = _call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
-        increments = _as_float_array(log_increments) * temperature
+        xp = namespace(state.log_weights)
+        increments = _as_1d_array(log_increments, xp=xp) * temperature
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
                 "Increment function must return one value per particle."
@@ -156,7 +171,7 @@ class TemperedWeighting(SMCStep):
         logger.debug(
             "TemperedWeighting: temperature %.4f applied; mean increment %.6f.",
             temperature,
-            float(np.mean(increments)),
+            float(to_numpy(xp.sum(increments) / increments.shape[0])),
         )
         updated_state = state.with_updates(
             log_weights=state.log_weights + increments
@@ -186,15 +201,16 @@ class FixedTemperedWeighting(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
         log_increments = _call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
+        xp = namespace(state.log_weights)
         increments = (
-            _as_float_array(log_increments) * self._temperature_increment
+            _as_1d_array(log_increments, xp=xp) * self._temperature_increment
         )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
@@ -271,7 +287,7 @@ class AdaptiveTemperedWeighting(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
         current_temp = state.metadata.get("temperature", 0.0)
         remaining = self._max_temperature - current_temp
@@ -281,14 +297,15 @@ class AdaptiveTemperedWeighting(SMCStep):
             context.request_stop()
             return state
 
+        xp = namespace(state.log_weights)
         log_increments = _call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
-        increments = _as_float_array(log_increments)
+        increments = _as_1d_array(log_increments, xp=xp)
 
-        if np.allclose(increments, 0.0):
+        if _max_abs(increments, xp=xp) <= 1e-12:
             delta = remaining
         else:
             delta = self._find_delta(state.log_weights, increments, remaining)
@@ -313,8 +330,9 @@ class AdaptiveTemperedWeighting(SMCStep):
             metadata["temperature"],
             new_ess_ratio,
         )
-        if metadata["temperature"] >= self._max_temperature or np.isclose(
-            metadata["temperature"], self._max_temperature
+        if (
+            metadata["temperature"] >= self._max_temperature
+            or abs(metadata["temperature"] - self._max_temperature) <= 1e-9
         ):
             logger.debug(
                 "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop.",
@@ -325,8 +343,8 @@ class AdaptiveTemperedWeighting(SMCStep):
 
     def _find_delta(
         self,
-        base_log_weights: np.ndarray,
-        increments: np.ndarray,
+        base_log_weights: Array,
+        increments: Array,
         max_delta: float,
     ) -> float:
         low = 0.0
@@ -356,3 +374,7 @@ class AdaptiveTemperedWeighting(SMCStep):
 
         delta = max(0.5 * (low + high), self._min_delta)
         return min(delta, max_delta)
+
+
+def _max_abs(array: Array, *, xp) -> float:
+    return float(to_numpy(xp.max(xp.abs(array))))

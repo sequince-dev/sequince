@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Iterable, List, MutableMapping, Sequence
-
-import numpy as np
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterable,
+    List,
+    MutableMapping,
+    Sequence,
+)
 
 from .result import SMCResults
 from .state import ParticleState
 from .steps.base import StepContext
 from .utils import _ensure_rng
+
+if TYPE_CHECKING:
+    import numpy as np
+    from orng import ArrayRNG
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +34,7 @@ class SequentialMonteCarlo:
     steps:
         A sequence of callables implementing SMC steps.  Each callable should accept
         three arguments: the current ``ParticleState``, the current ``StepContext``,
-        and a ``np.random.Generator`` instance, and return a new ``ParticleState``.
+        and an ``orng.ArrayRNG`` instance, and return a new ``ParticleState``.
     auto_normalize:
         If ``True`` (default) automatically normalize the particle weights at the end
         of each iteration.
@@ -34,7 +44,7 @@ class SequentialMonteCarlo:
         self,
         steps: Sequence[
             Callable[
-                [ParticleState, StepContext, np.random.Generator],
+                [ParticleState, StepContext, "ArrayRNG"],
                 ParticleState,
             ]
         ],
@@ -48,7 +58,7 @@ class SequentialMonteCarlo:
         initial_state: ParticleState,
         observations: Iterable[Any] | None = None,
         num_steps: int | None = None,
-        rng: np.random.Generator | int | None = None,
+        rng: "ArrayRNG" | np.random.Generator | int | None = None,
         shared_context: MutableMapping[str, Any] | None = None,
     ) -> SMCResults:
         rng = _ensure_rng(rng)

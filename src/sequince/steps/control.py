@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable
 
-import numpy as np
-
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    from orng import ArrayRNG
+
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class ContinueWhile(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> "ParticleState":
         if self._predicate(state, context):
             context.stop_requested = False

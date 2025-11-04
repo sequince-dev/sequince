@@ -1,24 +1,34 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
+from orng import ArrayRNG
 
 if TYPE_CHECKING:
     from .steps.base import StepContext
 
 
+RNGLike: TypeAlias = ArrayRNG | np.random.Generator | int | None
+
+
 def _ensure_rng(
-    rng: np.random.Generator | int | None = None,
-) -> np.random.Generator:
-    """Return the provided RNG or create a default generator."""
-    if isinstance(rng, np.random.Generator):
+    rng: RNGLike = None,
+    *,
+    backend: str | None = None,
+) -> ArrayRNG:
+    """Return the provided RNG or create an ``ArrayRNG`` for the requested backend."""
+    if isinstance(rng, ArrayRNG):
         return rng
-    if isinstance(rng, int) or rng is None:
-        return np.random.default_rng(rng)
+    if isinstance(rng, np.random.Generator):
+        return ArrayRNG(backend="numpy", generator=rng)
+    if isinstance(rng, int):
+        return ArrayRNG(backend=backend or "numpy", seed=rng)
+    if rng is None:
+        return ArrayRNG(backend=backend or "numpy")
     raise TypeError(
-        "rng must be an instance of numpy.random.Generator, an int seed, or None."
+        "rng must be an ArrayRNG, numpy.random.Generator, an int seed, or None."
     )
 
 
