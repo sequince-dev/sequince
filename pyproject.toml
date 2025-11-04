@@ -47,6 +47,7 @@ test = [
     "corner",
 ]
 dev = [
+    "corner",
     "pre-commit",
     "mypy>=1.10",
     {include-group = "test"},
