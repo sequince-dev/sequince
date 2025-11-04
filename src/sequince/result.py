@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Sequence, Union
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
-import numpy as np
+from numpy.random import Generator as NumPyGenerator
 
+from ._array_api import asarray, namespace, to_numpy
+from ._typing import Array
 from .state import ParticleState
 from .utils import _ensure_rng
 
+if TYPE_CHECKING:
+    from orng import ArrayRNG
 
-def _as_2d(array: np.ndarray) -> np.ndarray:
+
+def _as_2d(array: Any) -> Any:
     """Ensure particle arrays are 2-D with rows corresponding to samples."""
-    arr = np.asarray(array)
+    xp = namespace(array)
+    arr = asarray(array, xp=xp)
     if arr.ndim == 1:
-        return arr[:, np.newaxis]
+        arr = xp.reshape(arr, (arr.shape[0], 1))
     return arr
 
 
@@ -48,33 +55,40 @@ class SMCResults:
         """Return the last state produced by the run."""
         return self.states[-1]
 
-    def log_evidence_history(self) -> np.ndarray:
+    def log_evidence_history(self) -> Array:
         """Return the log evidence trajectory."""
-        return np.array([float(state.log_evidence) for state in self.states])
+        xp = namespace(self.final_state.log_weights if self.states else None)
+        values = [float(state.log_evidence) for state in self.states]
+        return asarray(values, xp=xp)
 
-    def effective_sample_sizes(self) -> np.ndarray:
+    def effective_sample_sizes(self) -> Array:
         """Return the effective sample size (ESS) for every iteration."""
-        return np.array(
-            [float(state.effective_sample_size()) for state in self.states]
-        )
+        xp = namespace(self.final_state.log_weights if self.states else None)
+        values = [
+            float(state.effective_sample_size()) for state in self.states
+        ]
+        return asarray(values, xp=xp)
 
-    def effective_sample_size_ratios(self) -> np.ndarray:
+    def effective_sample_size_ratios(self) -> Array:
         """Return ESS / n_particles for each iteration."""
-        return np.array(
-            [
-                float(state.effective_sample_size() / state.particles.shape[0])
-                for state in self.states
-            ]
-        )
+        xp = namespace(self.final_state.log_weights if self.states else None)
+        values = [
+            float(state.effective_sample_size() / state.particles.shape[0])
+            for state in self.states
+        ]
+        return asarray(values, xp=xp)
 
     def metadata_history(
-        self, key: str, *, default: Any = np.nan
-    ) -> np.ndarray:
+        self, key: str, *, default: Any = math.nan
+    ) -> Array | list[Any]:
         """Return an array containing a metadata field pulled from each state."""
-        return np.array(
-            [state.metadata.get(key, default) for state in self.states],
-            dtype=float if isinstance(default, (int, float)) else object,
-        )
+        values = [state.metadata.get(key, default) for state in self.states]
+        if isinstance(default, (int, float)):
+            xp = namespace(
+                self.final_state.log_weights if self.states else None
+            )
+            return asarray(values, xp=xp)
+        return values
 
     def summary(self) -> dict[str, Any]:
         """Return a concise dictionary of high-level diagnostics."""
@@ -83,24 +97,26 @@ class SMCResults:
         log_evidence = self.log_evidence_history()
         summary_dict: dict[str, Any] = {
             "iterations": len(self),
-            "final_ess": ess[-1],
-            "final_ess_ratio": ess_ratio[-1],
-            "final_log_evidence": log_evidence[-1],
+            "final_ess": float(to_numpy(ess)[-1]),
+            "final_ess_ratio": float(to_numpy(ess_ratio)[-1]),
+            "final_log_evidence": float(to_numpy(log_evidence)[-1]),
         }
 
         temperature_history = self.metadata_history(
-            "temperature", default=np.nan
+            "temperature", default=math.nan
         )
-        summary_dict["final_temperature"] = temperature_history[-1]
+        summary_dict["final_temperature"] = float(
+            to_numpy(temperature_history)[-1]
+        )
         return summary_dict
 
     def posterior_samples(
         self,
         n_samples: int | None = None,
         *,
-        rng: np.random.Generator | int | None = None,
+        rng: "ArrayRNG" | NumPyGenerator | int | None = None,
         with_replacement: bool = True,
-    ) -> np.ndarray:
+    ) -> Array:
         """Draw samples from the weighted posterior represented by the final state."""
         if n_samples is None:
             return _as_2d(self.final_state.particles)
@@ -109,12 +125,16 @@ class SMCResults:
         rng = _ensure_rng(rng)
         final_state = self.final_state
         particles = _as_2d(final_state.particles)
-        weights = np.asarray(final_state.weights, dtype=float)
-        indices = rng.choice(
-            particles.shape[0],
-            size=n_samples,
-            replace=with_replacement,
-            p=weights,
+        xp = namespace(particles, final_state.weights)
+        weights = asarray(final_state.weights, xp=xp)
+        indices = asarray(
+            rng.choice(
+                particles.shape[0],
+                size=n_samples,
+                replace=with_replacement,
+                p=weights,
+            ),
+            xp=xp,
         )
         return particles[indices]
 
@@ -122,52 +142,60 @@ class SMCResults:
         self,
         *,
         state_index: int = -1,
-    ) -> np.ndarray:
+    ) -> Array:
         """Return the weighted mean of the specified state (defaults to final)."""
         state = self.states[state_index]
         particles = _as_2d(state.particles)
-        weights = state.weights[:, np.newaxis]
-        return np.sum(weights * particles, axis=0)
+        xp = namespace(particles)
+        weights = asarray(state.weights, xp=xp)
+        weights = xp.reshape(weights, (weights.shape[0], 1))
+        return xp.sum(weights * particles, axis=0)
 
     def weighted_covariance(
         self,
         *,
         state_index: int = -1,
         ddof: int = 0,
-    ) -> np.ndarray:
+    ) -> Array:
         """Return the weighted covariance matrix for the specified state."""
         state = self.states[state_index]
         particles = _as_2d(state.particles)
-        weights = np.asarray(state.weights, dtype=float)
-        mean = self.weighted_mean(state_index=state_index)
+        xp = namespace(particles)
+        weights = asarray(state.weights, xp=xp)
+        mean = asarray(self.weighted_mean(state_index=state_index), xp=xp)
         centered = particles - mean
-        cov = centered.T @ (centered * weights[:, np.newaxis])
-        weight_sum = weights.sum()
+        weights_column = xp.reshape(weights, (weights.shape[0], 1))
+        weighted = centered * weights_column
+        cov = xp.matmul(xp.transpose(centered), weighted)
+        weight_sum = float(to_numpy(xp.sum(weights)))
         if ddof != 0:
-            weight_sum = max(weight_sum - ddof, np.finfo(float).eps)
+            weight_sum = max(weight_sum - ddof, 1e-12)
         return cov / weight_sum
 
     def apply_weighted(
         self,
-        fn: Callable[[np.ndarray], np.ndarray],
+        fn: Callable[[Any], Any],
         *,
         state_index: int = -1,
-    ) -> np.ndarray:
+    ) -> Array:
         """Evaluate a function under the weighted empirical distribution."""
         state = self.states[state_index]
         particles = _as_2d(state.particles)
-        values = np.asarray(fn(particles))
-        weights = state.weights
+        xp = namespace(particles)
+        values = asarray(fn(particles), xp=xp)
+        weights = asarray(state.weights, xp=xp)
         if values.ndim == 1:
-            return np.sum(weights * values)
-        return np.tensordot(weights, values, axes=(0, 0))
+            return xp.sum(weights * values)
+        reshape_dims = (weights.shape[0],) + (1,) * (values.ndim - 1)
+        expanded_weights = xp.reshape(weights, reshape_dims)
+        return xp.sum(expanded_weights * values, axis=0)
 
     def plot_log_evidence(
         self, *, ax: Any = None, label_axes: bool = True, **plot_kwargs: Any
     ) -> Any:
         """Plot the log evidence trajectory."""
-        x = np.arange(len(self))
-        y = self.log_evidence_history()
+        x = to_numpy(range(len(self)))
+        y = to_numpy(self.log_evidence_history())
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
         if label_axes:
@@ -185,13 +213,13 @@ class SMCResults:
         **plot_kwargs: Any,
     ) -> Any:
         """Plot ESS or the ESS ratio across iterations."""
-        x = np.arange(len(self))
+        x = to_numpy(range(len(self)))
         if normalize:
-            y = self.effective_sample_size_ratios()
+            y = to_numpy(self.effective_sample_size_ratios())
             ylabel = "ESS / n"
             title = "Effective sample size ratio"
         else:
-            y = self.effective_sample_sizes()
+            y = to_numpy(self.effective_sample_sizes())
             ylabel = "ESS"
             title = "Effective sample size"
         axis = self._prepare_axis(ax)
@@ -207,13 +235,13 @@ class SMCResults:
         key: str,
         *,
         ax: Any = None,
-        default: Any = np.nan,
+        default: Any = math.nan,
         label_axes: bool = True,
         **plot_kwargs: Any,
     ) -> Any:
         """Plot the evolution of a metadata entry stored in each state."""
-        x = np.arange(len(self))
-        y = self.metadata_history(key, default=default)
+        x = to_numpy(range(len(self)))
+        y = to_numpy(self.metadata_history(key, default=default))
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
         if label_axes:
@@ -228,7 +256,7 @@ class SMCResults:
         state_index: int = -1,
         include_weights: bool = False,
         parameter_inds: Sequence[int] | None = None,
-        filename: Union[str, Path] | None = None,
+        filename: str | Path | None = None,
         **corner_kwargs: Any,
     ) -> Any:
         """
@@ -293,7 +321,7 @@ class SMCResults:
         ax: Any = None,
         parameter_inds: Sequence[int] | None = None,
         parameter_labels: Sequence[str] | None = None,
-        filename: Union[str, Path] | None = None,
+        filename: str | Path | None = None,
         kind: str = "violin",
         **plot_kwargs: Any,
     ) -> Any:
@@ -328,7 +356,7 @@ class SMCResults:
             "Only 'violin' and 'scatter' kinds are supported."
         )
 
-        default_kwargs: Dict[str, Any] = dict()
+        default_kwargs: dict[str, Any] = dict()
 
         if kind == "scatter":
             default_kwargs.update(

@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, MutableMapping
 
-import numpy as np
-
 from ..utils import _ensure_rng
 
 if TYPE_CHECKING:
+    from orng import ArrayRNG
+
     from ..state import ParticleState
 
 
@@ -32,7 +32,7 @@ class SMCStep:
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: np.random.Generator | int | None = None,
+        rng: "ArrayRNG" | int | None = None,
     ) -> "ParticleState":
         return self.apply(state, context, _ensure_rng(rng))
 
@@ -40,6 +40,6 @@ class SMCStep:
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> "ParticleState":
         raise NotImplementedError("SMCStep subclasses must implement apply().")
