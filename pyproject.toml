@@ -46,6 +46,7 @@ test = [
     "pytest-cov>=4.0",
 ]
 dev = [
+    "corner",
     "pre-commit",
     "mypy>=1.10",
     {include-group = "test"},
