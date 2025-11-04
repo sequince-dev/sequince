@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 
@@ -7,6 +9,9 @@ from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.weighting import AdaptiveTemperedWeighting
+
+if TYPE_CHECKING:
+    from orng import ArrayRNG
 
 
 class StopAfterNStep(SMCStep):
@@ -17,7 +22,7 @@ class StopAfterNStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
         count = state.metadata.get("calls", 0) + 1
         metadata = dict(state.metadata)
@@ -32,7 +37,7 @@ class RecordObservationStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
         metadata = dict(state.metadata)
         metadata.setdefault("observations", []).append(context.observation)

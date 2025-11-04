@@ -7,12 +7,13 @@ import pytest
 
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
+from sequince.utils import _ensure_rng
 
 
 @pytest.fixture
-def rng() -> np.random.Generator:
-    """Seeded RNG for deterministic tests."""
-    return np.random.default_rng(seed=12345)
+def rng():
+    """Seeded ArrayRNG for deterministic tests."""
+    return _ensure_rng(12345)
 
 
 @pytest.fixture
