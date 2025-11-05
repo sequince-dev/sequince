@@ -286,7 +286,7 @@ class SMCResults:
         parameter_inds: Sequence[int] | None = None,
         parameter_labels: Sequence[str] | None = None,
         filename: str | None = None,
-        kind: str = "scatter",
+        kind: str = "violin",
         **plot_kwargs: Any,
     ) -> Any:
         """
@@ -333,7 +333,7 @@ class SMCResults:
             default_kwargs.update(
                 dict(
                     side="high",
-                    widths=1,
+                    widths=2,
                     showextrema=False,
                 )
             )
