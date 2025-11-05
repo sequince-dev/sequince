@@ -28,12 +28,12 @@ class SMCResults:
             raise ValueError("SMCResults requires at least one ParticleState.")
 
     @staticmethod
-    def _prepare_axis(ax: Any) -> Any:
+    def _prepare_axis(ax: Any, **subplot_kwargs) -> Any:
         if ax is not None:
             return ax
         import matplotlib.pyplot as plt  # Imported lazily to avoid hard dependency at import time.
 
-        _, ax = plt.subplots()
+        _, ax = plt.subplots(**subplot_kwargs)
         return ax
 
     def __len__(self) -> int:
@@ -278,3 +278,30 @@ class SMCResults:
             plt.close(fig)
         else:
             return fig
+
+    def plot_trace(
+        self,
+        *,
+        parameter_inds: Sequence[int] | None = None,
+        filename: str | None = None,
+        **plot_kwargs: Any,
+    ) -> Any:
+        """
+        Plot a trace plot of the particles in the specified states.
+
+        Parameters
+        ----------
+        parameter_inds
+            Indices of the parameters to include in the trace plot.
+            If ``None`` (default) all parameters are included.
+        filename
+            If provided, the plot is saved to this file instead of being returned.
+        plot_kwargs
+            Additional keyword arguments passed to the `ax.plot` function.
+
+        Returns
+        -------
+        ax
+            The trace plot axis, if `filename` is not provided.
+        """
+        pass
