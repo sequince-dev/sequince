@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Dict, Sequence
 
 import numpy as np
 
@@ -286,6 +286,7 @@ class SMCResults:
         parameter_inds: Sequence[int] | None = None,
         parameter_labels: Sequence[str] | None = None,
         filename: str | None = None,
+        kind: str = "scatter",
         **plot_kwargs: Any,
     ) -> Any:
         """
@@ -303,6 +304,8 @@ class SMCResults:
             If ``None`` (default) generic labels `{x_i}` are used.
         filename
             If provided, the plot is saved to this file instead of being returned.
+        kind
+            The kind of trace plot to create.  Currently only "violin" or "scatter" are supported.
         plot_kwargs
             Additional keyword arguments passed to the `ax.plot` function.
 
@@ -313,10 +316,28 @@ class SMCResults:
         """
         import matplotlib.pyplot as plt
 
-        default_kwargs = dict(
-            marker=",",
-            linestyle="",
+        assert kind in ("violin", "scatter"), (
+            "Only 'violin' and 'scatter' kinds are supported."
         )
+
+        default_kwargs: Dict[str, Any] = dict()
+
+        if kind == "scatter":
+            default_kwargs.update(
+                dict(
+                    marker=",",
+                    linestyle="",
+                )
+            )
+        elif kind == "violin":
+            default_kwargs.update(
+                dict(
+                    side="high",
+                    widths=1,
+                    showextrema=False,
+                )
+            )
+
         if plot_kwargs:
             default_kwargs.update(plot_kwargs)
 
@@ -343,13 +364,22 @@ class SMCResults:
         if len(parameter_inds) == 1:
             axis = [axis]
 
-        x_iter = np.repeat(np.arange(n_iterations), all_particles.shape[1])
+        if kind == "scatter":
+            x_iter = np.repeat(np.arange(n_iterations), all_particles.shape[1])
+            all_particles = np.array(all_particles)
+
         for i, param_ind in enumerate(parameter_inds):
-            axis[i].plot(
-                x_iter,
-                all_particles[:, :, param_ind].flatten(),
-                **default_kwargs,
-            )
+            if kind == "scatter":
+                axis[i].plot(
+                    x_iter,
+                    all_particles[:, :, param_ind].flatten(),
+                    **default_kwargs,
+                )
+            elif kind == "violin":
+                axis[i].violinplot(
+                    all_particles[:, :, param_ind].T,
+                    **default_kwargs,
+                )
 
             axis[i].set_ylabel(parameter_labels[i])
 
