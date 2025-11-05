@@ -48,11 +48,19 @@ class TracePlot(SMCCallback):
     def __init__(
         self,
         parameter_inds: list[int] | None = None,
+        parameter_labels: list[str] | None = None,
         outdir: str | None = None,
         filename: str = "trace.png",
         plot_kwargs: dict[str, Any] | None = None,
     ):
         self.parameter_inds = parameter_inds
+        self.parameter_labels = parameter_labels
+
+        if parameter_labels is not None and parameter_inds is not None:
+            assert len(parameter_labels) == len(parameter_inds), (
+                "parameter_labels and parameter_inds must have the same length."
+            )
+
         self.outdir = outdir or "."
         self.filename = filename
         self.full_path = str(

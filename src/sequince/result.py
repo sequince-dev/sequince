@@ -282,7 +282,9 @@ class SMCResults:
     def plot_trace(
         self,
         *,
+        ax: Any = None,
         parameter_inds: Sequence[int] | None = None,
+        parameter_labels: Sequence[str] | None = None,
         filename: str | None = None,
         **plot_kwargs: Any,
     ) -> Any:
@@ -291,9 +293,14 @@ class SMCResults:
 
         Parameters
         ----------
+        ax
+            Axis on which to plot.  If ``None``, a new figure and axis are created.
         parameter_inds
             Indices of the parameters to include in the trace plot.
             If ``None`` (default) all parameters are included.
+        parameter_labels
+            Labels for the parameters to include in the trace plot.
+            If ``None`` (default) generic labels `{x_i}` are used.
         filename
             If provided, the plot is saved to this file instead of being returned.
         plot_kwargs
@@ -304,4 +311,52 @@ class SMCResults:
         ax
             The trace plot axis, if `filename` is not provided.
         """
-        pass
+        import matplotlib.pyplot as plt
+
+        default_kwargs = dict(
+            marker=",",
+            linestyle="",
+        )
+        if plot_kwargs:
+            default_kwargs.update(plot_kwargs)
+
+        all_particles = np.array(
+            [_as_2d(state.particles) for state in self.states]
+        )  # (n_iterations, n_particles, n_parameters)
+        n_iterations = len(all_particles)
+
+        if parameter_inds is None:
+            parameter_inds = list(range(all_particles.shape[2]))
+
+        if parameter_labels is None:
+            parameter_labels = [f"x_{i}" for i in parameter_inds]
+
+        assert len(parameter_inds) == len(parameter_labels)
+
+        axis = self._prepare_axis(
+            ax,
+            nrows=len(parameter_inds),
+            figsize=(5, 3 * len(parameter_inds)),
+            sharex=True,
+        )
+
+        if len(parameter_inds) == 1:
+            axis = [axis]
+
+        x_iter = np.repeat(np.arange(n_iterations), all_particles.shape[1])
+        for i, param_ind in enumerate(parameter_inds):
+            axis[i].plot(
+                x_iter,
+                all_particles[:, :, param_ind].flatten(),
+                **default_kwargs,
+            )
+
+            axis[i].set_ylabel(parameter_labels[i])
+
+        axis[-1].set_xlabel("Iteration")
+
+        if filename is not None:
+            plt.savefig(filename, bbox_inches="tight")
+            plt.close()
+        else:
+            return axis
