@@ -48,7 +48,6 @@ test = [
     "matplotlib>=3.5",
 ]
 dev = [
-    "corner",
     "pre-commit",
     "mypy>=1.10",
     {include-group = "test"},
