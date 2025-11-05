@@ -31,8 +31,14 @@ def test_smc_results_summary(dummy_results: SMCResults) -> None:
 
 
 def test_smc_results_plot_metadata_history(dummy_results: SMCResults) -> None:
-    dummy_results.plot_metadata_history("temperature", default=0.0)
+    import matplotlib.pyplot as plt
+
+    ax = dummy_results.plot_metadata_history("temperature", default=0.0)
+    plt.close(ax.get_figure())
 
 
 def test_smc_results_plot_corner(dummy_results: SMCResults) -> None:
-    dummy_results.plot_corner()
+    import matplotlib.pyplot as plt
+
+    ax = dummy_results.plot_corner()
+    plt.close(ax.get_figure())
