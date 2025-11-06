@@ -31,6 +31,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # Install pytorch CPU version for testing
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        # Install backends for orng
+        # Can't use cupy since it requires CUDA toolkit to be installed
+        pip install jax
         pip install -e .[minipcn] --group test
     - name: Test with pytest
       run: |
