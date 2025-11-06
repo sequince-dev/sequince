@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
+import numpy as np
 from numpy.random import Generator as NumPyGenerator
 
 from ._array_api import asarray, namespace, to_numpy
