@@ -84,3 +84,71 @@ class TracePlot(SMCCallback):
             filename=self.full_path,
             **self.plot_kwargs,
         )
+
+
+class StatePlot(SMCCallback):
+    """
+    Callback to plot user-specified state metadata every SMC iteration.
+
+    Parameters
+    ----------
+    metadata_keys:
+        List of metadata keys to plot. At least one key must be specified.
+    outdir:
+        Directory to save the state plots.  If ``None`` (default) saves to the current
+        working directory.
+    filename:
+        Filename for the state plot.  Default is ``"state.png"``.
+    plot_kwargs:
+        Additional keyword arguments to pass to the `SMCResults.plot_metadata_history` method.
+    """
+
+    def __init__(
+        self,
+        metadata_keys: list[str],
+        outdir: str | None = None,
+        filename: str = "state.png",
+        plot_kwargs: dict[str, Any] | None = None,
+    ):
+        assert len(metadata_keys) > 0, (
+            "At least one metadata key must be specified."
+        )
+        self.metadata_keys = metadata_keys
+        self.outdir = outdir or "."
+        self.filename = filename
+        self.full_path = str(
+            (
+                Path(self.outdir) / Path(self.filename)
+                if self.outdir
+                else Path(self.filename)
+            )
+        )
+        self.plot_kwargs = plot_kwargs or {}
+        Path(self.outdir).mkdir(parents=True, exist_ok=True)
+
+    def apply(
+        self,
+        results: "SMCResults",
+        context: "StepContext",
+    ) -> None:
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(
+            nrows=len(self.metadata_keys),
+            sharex=True,
+            figsize=(5, 3 * len(self.metadata_keys)),
+        )
+
+        for i, key in enumerate(self.metadata_keys):
+            results.plot_metadata_history(
+                key,
+                ax=ax[i],
+                label_axes=False,
+                **self.plot_kwargs,
+            )
+            ax[i].set_ylabel(key)
+
+        ax[-1].set_xlabel("SMC Iteration")
+
+        fig.savefig(self.full_path)
+        plt.close(fig)

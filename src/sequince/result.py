@@ -202,6 +202,7 @@ class SMCResults:
         *,
         ax: Any = None,
         default: Any = np.nan,
+        label_axes: bool = True,
         **plot_kwargs: Any,
     ) -> Any:
         """Plot the evolution of a metadata entry stored in each state."""
@@ -209,9 +210,10 @@ class SMCResults:
         y = self.metadata_history(key, default=default)
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
-        axis.set_xlabel("Iteration")
-        axis.set_ylabel(key)
-        axis.set_title(f"Metadata '{key}' over iterations")
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel(key)
+            axis.set_title(f"Metadata '{key}' over iterations")
         return axis
 
     def plot_corner(
