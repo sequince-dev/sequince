@@ -115,7 +115,6 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
             stop_step = t
             break
 
-    print(state, shared_context)
     assert stop_step is not None, (
         "Adaptive tempering did not request stop within 20 iterations."
     )
