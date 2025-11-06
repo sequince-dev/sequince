@@ -307,6 +307,11 @@ class ErynMutation(MutationStep):
                 "ErynMutation requires a TemperedPosterior instance as log_prob_fn."
             )
 
+        if log_prob_fn.log_proposal is not None:
+            raise ValueError(
+                "ErynMutation does not support proposals in TemperedPosterior."
+            )
+
         super().__init__(log_prob_fn)
 
         self._log_likelihood = log_prob_fn.log_likelihood
@@ -325,9 +330,12 @@ class ErynMutation(MutationStep):
         xp: Any,
         context: StepContext,
     ) -> Callable[[np.ndarray], np.ndarray]:
+        # Get temperature from context, defaulting to 1.0
+        beta = float(context.shared.get("temperature", 1.0))
+
         def log_prob_fn(position: np.ndarray) -> np.ndarray:
             backend_position = asarray(position, xp=xp)
-            result = _call_log_prob(
+            result = beta * _call_log_prob(
                 self._log_likelihood, backend_position, context
             )
             return _as_vector_log_prob(result, backend_position.shape[0])
