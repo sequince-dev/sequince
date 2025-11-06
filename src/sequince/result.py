@@ -123,13 +123,13 @@ class SMCResults:
             return _as_2d(self.final_state.particles)
         if n_samples <= 0:
             raise ValueError("n_samples must be positive.")
-        rng = _ensure_rng(rng)
+        rng_obj: ArrayRNG = _ensure_rng(rng)
         final_state = self.final_state
         particles = _as_2d(final_state.particles)
         xp = namespace(particles, final_state.weights)
         weights = asarray(final_state.weights, xp=xp)
         indices = asarray(
-            rng.choice(
+            rng_obj.choice(
                 particles.shape[0],
                 size=n_samples,
                 replace=with_replacement,
