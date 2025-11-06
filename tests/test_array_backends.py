@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Tuple
 
 import pytest
 from orng import ArrayRNG
@@ -14,25 +14,22 @@ BackendFactoryReturn = Tuple[Any, Any, Any, Callable[[Any], Any]]
 
 def _backend_factory(
     backend: str,
-) -> Optional[BackendFactoryReturn]:
+) -> BackendFactoryReturn:
     if backend == "numpy":
-        import numpy as xp
+        np = pytest.importorskip("numpy")
 
-        dtype = xp.float64
+        dtype = np.float64
 
-        particles = xp.array([[0.0, 1.0], [1.0, 2.0]], dtype=dtype)
-        log_weights = xp.zeros(particles.shape[0], dtype=dtype)
+        particles = np.array([[0.0, 1.0], [1.0, 2.0]], dtype=dtype)
+        log_weights = np.zeros(particles.shape[0], dtype=dtype)
 
         def row_sum(arr: Any) -> Any:
-            return xp.sum(arr, axis=1)
+            return np.sum(arr, axis=1)
 
-        return xp, particles, log_weights, row_sum
+        return np, particles, log_weights, row_sum
 
     if backend == "torch":
-        try:
-            import torch
-        except ModuleNotFoundError:  # pragma: no cover - optional dependency
-            return None
+        torch = pytest.importorskip("torch")
 
         dtype = torch.float32
         particles = torch.tensor([[0.0, 1.0], [1.0, 2.0]], dtype=dtype)
@@ -44,10 +41,7 @@ def _backend_factory(
         return torch, particles, log_weights, row_sum
 
     if backend == "jax":
-        try:
-            import jax.numpy as jnp
-        except ModuleNotFoundError:  # pragma: no cover - optional dependency
-            return None
+        jnp = pytest.importorskip("jax.numpy")
 
         dtype = jnp.float32
         particles = jnp.array([[0.0, 1.0], [1.0, 2.0]], dtype=dtype)
@@ -59,10 +53,11 @@ def _backend_factory(
         return jnp, particles, log_weights, row_sum
 
     if backend == "cupy":
+        cupy = pytest.importorskip("cupy")
         try:
-            import cupy
-        except ModuleNotFoundError:  # pragma: no cover - optional dependency
-            return None
+            cupy.cuda.runtime.getDeviceCount()
+        except cupy.cuda.runtime.CUDARuntimeError as exc:
+            pytest.skip(f"CuPy runtime unavailable: {exc}")
 
         dtype = cupy.float32
         particles = cupy.array([[0.0, 1.0], [1.0, 2.0]], dtype=dtype)
@@ -79,9 +74,6 @@ def _backend_factory(
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
 def test_sequince_runs_with_array_backends(backend: str) -> None:
     out = _backend_factory(backend)
-    if out is None:
-        pytest.skip(f"Backend {backend} not available")
-    assert out is not None
     xp, particles, log_weights, row_sum = out
     backend_ns = namespace(particles)
 
