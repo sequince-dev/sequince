@@ -8,12 +8,12 @@ import numpy as np
 
 from .._array_api import asarray, namespace, to_numpy
 from .._typing import Array
+from ..posterior import TemperedPosterior
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
 
-    from ..posterior import TemperedPosterior
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
@@ -275,6 +275,120 @@ class MiniPCNMutation(MutationStep):
         logger.debug(
             "MiniPCNMutation completed: acceptance=%.3f after %d steps.",
             acceptance,
+            self._n_steps,
+        )
+        return state.with_updates(particles=new_particles, metadata=metadata)
+
+
+class ErynMutation(MutationStep):
+    """Run Eryn MCMC moves to rejuvenate particles.
+
+    Parameters
+    ----------
+    log_prob_fn
+        Function to compute the log-probability of a particle position, or a
+        `TemperedPosterior` instance.
+    n_steps
+        Number of Eryn steps to perform.
+    **kwargs
+        Additional keyword arguments to pass to the `eryn.Sampler` constructor.
+    """
+
+    def __init__(
+        self,
+        log_prob_fn: TemperedPosterior,
+        *,
+        n_steps: int = 1,
+        run_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        if not isinstance(log_prob_fn, TemperedPosterior):
+            raise TypeError(
+                "ErynMutation requires a TemperedPosterior instance as log_prob_fn."
+            )
+
+        super().__init__(log_prob_fn)
+
+        self._log_likelihood = log_prob_fn.log_likelihood
+        self._log_prior = log_prob_fn.log_prior
+
+        if n_steps < 1:
+            raise ValueError("n_steps must be >= 1.")
+
+        self._n_steps = n_steps
+        self._kwargs = dict(kwargs)
+        self._kwargs.setdefault("vectorize", True)
+        self._run_kwargs = run_kwargs or {}
+
+    def _build_log_likelihood_fn(
+        self,
+        xp: Any,
+        context: StepContext,
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        def log_prob_fn(position: np.ndarray) -> np.ndarray:
+            backend_position = asarray(position, xp=xp)
+            result = _call_log_prob(
+                self._log_likelihood, backend_position, context
+            )
+            return _as_vector_log_prob(result, backend_position.shape[0])
+
+        return log_prob_fn
+
+    def _build_prior_container(
+        self,
+        xp: Any,
+        context: StepContext,
+    ) -> Any:
+        from eryn.prior import ProbDistContainer
+
+        class _ErynPriorContainer(ProbDistContainer):
+            def __init__(self, log_prior: Callable[..., Any]):
+                self._log_prior = log_prior
+
+            def logpdf(self, x: np.ndarray) -> np.ndarray:
+                backend_x = asarray(x, xp=xp)
+                result = _call_log_prob(self._log_prior, backend_x, context)
+                return _as_vector_log_prob(result, backend_x.shape[0])
+
+        return _ErynPriorContainer(self._log_prior)
+
+    def apply(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "ArrayRNG",
+    ):
+        from eryn.ensemble import EnsembleSampler
+
+        xp = namespace(state.particles)
+        log_like_fn = self._build_log_likelihood_fn(xp, context)
+        priors = self._build_prior_container(xp, context)
+
+        dims = state.particles.shape[1] if state.particles.ndim > 1 else 1
+        nwalkers = state.particles.shape[0]
+
+        sampler = EnsembleSampler(
+            nwalkers,
+            dims,
+            log_like_fn,
+            priors,
+            **self._kwargs,
+        )
+
+        x = to_numpy(state.particles)
+
+        sampler.run_mcmc(
+            x,
+            self._n_steps,
+            **self._run_kwargs,
+        )
+        chain = sampler.get_chain()["model_0"].reshape(-1, nwalkers, dims)
+        new_particles = asarray(chain[-1], xp=xp)
+
+        metadata = dict(state.metadata)
+        metadata["eryn_steps"] = self._n_steps
+        logger.debug(
+            "ErynMutation completed after %d steps.",
             self._n_steps,
         )
         return state.with_updates(particles=new_particles, metadata=metadata)
