@@ -300,6 +300,8 @@ class ErynMutation(MutationStep):
         *,
         n_steps: int = 1,
         run_kwargs: dict[str, Any] | None = None,
+        move: str | None = None,
+        move_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         if not isinstance(log_prob_fn, TemperedPosterior):
@@ -324,21 +326,27 @@ class ErynMutation(MutationStep):
         self._kwargs = dict(kwargs)
         self._kwargs.setdefault("vectorize", True)
         self._run_kwargs = run_kwargs or {}
+        self._move = move or "StretchMove"
+        self._move_kwargs = move_kwargs or {}
 
     def _build_log_likelihood_fn(
         self,
         xp: Any,
         context: StepContext,
-    ) -> Callable[[np.ndarray], np.ndarray]:
+        use_gpu: bool = False,
+    ) -> Callable[[Array], Array]:
         # Get temperature from context, defaulting to 1.0
         beta = float(context.shared.get("temperature", 1.0))
 
-        def log_prob_fn(position: np.ndarray) -> np.ndarray:
+        def log_prob_fn(position: Array) -> Array:
             backend_position = asarray(position, xp=xp)
             result = beta * _call_log_prob(
                 self._log_likelihood, backend_position, context
             )
-            return _as_vector_log_prob(result, backend_position.shape[0])
+            if use_gpu:
+                return asarray(result, xp=xp)
+            else:
+                return to_numpy(result)
 
         return log_prob_fn
 
@@ -346,6 +354,7 @@ class ErynMutation(MutationStep):
         self,
         xp: Any,
         context: StepContext,
+        use_gpu: bool = False,
     ) -> Any:
         from eryn.prior import ProbDistContainer
 
@@ -353,10 +362,13 @@ class ErynMutation(MutationStep):
             def __init__(self, log_prior: Callable[..., Any]):
                 self._log_prior = log_prior
 
-            def logpdf(self, x: np.ndarray) -> np.ndarray:
+            def logpdf(self, x: Array) -> Array:
                 backend_x = asarray(x, xp=xp)
                 result = _call_log_prob(self._log_prior, backend_x, context)
-                return _as_vector_log_prob(result, backend_x.shape[0])
+                if use_gpu:
+                    return asarray(result, xp=xp)
+                else:
+                    return to_numpy(result)
 
         return _ErynPriorContainer(self._log_prior)
 
@@ -366,24 +378,42 @@ class ErynMutation(MutationStep):
         context: StepContext,
         rng: "ArrayRNG",
     ):
+        from array_api_compat import is_cupy_namespace
+        from eryn import moves
         from eryn.ensemble import EnsembleSampler
 
         xp = namespace(state.particles)
-        log_like_fn = self._build_log_likelihood_fn(xp, context)
-        priors = self._build_prior_container(xp, context)
+        use_gpu = True if is_cupy_namespace(xp) else False
+
+        log_like_fn = self._build_log_likelihood_fn(
+            xp, context, use_gpu=use_gpu
+        )
+        priors = self._build_prior_container(xp, context, use_gpu=use_gpu)
 
         dims = state.particles.shape[1] if state.particles.ndim > 1 else 1
         nwalkers = state.particles.shape[0]
+
+        MoveClass = getattr(moves, self._move)
+        move_kwargs = dict(self._move_kwargs)
+        move_kwargs["use_gpu"] = use_gpu
+        move = MoveClass(**move_kwargs)
 
         sampler = EnsembleSampler(
             nwalkers,
             dims,
             log_like_fn,
             priors,
+            moves=[
+                move,
+            ],
             **self._kwargs,
         )
 
-        x = to_numpy(state.particles)
+        if use_gpu:
+            x = asarray(state.particles, xp=xp)
+        else:
+            # if not using GPU, convert to numpy for eryn
+            x = to_numpy(state.particles)
 
         sampler.run_mcmc(
             x,
@@ -391,6 +421,7 @@ class ErynMutation(MutationStep):
             **self._run_kwargs,
         )
         chain = sampler.get_chain()["model_0"].reshape(-1, nwalkers, dims)
+        # Make sure to get the particles back to the original namespace
         new_particles = asarray(chain[-1], xp=xp)
 
         metadata = dict(state.metadata)
