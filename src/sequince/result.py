@@ -161,15 +161,18 @@ class SMCResults:
             return np.sum(weights * values)
         return np.tensordot(weights, values, axes=(0, 0))
 
-    def plot_log_evidence(self, *, ax: Any = None, **plot_kwargs: Any) -> Any:
+    def plot_log_evidence(
+        self, *, ax: Any = None, label_axes: bool = True, **plot_kwargs: Any
+    ) -> Any:
         """Plot the log evidence trajectory."""
         x = np.arange(len(self))
         y = self.log_evidence_history()
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
-        axis.set_xlabel("Iteration")
-        axis.set_ylabel("Log evidence")
-        axis.set_title("Log evidence trajectory")
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel("Log evidence")
+            axis.set_title("Log evidence trajectory")
         return axis
 
     def plot_effective_sample_size(
@@ -177,6 +180,7 @@ class SMCResults:
         *,
         normalize: bool = False,
         ax: Any = None,
+        label_axes: bool = True,
         **plot_kwargs: Any,
     ) -> Any:
         """Plot ESS or the ESS ratio across iterations."""
@@ -191,9 +195,10 @@ class SMCResults:
             title = "Effective sample size"
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
-        axis.set_xlabel("Iteration")
-        axis.set_ylabel(ylabel)
-        axis.set_title(title)
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel(ylabel)
+            axis.set_title(title)
         return axis
 
     def plot_metadata_history(

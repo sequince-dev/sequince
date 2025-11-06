@@ -139,16 +139,28 @@ class StatePlot(SMCCallback):
             figsize=(5, 3 * len(self.metadata_keys)),
         )
 
+        plotting_fn = {
+            "log_evidence": results.plot_log_evidence,
+            "ess": results.plot_effective_sample_size,
+        }
+
         for i, key in enumerate(self.metadata_keys):
-            results.plot_metadata_history(
+            plot_func: Any = plotting_fn.get(
                 key,
+                lambda *args, **kwargs: results.plot_metadata_history(
+                    key, *args, **kwargs
+                ),
+            )
+            plot_func(
                 ax=ax[i],
                 label_axes=False,
                 **self.plot_kwargs,
             )
+
             ax[i].set_ylabel(key)
 
         ax[-1].set_xlabel("SMC Iteration")
 
+        plt.tight_layout()
         fig.savefig(self.full_path)
         plt.close(fig)
