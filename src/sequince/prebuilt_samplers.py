@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Literal, Tuple
 
+from ._typing import MutationStrategy
 from .posterior import TemperedPosterior
 from .smc import SequentialMonteCarlo
 from .steps import (
@@ -14,7 +15,6 @@ from .steps.base import SMCStep
 from .steps.mutation import get_mutation_step
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
-MutationStrategy = Literal["emcee", "minipcn", "none"]
 
 
 def make_standard_bayesian_smc(
