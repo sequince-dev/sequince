@@ -7,13 +7,12 @@ from .result import SMCResults
 from .smc import SequentialMonteCarlo
 from .steps import (
     AdaptiveTemperedWeighting,
-    EmceeMutation,
-    MiniPCNMutation,
     MultinomialResampling,
     StratifiedResampling,
     SystematicResampling,
 )
 from .steps.base import SMCStep, StepContext
+from .steps.mutation import get_mutation_step
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
 MutationStrategy = Literal["emcee", "minipcn", "none"]
@@ -121,32 +120,14 @@ def make_standard_bayesian_smc(
         always_resample=always_resample,
     )
 
-    mutation_step: SMCStep | None
-    if isinstance(mutation, SMCStep):
-        mutation_step = mutation
-    elif mutation == "emcee":
-        mutation_kwargs_dict = dict(mutation_kwargs or {})
-        run_kwargs = dict(mutation_run_kwargs or {})
-        mutation_step = EmceeMutation(
-            posterior,
-            n_steps=mutation_n_steps,
-            move=mutation_move,
-            run_kwargs=run_kwargs,
-            **mutation_kwargs_dict,
-        )
-    elif mutation == "minipcn":
-        mutation_kwargs_dict = dict(mutation_kwargs or {})
-        mutation_step = MiniPCNMutation(
-            posterior,
-            n_steps=mutation_n_steps,
-            **mutation_kwargs_dict,
-        )
-    elif mutation == "none":
-        mutation_step = None
-    else:
-        raise ValueError(
-            "mutation must be 'emcee', 'minipcn', 'none', or an SMCStep instance."
-        )
+    mutation_step = get_mutation_step(
+        mutation,
+        posterior,
+        n_steps=mutation_n_steps,
+        move=mutation_move,
+        run_kwargs=mutation_run_kwargs,
+        mutation_kwargs=mutation_kwargs,
+    )
 
     steps = [weighting_step, resampling_step]
     if mutation_step is not None:
