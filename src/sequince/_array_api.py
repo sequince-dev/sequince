@@ -5,6 +5,29 @@ from typing import Any, Iterable
 
 import numpy as _np
 from array_api_compat import array_namespace as _array_namespace
+from array_api_compat import device as get_device
+from array_api_compat import to_device
+
+
+def _preferred_device(*arrays: Any):
+    """Return the first available device descriptor from the provided arrays."""
+    for arr in arrays:
+        if arr is None:
+            continue
+        return get_device(arr)
+    return None
+
+
+def _move_to_device(array: Any, device: Any):
+    """Move ``array`` onto ``device`` when supported by the backend."""
+    if device is None:
+        return array
+    return to_device(array, device)
+
+
+def _match_device(array: Any, *references: Any) -> Any:
+    """Return ``array`` residing on the first device detected in ``references``."""
+    return _move_to_device(array, _preferred_device(*references))
 
 
 def namespace(*arrays: Any):
@@ -15,9 +38,10 @@ def namespace(*arrays: Any):
     return _array_namespace(*filtered)
 
 
-def asarray(array: Any, *, xp=None):
-    xp = xp or namespace(array)
-    return xp.asarray(array)
+def asarray(array: Any, *, xp=None, like=None):
+    xp = xp or namespace(array, like)
+    arr = xp.asarray(array)
+    return _match_device(arr, like, array)
 
 
 def copy(array: Any, *, xp=None):
@@ -48,9 +72,23 @@ def to_numpy(array: Any) -> _np.ndarray:
     return _np.asarray(array)
 
 
-def full(shape: Iterable[int], fill_value: Any, *, xp=None, dtype=None):
-    xp = xp or namespace(fill_value)
-    return xp.full(tuple(shape), fill_value, dtype=dtype)
+def full(
+    shape: Iterable[int],
+    fill_value: Any,
+    *,
+    xp=None,
+    dtype=None,
+    like=None,
+):
+    xp = xp or namespace(fill_value, like)
+    arr = xp.full(tuple(shape), fill_value, dtype=dtype)
+    return _match_device(arr, like)
+
+
+def arange(*range_args: Any, xp=None, dtype=None, like=None):
+    xp = xp or namespace(like)
+    arr = xp.arange(*range_args, dtype=dtype)
+    return _match_device(arr, like)
 
 
 def logsumexp(array: Any, *, xp=None):
@@ -71,4 +109,4 @@ def normalize_log_weights(log_weights: Any, *, xp=None):
         return normalized, log_norm_scalar, True
     n = lw.shape[0]
     fill_value = -math.log(n)
-    return xp.full((n,), fill_value, dtype=lw.dtype), 0.0, False
+    return full((n,), fill_value, xp=xp, dtype=lw.dtype, like=lw), 0.0, False

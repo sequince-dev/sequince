@@ -57,26 +57,29 @@ class SMCResults:
 
     def log_evidence_history(self) -> Array:
         """Return the log evidence trajectory."""
-        xp = namespace(self.final_state.log_weights if self.states else None)
+        reference = self.final_state.log_weights if self.states else None
+        xp = namespace(reference)
         values = [float(state.log_evidence) for state in self.states]
-        return asarray(values, xp=xp)
+        return asarray(values, xp=xp, like=reference)
 
     def effective_sample_sizes(self) -> Array:
         """Return the effective sample size (ESS) for every iteration."""
-        xp = namespace(self.final_state.log_weights if self.states else None)
+        reference = self.final_state.log_weights if self.states else None
+        xp = namespace(reference)
         values = [
             float(state.effective_sample_size()) for state in self.states
         ]
-        return asarray(values, xp=xp)
+        return asarray(values, xp=xp, like=reference)
 
     def effective_sample_size_ratios(self) -> Array:
         """Return ESS / n_particles for each iteration."""
-        xp = namespace(self.final_state.log_weights if self.states else None)
+        reference = self.final_state.log_weights if self.states else None
+        xp = namespace(reference)
         values = [
             float(state.effective_sample_size() / state.particles.shape[0])
             for state in self.states
         ]
-        return asarray(values, xp=xp)
+        return asarray(values, xp=xp, like=reference)
 
     def metadata_history(
         self, key: str, *, default: Any = math.nan
@@ -84,10 +87,9 @@ class SMCResults:
         """Return an array containing a metadata field pulled from each state."""
         values = [state.metadata.get(key, default) for state in self.states]
         if isinstance(default, (int, float)):
-            xp = namespace(
-                self.final_state.log_weights if self.states else None
-            )
-            return asarray(values, xp=xp)
+            reference = self.final_state.log_weights if self.states else None
+            xp = namespace(reference)
+            return asarray(values, xp=xp, like=reference)
         return values
 
     def summary(self) -> dict[str, Any]:
@@ -135,6 +137,7 @@ class SMCResults:
                 p=weights,
             ),
             xp=xp,
+            like=particles,
         )
         return particles[indices]
 
@@ -162,7 +165,11 @@ class SMCResults:
         particles = _as_2d(state.particles)
         xp = namespace(particles)
         weights = asarray(state.weights, xp=xp)
-        mean = asarray(self.weighted_mean(state_index=state_index), xp=xp)
+        mean = asarray(
+            self.weighted_mean(state_index=state_index),
+            xp=xp,
+            like=particles,
+        )
         centered = particles - mean
         weights_column = xp.reshape(weights, (weights.shape[0], 1))
         weighted = centered * weights_column
@@ -182,7 +189,7 @@ class SMCResults:
         state = self.states[state_index]
         particles = _as_2d(state.particles)
         xp = namespace(particles)
-        values = asarray(fn(particles), xp=xp)
+        values = asarray(fn(particles), xp=xp, like=particles)
         weights = asarray(state.weights, xp=xp)
         if values.ndim == 1:
             return xp.sum(weights * values)

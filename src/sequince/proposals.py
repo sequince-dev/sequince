@@ -55,6 +55,7 @@ class GaussianRandomWalk:
                 size=arr.shape,
             ),
             xp=xp,
+            like=arr,
         )
         return arr + noise
 
