@@ -134,4 +134,4 @@ class SequentialMonteCarlo:
             len(produced_states),
             len(produced_states),
         )
-        return SMCResults(states=produced_states)
+        return SMCResults(states=produced_states, context=context)
