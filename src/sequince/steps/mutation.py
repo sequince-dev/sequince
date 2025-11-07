@@ -238,32 +238,24 @@ class MiniPCNMutation(MutationStep):
         xp = namespace(state.particles)
 
         def log_prob_fn(position):
-            backend_position = asarray(position, xp=xp, like=state.particles)
-            result = _call_log_prob(
-                self._log_prob_fn, backend_position, context
+            return _call_log_prob(
+                self._log_prob_fn, position, context
             )
-            return _as_vector_log_prob(result, backend_position.shape[0])
 
         dims = state.particles.shape[1] if state.particles.ndim > 1 else 1
-
-        seed_bits = to_numpy(rng.random(size=4)).astype(np.float64)
-        seed_sequence = np.random.SeedSequence(
-            (seed_bits * np.iinfo(np.uint32).max).astype(np.uint32)
-        )
-        numpy_rng = np.random.default_rng(seed_sequence)
 
         sampler = Sampler(
             log_prob_fn=log_prob_fn,
             step_fn=self._step_fn,
-            rng=numpy_rng,
+            rng=rng,
             dims=dims,
+            xp=xp,
             **self._kwargs,
         )
 
-        x = to_numpy(state.particles)
 
         chain, history = sampler.sample(
-            x,
+            state.particles,
             n_steps=self._n_steps,
             verbose=self._verbose,
         )
