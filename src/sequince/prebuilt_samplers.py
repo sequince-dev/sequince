@@ -36,7 +36,8 @@ def make_standard_bayesian_smc(
     mutation_run_kwargs: Dict[str, Any] | None = None,
     mutation_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
-    callbacks: Sequence[Callable[[SMCResults, StepContext], None]],
+    callbacks: Sequence[Callable[[SMCResults, StepContext], None]]
+    | None = None,
 ) -> Tuple[SequentialMonteCarlo, TemperedPosterior, Dict[str, Any]]:
     """Return a SequentialMonteCarlo instance configured with standard SMC steps.
 
