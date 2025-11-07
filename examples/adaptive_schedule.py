@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
+from sequince.posterior import draw_additional_samples
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     EmceeMutation,
@@ -79,6 +80,18 @@ def main() -> None:
     log_evidence = posterior_state.log_evidence
     print(f"Estimated log evidence: {log_evidence:.4f}")
     print(f"True log evidence:      {true_log_evidence:.4f}")
+
+    # Draw additional posterior samples
+    print("Drawing additional posterior samples...")
+    posterior_state = draw_additional_samples(
+        log_prior=log_prior,
+        log_likelihood=log_likelihood,
+        result=results,
+        rng=rng,
+        n_particles=1000,
+        mutation="minipcn",
+        mutation_n_steps=10,
+    )
 
     # Analyze the posterior particles
     particles = posterior_state.particles
