@@ -126,7 +126,9 @@ class EmceeMutation(MutationStep):
         if vectorized:
 
             def _log_prob_vectorized(positions: np.ndarray) -> np.ndarray:
-                backend_positions = asarray(positions, xp=xp)
+                backend_positions = asarray(
+                    positions, xp=xp, like=state.particles
+                )
                 result = _call_log_prob(
                     self._log_prob_fn, backend_positions, context
                 )
@@ -139,7 +141,9 @@ class EmceeMutation(MutationStep):
         else:
 
             def _log_prob_scalar(position: np.ndarray) -> float:
-                backend_position = asarray(position, xp=xp)
+                backend_position = asarray(
+                    position, xp=xp, like=state.particles
+                )
                 result = _call_log_prob(
                     self._log_prob_fn, backend_position, context
                 )
@@ -168,7 +172,7 @@ class EmceeMutation(MutationStep):
         else:
             result_np = new_positions
 
-        new_particles = asarray(result_np, xp=xp)
+        new_particles = asarray(result_np, xp=xp, like=state.particles)
 
         metadata = dict(state.metadata)
         metadata["emcee_acceptance"] = float(
@@ -234,7 +238,7 @@ class MiniPCNMutation(MutationStep):
         xp = namespace(state.particles)
 
         def log_prob_fn(position):
-            backend_position = asarray(position, xp=xp)
+            backend_position = asarray(position, xp=xp, like=state.particles)
             result = _call_log_prob(
                 self._log_prob_fn, backend_position, context
             )
@@ -263,7 +267,7 @@ class MiniPCNMutation(MutationStep):
             n_steps=self._n_steps,
             verbose=self._verbose,
         )
-        new_particles = asarray(chain[-1], xp=xp)
+        new_particles = asarray(chain[-1], xp=xp, like=state.particles)
 
         metadata = dict(state.metadata)
         metadata["minipcn_acceptance"] = float(

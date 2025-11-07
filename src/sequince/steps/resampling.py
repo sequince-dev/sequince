@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .._array_api import asarray, namespace, to_numpy
+from .._array_api import arange, asarray, namespace, to_numpy
 from .._typing import Array
 from .base import SMCStep, StepContext
 
@@ -84,7 +84,7 @@ class MultinomialResampling(ResamplingStep):
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
         draws = rng.choice(n, size=n, p=probs)
-        return asarray(draws, xp=xp)
+        return asarray(draws, xp=xp, like=probs)
 
 
 class StratifiedResampling(ResamplingStep):
@@ -94,8 +94,8 @@ class StratifiedResampling(ResamplingStep):
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
-        offsets = xp.arange(n, dtype=probs.dtype)
-        jitter = asarray(rng.random((n,)), xp=xp)
+        offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
+        jitter = asarray(rng.random((n,)), xp=xp, like=probs)
         positions = (offsets + jitter) / n
         cumulative = _cumulative_sum(probs, xp=xp)
         return _searchsorted(cumulative, positions, xp=xp)
@@ -108,8 +108,8 @@ class SystematicResampling(ResamplingStep):
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
-        start = asarray(rng.random(), xp=xp)
-        offsets = xp.arange(n, dtype=probs.dtype)
+        start = asarray(rng.random(), xp=xp, like=probs)
+        offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
         positions = (start + offsets) / n
         cumulative = _cumulative_sum(probs, xp=xp)
         return _searchsorted(cumulative, positions, xp=xp)
@@ -118,7 +118,7 @@ class SystematicResampling(ResamplingStep):
 def _cumulative_sum(array: Array, *, xp):
     if hasattr(xp, "cumsum"):
         return xp.cumsum(array)
-    return asarray(_np_cumsum(array), xp=xp)
+    return asarray(_np_cumsum(array), xp=xp, like=array)
 
 
 def _np_cumsum(array: Array):
@@ -131,4 +131,4 @@ def _searchsorted(cumulative: Array, positions: Array, *, xp):
     indices = to_numpy(cumulative)
     pos = to_numpy(positions)
     result = indices.searchsorted(pos, side="right")
-    return asarray(result, xp=xp)
+    return asarray(result, xp=xp, like=cumulative)

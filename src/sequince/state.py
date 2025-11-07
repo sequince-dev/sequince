@@ -50,7 +50,11 @@ class ParticleState:
         else:
             n = state.log_weights.shape[0]
             state.log_weights = full(
-                (n,), -math.log(n), xp=xp, dtype=log_weights.dtype
+                (n,),
+                -math.log(n),
+                xp=xp,
+                dtype=log_weights.dtype,
+                like=log_weights,
             )
         return state, float(log_norm)
 
@@ -64,7 +68,9 @@ class ParticleState:
         if math.isfinite(log_norm_scalar):
             return xp.exp(log_weights - log_norm_scalar)
         n = self.log_weights.shape[0]
-        return full((n,), 1.0 / n, xp=xp, dtype=log_weights.dtype)
+        return full(
+            (n,), 1.0 / n, xp=xp, dtype=log_weights.dtype, like=log_weights
+        )
 
     def effective_sample_size(self) -> float:
         """Compute the effective sample size (ESS)."""
@@ -83,14 +89,16 @@ class ParticleState:
         """Return a resampled state using the provided ancestor indices."""
         xp = namespace(self.particles, indices)
         particles = asarray(self.particles, xp=xp)
-        idx = asarray(indices, xp=xp)
+        idx = asarray(indices, xp=xp, like=particles)
         new_particles = particles[idx]
         n = idx.shape[0]
+        log_weight_template = asarray(self.log_weights, xp=xp)
         log_weights = full(
             (n,),
             -math.log(n),
             xp=xp,
-            dtype=asarray(self.log_weights, xp=xp).dtype,
+            dtype=log_weight_template.dtype,
+            like=log_weight_template,
         )
         return ParticleState(
             particles=new_particles,

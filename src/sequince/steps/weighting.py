@@ -4,7 +4,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any, Callable
 
-from .._array_api import asarray, logsumexp, namespace, to_numpy
+from .._array_api import asarray, full, logsumexp, namespace, to_numpy
 from .._typing import Array
 from ..utils import _call_with_optional_context
 from .base import SMCStep, StepContext
@@ -30,9 +30,9 @@ TemperatureSchedule = Callable[..., float]
 logger = logging.getLogger(__name__)
 
 
-def _as_1d_array(value: Any, *, xp) -> Array:
+def _as_1d_array(value: Any, *, xp, like: Array | None = None) -> Array:
     """Convert a value to a 1d array in the provided namespace."""
-    arr = asarray(value, xp=xp)
+    arr = asarray(value, xp=xp, like=like)
     if arr.ndim == 0:
         return xp.reshape(arr, (1,))
     if arr.ndim != 1:
@@ -50,7 +50,7 @@ def _ess_ratio_from_log_weights(log_weights: Any) -> float:
         weights = xp.exp(lw - log_norm_scalar)
     else:
         n = lw.shape[0]
-        weights = xp.full((n,), 1.0 / n, dtype=lw.dtype)
+        weights = full((n,), 1.0 / n, xp=xp, dtype=lw.dtype, like=lw)
     ess = 1.0 / float(to_numpy(xp.sum(xp.square(weights))))
     return ess / lw.shape[0]
 
@@ -100,7 +100,7 @@ class LogLikelihoodWeighting(SMCStep):
             (state.particles,),
             context,
         )
-        increments = _as_1d_array(log_like, xp=xp)
+        increments = _as_1d_array(log_like, xp=xp, like=state.log_weights)
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
                 "Log-likelihood function must return one value per particle."
@@ -162,7 +162,10 @@ class TemperedWeighting(SMCStep):
             context,
         )
         xp = namespace(state.log_weights)
-        increments = _as_1d_array(log_increments, xp=xp) * temperature
+        increments = (
+            _as_1d_array(log_increments, xp=xp, like=state.log_weights)
+            * temperature
+        )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
                 "Increment function must return one value per particle."
@@ -210,7 +213,8 @@ class FixedTemperedWeighting(SMCStep):
         )
         xp = namespace(state.log_weights)
         increments = (
-            _as_1d_array(log_increments, xp=xp) * self._temperature_increment
+            _as_1d_array(log_increments, xp=xp, like=state.log_weights)
+            * self._temperature_increment
         )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
@@ -303,7 +307,9 @@ class AdaptiveTemperedWeighting(SMCStep):
             (state.particles,),
             context,
         )
-        increments = _as_1d_array(log_increments, xp=xp)
+        increments = _as_1d_array(
+            log_increments, xp=xp, like=state.log_weights
+        )
 
         if _max_abs(increments, xp=xp) <= 1e-12:
             delta = remaining

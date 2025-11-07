@@ -21,10 +21,14 @@ def _evaluate(
     """Call function with optional context and return a 1d float array."""
     values = _call_with_optional_context(fn, (particles,), context)
     xp = namespace(particles, values)
-    array = asarray(values, xp=xp)
+    array = asarray(values, xp=xp, like=particles)
     if array.ndim == 0:
         array = full(
-            (particles.shape[0],), float(array), xp=xp, dtype=array.dtype
+            (particles.shape[0],),
+            float(array),
+            xp=xp,
+            dtype=array.dtype,
+            like=particles,
         )
     if array.ndim > 1:
         array = xp.reshape(array, (array.shape[0],))
