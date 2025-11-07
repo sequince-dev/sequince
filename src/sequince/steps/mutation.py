@@ -238,9 +238,7 @@ class MiniPCNMutation(MutationStep):
         xp = namespace(state.particles)
 
         def log_prob_fn(position):
-            return _call_log_prob(
-                self._log_prob_fn, position, context
-            )
+            return _call_log_prob(self._log_prob_fn, position, context)
 
         dims = state.particles.shape[1] if state.particles.ndim > 1 else 1
 
@@ -252,7 +250,6 @@ class MiniPCNMutation(MutationStep):
             xp=xp,
             **self._kwargs,
         )
-
 
         chain, history = sampler.sample(
             state.particles,
