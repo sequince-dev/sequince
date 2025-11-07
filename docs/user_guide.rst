@@ -15,13 +15,13 @@ Configuring the runner
 The runner accepts a ``steps`` sequence containing callables that conform to the
 ``SMCStep`` protocol defined in :mod:`sequince.steps.base`. Similarly, the runner
 accepts a sequence of optional ``callbacks`` that adhere to the
-``SMCCallback`` protocol in :mod:`sequince.callback`.
+``SMCCallback`` protocol in :mod:`sequince.callbacks`.
 The quickest way to build a useful pipeline is to reuse the pre-built helper:
 
 .. code-block:: python
 
     from sequince import make_standard_bayesian_smc
-    from sequince.callbacks import TracePlot
+    from sequince.callbackss import TracePlot
     smc, posterior, shared_context = make_standard_bayesian_smc(
         log_prior,
         log_likelihood,
@@ -99,9 +99,9 @@ logging, stopping the overall run, and accessing metadata stored on the context,
 including the mutable ``StepContext.shared`` dictionary for cross-step state.
 
 Similarly, custom callbacks can be implemented by sub-classing
-:class:`~sequince.callback.SMCCallback` and overriding the ``apply`` method
+:class:`~sequince.callbacks.SMCCallback` and overriding the ``apply`` method
 (with no return argument). Callbacks are provided with a history of all previous states
 in the form of a :class:`~sequince.result.SMCResults` instance, as well as the
 current context.
 
-See :mod:`sequince.steps` and :mod:`sequince.callback` for a catalogue of the built-in components.
+See :mod:`sequince.steps` and :mod:`sequince.callbacks` for a catalogue of the built-in components.
