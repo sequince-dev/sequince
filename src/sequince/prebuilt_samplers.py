@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Literal, Tuple
 
-from .callback import SMCCallback
+from .callbacks import SMCCallback
 from .posterior import TemperedPosterior
 from .smc import SequentialMonteCarlo
 from .steps import (
