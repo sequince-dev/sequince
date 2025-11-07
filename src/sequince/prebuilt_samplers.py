@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Literal, Tuple
+from typing import Any, Callable, Dict, Literal, Sequence, Tuple
 
 from .posterior import TemperedPosterior
+from .result import SMCResults
 from .smc import SequentialMonteCarlo
 from .steps import (
     AdaptiveTemperedWeighting,
@@ -12,7 +13,7 @@ from .steps import (
     StratifiedResampling,
     SystematicResampling,
 )
-from .steps.base import SMCStep
+from .steps.base import SMCStep, StepContext
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
 MutationStrategy = Literal["emcee", "minipcn", "none"]
@@ -35,6 +36,8 @@ def make_standard_bayesian_smc(
     mutation_run_kwargs: Dict[str, Any] | None = None,
     mutation_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
+    callbacks: Sequence[Callable[[SMCResults, StepContext], None]]
+    | None = None,
 ) -> Tuple[SequentialMonteCarlo, TemperedPosterior, Dict[str, Any]]:
     """Return a SequentialMonteCarlo instance configured with standard SMC steps.
 
@@ -83,6 +86,8 @@ def make_standard_bayesian_smc(
         ``"minipcn"`` they are provided to ``MiniPCNMutation``.
     auto_normalize:
         Normalize log weights after every iteration (default ``True``).
+    callbacks:
+        Optional (initialised) callbacks to attach to the sampler.
     """
     posterior = TemperedPosterior(
         log_prior=log_prior,
@@ -147,7 +152,9 @@ def make_standard_bayesian_smc(
     if mutation_step is not None:
         steps.append(mutation_step)
 
-    sampler = SequentialMonteCarlo(steps=steps, auto_normalize=auto_normalize)
+    sampler = SequentialMonteCarlo(
+        steps=steps, auto_normalize=auto_normalize, callbacks=callbacks
+    )
 
     shared_context: Dict[str, Any] = {
         "temperature": 0.0,

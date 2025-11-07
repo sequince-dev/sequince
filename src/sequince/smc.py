@@ -38,9 +38,13 @@ class SequentialMonteCarlo:
                 ParticleState,
             ]
         ],
+        *,
+        callbacks: Sequence[Callable[[SMCResults, StepContext], None]]
+        | None = None,
         auto_normalize: bool = True,
     ):
         self._steps = list(steps)
+        self._callbacks = list(callbacks) if callbacks is not None else []
         self._auto_normalize = auto_normalize
 
     def run(
@@ -109,6 +113,15 @@ class SequentialMonteCarlo:
                     state.log_evidence,
                 )
             produced_states.append(state)
+
+            for callback in self._callbacks:
+                callback_name = getattr(
+                    callback, "__name__", callback.__class__.__name__
+                )
+                logger.debug(
+                    "Iteration %d: invoking callback %s.", t, callback_name
+                )
+                callback(SMCResults(states=produced_states), context)
 
             if context.stop_requested:
                 logger.info(

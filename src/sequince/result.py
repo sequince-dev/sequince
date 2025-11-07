@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from pathlib import Path
+from typing import Any, Callable, Dict, Sequence, Union
 
 import numpy as np
 
@@ -28,12 +29,12 @@ class SMCResults:
             raise ValueError("SMCResults requires at least one ParticleState.")
 
     @staticmethod
-    def _prepare_axis(ax: Any) -> Any:
+    def _prepare_axis(ax: Any, **subplot_kwargs) -> Any:
         if ax is not None:
             return ax
         import matplotlib.pyplot as plt  # Imported lazily to avoid hard dependency at import time.
 
-        _, ax = plt.subplots()
+        _, ax = plt.subplots(**subplot_kwargs)
         return ax
 
     def __len__(self) -> int:
@@ -161,15 +162,18 @@ class SMCResults:
             return np.sum(weights * values)
         return np.tensordot(weights, values, axes=(0, 0))
 
-    def plot_log_evidence(self, *, ax: Any = None, **plot_kwargs: Any) -> Any:
+    def plot_log_evidence(
+        self, *, ax: Any = None, label_axes: bool = True, **plot_kwargs: Any
+    ) -> Any:
         """Plot the log evidence trajectory."""
         x = np.arange(len(self))
         y = self.log_evidence_history()
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
-        axis.set_xlabel("Iteration")
-        axis.set_ylabel("Log evidence")
-        axis.set_title("Log evidence trajectory")
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel("Log evidence")
+            axis.set_title("Log evidence trajectory")
         return axis
 
     def plot_effective_sample_size(
@@ -177,6 +181,7 @@ class SMCResults:
         *,
         normalize: bool = False,
         ax: Any = None,
+        label_axes: bool = True,
         **plot_kwargs: Any,
     ) -> Any:
         """Plot ESS or the ESS ratio across iterations."""
@@ -191,9 +196,10 @@ class SMCResults:
             title = "Effective sample size"
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
-        axis.set_xlabel("Iteration")
-        axis.set_ylabel(ylabel)
-        axis.set_title(title)
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel(ylabel)
+            axis.set_title(title)
         return axis
 
     def plot_metadata_history(
@@ -202,6 +208,7 @@ class SMCResults:
         *,
         ax: Any = None,
         default: Any = np.nan,
+        label_axes: bool = True,
         **plot_kwargs: Any,
     ) -> Any:
         """Plot the evolution of a metadata entry stored in each state."""
@@ -209,9 +216,10 @@ class SMCResults:
         y = self.metadata_history(key, default=default)
         axis = self._prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
-        axis.set_xlabel("Iteration")
-        axis.set_ylabel(key)
-        axis.set_title(f"Metadata '{key}' over iterations")
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel(key)
+            axis.set_title(f"Metadata '{key}' over iterations")
         return axis
 
     def plot_corner(
@@ -220,7 +228,7 @@ class SMCResults:
         state_index: int = -1,
         include_weights: bool = False,
         parameter_inds: Sequence[int] | None = None,
-        filename: str | None = None,
+        filename: Union[str, Path] | None = None,
         **corner_kwargs: Any,
     ) -> Any:
         """
@@ -278,3 +286,115 @@ class SMCResults:
             plt.close(fig)
         else:
             return fig
+
+    def plot_trace(
+        self,
+        *,
+        ax: Any = None,
+        parameter_inds: Sequence[int] | None = None,
+        parameter_labels: Sequence[str] | None = None,
+        filename: Union[str, Path] | None = None,
+        kind: str = "violin",
+        **plot_kwargs: Any,
+    ) -> Any:
+        """
+        Plot a trace plot of the particles as a function of state index.
+
+        Parameters
+        ----------
+        ax
+            Axis on which to plot.  If ``None``, a new figure and axis are created.
+        parameter_inds
+            Indices of the parameters to include in the trace plot.
+            If ``None`` (default) all parameters are included.
+        parameter_labels
+            Labels for the parameters to include in the trace plot.
+            If ``None`` (default) generic labels `{x_i}` are used.
+        filename
+            If provided, the plot is saved to this file instead of being returned.
+        kind
+            The kind of trace plot to create.  Currently only "violin" or "scatter" are supported.
+        plot_kwargs
+            Additional keyword arguments passed to the `ax.plot` function.
+
+        Returns
+        -------
+        ax
+            The trace plot axis, if `filename` is not provided.
+        """
+        import matplotlib.pyplot as plt
+
+        assert kind in ("violin", "scatter"), (
+            "Only 'violin' and 'scatter' kinds are supported."
+        )
+
+        default_kwargs: Dict[str, Any] = dict()
+
+        if kind == "scatter":
+            default_kwargs.update(
+                dict(
+                    marker=",",
+                    linestyle="",
+                )
+            )
+        elif kind == "violin":
+            default_kwargs.update(
+                dict(
+                    side="high",
+                    widths=2,
+                    showextrema=False,
+                )
+            )
+
+        if plot_kwargs:
+            default_kwargs.update(plot_kwargs)
+
+        all_particles = np.array(
+            [_as_2d(state.particles) for state in self.states]
+        )  # (n_iterations, n_particles, n_parameters)
+        n_iterations = len(all_particles)
+
+        if parameter_inds is None:
+            parameter_inds = list(range(all_particles.shape[2]))
+
+        if parameter_labels is None:
+            parameter_labels = [f"x_{i}" for i in parameter_inds]
+
+        assert len(parameter_inds) == len(parameter_labels)
+
+        axis = self._prepare_axis(
+            ax,
+            nrows=len(parameter_inds),
+            figsize=(5, 3 * len(parameter_inds)),
+            sharex=True,
+        )
+
+        if len(parameter_inds) == 1:
+            axis = [axis]
+
+        if kind == "scatter":
+            x_iter = np.repeat(np.arange(n_iterations), all_particles.shape[1])
+            all_particles = np.array(all_particles)
+
+        for i, param_ind in enumerate(parameter_inds):
+            if kind == "scatter":
+                axis[i].plot(
+                    x_iter,
+                    all_particles[:, :, param_ind].flatten(),
+                    **default_kwargs,
+                )
+            elif kind == "violin":
+                axis[i].violinplot(
+                    all_particles[:, :, param_ind].T,
+                    **default_kwargs,
+                )
+
+            axis[i].set_ylabel(parameter_labels[i])
+
+        axis[-1].set_xlabel("Iteration")
+
+        if filename is not None:
+            plt.savefig(filename, bbox_inches="tight")
+            plt.close()
+        else:
+            return ax.get_figure()

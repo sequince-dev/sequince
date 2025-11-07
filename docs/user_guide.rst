@@ -4,24 +4,29 @@ User guide
 The Sequential Monte Carlo (SMC) loop in ``sequince`` is built from a set of
 composable *steps*. Each step inspects the current :class:`~sequince.state.ParticleState`,
 optionally consumes observations and shared configuration, and returns an updated
-state. The :class:`~sequince.smc.SequentialMonteCarlo` class drives the loop by
-executing the configured steps at every iteration.
+state. At the end of each loop iteration, a set of *callbacks* are executed
+that can perform operations like logging, diagnostics, and plotting.
+The :class:`~sequince.smc.SequentialMonteCarlo` class drives the loop by
+sequentially executing the configured steps and callbacks at every iteration.
 
 Configuring the runner
 ----------------------
 
 The runner accepts a ``steps`` sequence containing callables that conform to the
-``SMCStep`` protocol defined in :mod:`sequince.steps.base`. The quickest way to
-build a useful pipeline is to reuse the pre-built helper:
+``SMCStep`` protocol defined in :mod:`sequince.steps.base`. Similarly, the runner
+accepts a sequence of optional ``callbacks`` that adhere to the
+``SMCCallback`` protocol in :mod:`sequince.callbacks`.
+The quickest way to build a useful pipeline is to reuse the pre-built helper:
 
 .. code-block:: python
 
     from sequince import make_standard_bayesian_smc
-
+    from sequince.callbackss import TracePlot
     smc, posterior, shared_context = make_standard_bayesian_smc(
         log_prior,
         log_likelihood,
         mutation="emcee",
+        callbacks = [TracePlot()],  # Optional
     )
 
 ``make_standard_bayesian_smc`` wires together
@@ -32,7 +37,7 @@ the :class:`~sequince.steps.mutation.MiniPCNMutation` transition kernel or
 ``mutation="none"`` to skip rejuvenation.
 
 If you need full control, construct ``SequentialMonteCarlo`` manually by
-instantiating step objects and supplying them in the desired order:
+instantiating step and callback objects and supplying them in the desired order:
 
 .. code-block:: python
 
@@ -42,13 +47,15 @@ instantiating step objects and supplying them in the desired order:
         SystematicResampling,
         EmceeMutation,
     )
+    from sequince.callbacks import TracePlot
 
     smc = SequentialMonteCarlo(
         steps=[
             AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
             SystematicResampling(always_resample=True),
             EmceeMutation(posterior, n_steps=10),
-        ]
+        ],
+        callbacks=[TracePlot()],  # Optional
     )
 
 Working with particle state
@@ -82,13 +89,19 @@ the next observation (if available) and exposes it through the
 particle filtering style updates where likelihood evaluations depend on time
 indexed data.
 
-Custom steps
-------------
+Custom steps and callbacks
+--------------------------
 
-To implement bespoke logic, derive from
-:class:`~sequince.steps.base.SMCStep`. Override the ``__call__`` method to
+To implement bespoke step logic, derive from
+:class:`~sequince.steps.base.SMCStep`. Override the ``apply`` method to
 perform work and return the new state. The base class offers utilities for
 logging, stopping the overall run, and accessing metadata stored on the context,
 including the mutable ``StepContext.shared`` dictionary for cross-step state.
 
-See :mod:`sequince.steps` for a catalogue of the built-in components.
+Similarly, custom callbacks can be implemented by sub-classing
+:class:`~sequince.callbacks.SMCCallback` and overriding the ``apply`` method
+(with no return argument). Callbacks are provided with a history of all previous states
+in the form of a :class:`~sequince.result.SMCResults` instance, as well as the
+current context.
+
+See :mod:`sequince.steps` and :mod:`sequince.callbacks` for a catalogue of the built-in components.
