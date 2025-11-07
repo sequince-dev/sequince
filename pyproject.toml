@@ -36,7 +36,7 @@ include = ["sequince*"]
 
 [project.optional-dependencies]
 minipcn = [
-    "minipcn",
+    "minipcn[array-api]",
 ]
 corner = [
     "corner",
