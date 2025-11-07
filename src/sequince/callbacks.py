@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .result import SMCResults
+    from .state import ParticleState
     from .steps.base import StepContext
 
 
@@ -13,22 +14,53 @@ class SMCCallback:
 
     def __call__(
         self,
-        results: "SMCResults",
+        state: "ParticleState",
         context: "StepContext",
+        results: "SMCResults",
     ) -> None:
-        self.apply(results, context)
+        self.apply(state, context, results)
 
     def apply(
         self,
-        results: "SMCResults",
+        state: "ParticleState",
         context: "StepContext",
+        results: "SMCResults",
     ) -> None:
         raise NotImplementedError(
             "SMCCallback subclasses must implement apply()."
         )
 
 
-class TracePlot(SMCCallback):
+class PlotCallback(SMCCallback):
+    """
+    Base class for SMC callbacks that generate plots.
+
+    Parameters
+    ----------
+    outdir:
+        Directory to save the plots.  If ``None`` (default) saves to the current
+        working directory.
+    filename:
+        Filename for the plot.
+    plot_kwargs:
+        Additional keyword arguments to pass to the plotting method.
+    """
+
+    def __init__(
+        self,
+        outdir: str | None = None,
+        filename: str = "plot.png",
+        plot_kwargs: dict[str, Any] | None = None,
+    ):
+        self.outdir = Path(outdir or ".")
+        self.filename = Path(filename)
+        self.full_path = self.outdir / self.filename
+        self.plot_kwargs = plot_kwargs or {}
+
+        Path(self.outdir).mkdir(parents=True, exist_ok=True)
+
+
+class TracePlot(PlotCallback):
     """
     Callback to plot 1-d particle locations every SMC iteration.
 
@@ -53,31 +85,22 @@ class TracePlot(SMCCallback):
         filename: str = "trace.png",
         plot_kwargs: dict[str, Any] | None = None,
     ):
+        super().__init__(outdir, filename, plot_kwargs)
+
         self.parameter_inds = parameter_inds
         self.parameter_labels = parameter_labels
 
         if parameter_labels is not None and parameter_inds is not None:
-            assert len(parameter_labels) == len(parameter_inds), (
-                "parameter_labels and parameter_inds must have the same length."
-            )
-
-        self.outdir = outdir or "."
-        self.filename = filename
-        self.full_path = str(
-            (
-                Path(self.outdir) / Path(self.filename)
-                if self.outdir
-                else Path(self.filename)
-            )
-        )
-        self.plot_kwargs = plot_kwargs or {}
-
-        Path(self.outdir).mkdir(parents=True, exist_ok=True)
+            if len(parameter_labels) != len(parameter_inds):
+                raise ValueError(
+                    "parameter_labels and parameter_inds must have the same length."
+                )
 
     def apply(
         self,
-        results: "SMCResults",
+        state: "ParticleState",
         context: "StepContext",
+        results: "SMCResults",
     ) -> None:
         results.plot_trace(
             parameter_inds=self.parameter_inds,
@@ -86,7 +109,7 @@ class TracePlot(SMCCallback):
         )
 
 
-class StatePlot(SMCCallback):
+class StatePlot(PlotCallback):
     """
     Callback to plot user-specified state metadata every SMC iteration.
 
@@ -110,26 +133,16 @@ class StatePlot(SMCCallback):
         filename: str = "state.png",
         plot_kwargs: dict[str, Any] | None = None,
     ):
-        assert len(metadata_keys) > 0, (
-            "At least one metadata key must be specified."
-        )
+        super().__init__(outdir, filename, plot_kwargs)
+        if len(metadata_keys) == 0:
+            raise ValueError("At least one metadata key must be specified.")
         self.metadata_keys = metadata_keys
-        self.outdir = outdir or "."
-        self.filename = filename
-        self.full_path = str(
-            (
-                Path(self.outdir) / Path(self.filename)
-                if self.outdir
-                else Path(self.filename)
-            )
-        )
-        self.plot_kwargs = plot_kwargs or {}
-        Path(self.outdir).mkdir(parents=True, exist_ok=True)
 
     def apply(
         self,
-        results: "SMCResults",
+        state: "ParticleState",
         context: "StepContext",
+        results: "SMCResults",
     ) -> None:
         import matplotlib.pyplot as plt
 

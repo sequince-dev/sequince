@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Sequence
+from pathlib import Path
+from typing import Any, Callable, Dict, Sequence, Union
 
 import numpy as np
 
@@ -227,7 +228,7 @@ class SMCResults:
         state_index: int = -1,
         include_weights: bool = False,
         parameter_inds: Sequence[int] | None = None,
-        filename: str | None = None,
+        filename: Union[str, Path] | None = None,
         **corner_kwargs: Any,
     ) -> Any:
         """
@@ -292,12 +293,12 @@ class SMCResults:
         ax: Any = None,
         parameter_inds: Sequence[int] | None = None,
         parameter_labels: Sequence[str] | None = None,
-        filename: str | None = None,
+        filename: Union[str, Path] | None = None,
         kind: str = "violin",
         **plot_kwargs: Any,
     ) -> Any:
         """
-        Plot a trace plot of the particles in the specified states.
+        Plot a trace plot of the particles as a function of state index.
 
         Parameters
         ----------
@@ -396,4 +397,4 @@ class SMCResults:
             plt.savefig(filename, bbox_inches="tight")
             plt.close()
         else:
-            return axis
+            return ax.get_figure()
