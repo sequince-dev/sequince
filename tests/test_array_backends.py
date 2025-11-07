@@ -6,8 +6,10 @@ import pytest
 from orng import ArrayRNG
 
 from sequince._array_api import namespace
+from sequince.posterior import TemperedPosterior
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 from sequince.state import ParticleState
+from sequince.steps.base import StepContext
 
 BackendFactoryReturn = Tuple[Any, Any, Any, Callable[[Any], Any]]
 
@@ -109,3 +111,33 @@ def test_sequince_runs_with_array_backends(backend: str) -> None:
 
     mean = results.weighted_mean()
     assert namespace(mean) is backend_ns
+
+
+def test_torch_gpu_particles_remain_on_device() -> None:
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    device = torch.device("cuda", 0)
+    dtype = torch.float32
+    particles = torch.arange(8, device=device, dtype=dtype).reshape(4, 2)
+    log_weights = torch.full((4,), float("-inf"), dtype=dtype, device=device)
+    state = ParticleState(particles=particles, log_weights=log_weights)
+
+    normalized, _ = state.normalize()
+    assert normalized.log_weights.device == device
+    weights = normalized.weights
+    assert weights.device == device
+
+    cpu_indices = torch.arange(4, dtype=torch.long)
+    resampled = state.resample(cpu_indices)
+    assert resampled.particles.device == device
+    assert resampled.log_weights.device == device
+
+    context = StepContext(t=0)
+    posterior = TemperedPosterior(
+        log_prior=lambda x, ctx: torch.sum(x, dim=1),
+        log_likelihood=lambda x, ctx: torch.sum(x, dim=1),
+    )
+    log_inc: Any = posterior.log_increment(state.particles, context)
+    assert log_inc.device == device
