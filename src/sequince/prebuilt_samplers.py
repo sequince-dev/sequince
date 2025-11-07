@@ -10,8 +10,8 @@ from .steps import (
     StratifiedResampling,
     SystematicResampling,
 )
-from .steps.mutation import get_mutation_step
 from .steps.base import SMCStep
+from .steps.mutation import get_mutation_step
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
 MutationStrategy = Literal["emcee", "minipcn", "none"]
