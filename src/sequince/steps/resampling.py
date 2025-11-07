@@ -97,7 +97,7 @@ class StratifiedResampling(ResamplingStep):
         offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
         jitter = asarray(rng.random((n,)), xp=xp, like=probs)
         positions = (offsets + jitter) / n
-        cumulative = _cumulative_sum(probs, xp=xp)
+        cumulative = xp.cumulative_sum(probs)
         return _searchsorted(cumulative, positions, xp=xp)
 
 
@@ -111,18 +111,8 @@ class SystematicResampling(ResamplingStep):
         start = asarray(rng.random(), xp=xp, like=probs)
         offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
         positions = (start + offsets) / n
-        cumulative = _cumulative_sum(probs, xp=xp)
+        cumulative = xp.cumulative_sum(probs)
         return _searchsorted(cumulative, positions, xp=xp)
-
-
-def _cumulative_sum(array: Array, *, xp):
-    if hasattr(xp, "cumsum"):
-        return xp.cumsum(array)
-    return asarray(_np_cumsum(array), xp=xp, like=array)
-
-
-def _np_cumsum(array: Array):
-    return to_numpy(array).cumsum()
 
 
 def _searchsorted(cumulative: Array, positions: Array, *, xp):
