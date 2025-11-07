@@ -33,7 +33,7 @@ class SMCResults:
     """Lightweight container exposing diagnostics for a completed SMC run."""
 
     states: Sequence[ParticleState]
-    context: StepContext | None = None
+    context: StepContext
 
     def __post_init__(self) -> None:
         if not self.states:
