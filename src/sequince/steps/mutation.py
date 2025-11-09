@@ -335,9 +335,9 @@ def get_mutation_step(
     mutation_kwargs: dict[str, Any] | None = None,
     mutation_run_kwargs: dict[str, Any] | None = None,
     **kwargs,
-) -> MutationStep | None:
+) -> SMCStep | None:
     kwargs = dict(mutation_kwargs or {})
-    if isinstance(mutation, MutationStep):
+    if isinstance(mutation, SMCStep):
         mutation_step = mutation
     elif mutation == "emcee":
         run_kwargs = dict(mutation_run_kwargs or {})
