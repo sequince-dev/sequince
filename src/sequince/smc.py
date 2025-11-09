@@ -49,7 +49,9 @@ class SequentialMonteCarlo:
             ]
         ],
         *,
-        callbacks: Sequence[Callable[[SMCResults, StepContext], None]]
+        callbacks: Sequence[
+            Callable[[ParticleState, StepContext, SMCResults], None]
+        ]
         | None = None,
         auto_normalize: bool = True,
     ):
@@ -131,7 +133,11 @@ class SequentialMonteCarlo:
                 logger.debug(
                     "Iteration %d: invoking callback %s.", t, callback_name
                 )
-                callback(SMCResults(states=produced_states), context)
+                callback(
+                    state,
+                    context,
+                    SMCResults(states=produced_states, context=context),
+                )
 
             if context.stop_requested:
                 logger.info(

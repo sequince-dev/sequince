@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Literal, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
 from ._typing import MutationStrategy
 from .posterior import TemperedPosterior
@@ -14,6 +14,9 @@ from .steps import (
 )
 from .steps.base import SMCStep, StepContext
 from .steps.mutation import get_mutation_step
+
+if TYPE_CHECKING:
+    from .state import ParticleState
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
 
@@ -35,7 +38,9 @@ def make_standard_bayesian_smc(
     mutation_run_kwargs: Dict[str, Any] | None = None,
     mutation_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
-    callbacks: Sequence[Callable[[SMCResults, StepContext], None]]
+    callbacks: Sequence[
+        Callable[[ParticleState, StepContext, SMCResults], None]
+    ]
     | None = None,
 ) -> Tuple[SequentialMonteCarlo, TemperedPosterior, Dict[str, Any]]:
     """Return a SequentialMonteCarlo instance configured with standard SMC steps.
