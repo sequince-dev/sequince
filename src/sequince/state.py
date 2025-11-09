@@ -1,29 +1,38 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import (
-    Any,
-    MutableMapping,
-)
+from typing import Any, MutableMapping
 
-import numpy as np
-from scipy.special import logsumexp
+from ._array_api import (
+    asarray,
+    full,
+    namespace,
+)
+from ._array_api import (
+    copy as array_copy,
+)
+from ._array_api import (
+    logsumexp as xp_logsumexp,
+)
+from ._typing import Array
 
 
 @dataclass
 class ParticleState:
     """Container for particle locations, log weights, and auxiliary information."""
 
-    particles: np.ndarray
-    log_weights: np.ndarray
+    particles: Array
+    log_weights: Array
     log_evidence: float = 0.0
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
 
     def copy(self) -> "ParticleState":
-        """Return a copy of the state."""
+        """Return a copy of the state preserving the array backend."""
+        xp = namespace(self.particles, self.log_weights)
         return ParticleState(
-            particles=np.array(self.particles, copy=True),
-            log_weights=np.array(self.log_weights, copy=True),
+            particles=array_copy(self.particles, xp=xp),
+            log_weights=array_copy(self.log_weights, xp=xp),
             log_evidence=float(self.log_evidence),
             metadata=dict(self.metadata),
         )
@@ -31,28 +40,43 @@ class ParticleState:
     def normalize(self) -> tuple["ParticleState", float]:
         """Return a new state with normalized log weights and updated evidence."""
         state = self.copy()
-        log_norm = logsumexp(state.log_weights)
-        if np.isfinite(log_norm):
-            state.log_weights = state.log_weights - log_norm
-            state.log_evidence += log_norm
+        xp = namespace(state.log_weights)
+        log_weights = asarray(state.log_weights, xp=xp)
+        log_norm = xp_logsumexp(log_weights, xp=xp)
+        log_norm_scalar = float(log_norm)
+        if math.isfinite(log_norm_scalar):
+            state.log_weights = log_weights - log_norm_scalar
+            state.log_evidence += log_norm_scalar
         else:
             n = state.log_weights.shape[0]
-            state.log_weights = np.full(n, -np.log(n))
-        return state, log_norm
+            state.log_weights = full(
+                (n,),
+                -math.log(n),
+                xp=xp,
+                dtype=log_weights.dtype,
+                like=log_weights,
+            )
+        return state, float(log_norm)
 
     @property
-    def weights(self) -> np.ndarray:
+    def weights(self) -> Array:
         """Return normalized weights."""
-        log_norm = logsumexp(self.log_weights)
-        if np.isfinite(log_norm):
-            return np.exp(self.log_weights - log_norm)
+        xp = namespace(self.log_weights)
+        log_weights = asarray(self.log_weights, xp=xp)
+        log_norm = xp_logsumexp(log_weights, xp=xp)
+        log_norm_scalar = float(log_norm)
+        if math.isfinite(log_norm_scalar):
+            return xp.exp(log_weights - log_norm_scalar)
         n = self.log_weights.shape[0]
-        return np.full(n, 1.0 / n)
+        return full(
+            (n,), 1.0 / n, xp=xp, dtype=log_weights.dtype, like=log_weights
+        )
 
     def effective_sample_size(self) -> float:
         """Compute the effective sample size (ESS)."""
-        w = self.weights
-        return 1.0 / np.sum(np.square(w))
+        xp = namespace(self.log_weights)
+        w = asarray(self.weights, xp=xp)
+        return 1.0 / float(xp.sum(xp.square(w)))
 
     def with_updates(self, **kwargs: Any) -> "ParticleState":
         """Return a copy of the state with selective updates applied."""
@@ -61,14 +85,24 @@ class ParticleState:
             setattr(updated, key, value)
         return updated
 
-    def resample(self, indices: np.ndarray) -> "ParticleState":
+    def resample(self, indices: Array) -> "ParticleState":
         """Return a resampled state using the provided ancestor indices."""
-        new_particles = np.asarray(self.particles)[indices]
-        n = len(indices)
-        log_weights = np.full(n, -np.log(n), dtype=float)
+        xp = namespace(self.particles, indices)
+        particles = asarray(self.particles, xp=xp)
+        idx = asarray(indices, xp=xp, like=particles)
+        new_particles = particles[idx]
+        n = idx.shape[0]
+        log_weight_template = asarray(self.log_weights, xp=xp)
+        log_weights = full(
+            (n,),
+            -math.log(n),
+            xp=xp,
+            dtype=log_weight_template.dtype,
+            like=log_weight_template,
+        )
         return ParticleState(
             particles=new_particles,
             log_weights=log_weights,
             log_evidence=self.log_evidence,
-            metadata=dict(self.metadata, ancestors=indices),
+            metadata=dict(self.metadata, ancestors=idx),
         )

@@ -1,29 +1,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
-import numpy as np
-
+from ._array_api import asarray, full, namespace
+from ._typing import Array
 from .utils import _call_with_optional_context
 
 if TYPE_CHECKING:
     from .steps.base import StepContext
 
-ArrayLikeFn = Callable[..., float | np.ndarray]
+ArrayLikeFn = Callable[..., Array | float]
 
 
 def _evaluate(
     fn: ArrayLikeFn,
-    particles: np.ndarray,
+    particles: Array,
     context: "StepContext",
-) -> np.ndarray:
+) -> Array:
     """Call function with optional context and return a 1d float array."""
     values = _call_with_optional_context(fn, (particles,), context)
-    array = np.asarray(values, dtype=float)
+    xp = namespace(particles, values)
+    array = asarray(values, xp=xp, like=particles)
     if array.ndim == 0:
-        array = np.full(particles.shape[0], float(array), dtype=float)
-    return np.atleast_1d(array).astype(float, copy=False)
+        array = full(
+            (particles.shape[0],),
+            float(array),
+            xp=xp,
+            dtype=array.dtype,
+            like=particles,
+        )
+    if array.ndim > 1:
+        array = xp.reshape(array, (array.shape[0],))
+    return array
 
 
 @dataclass(frozen=True)
@@ -47,9 +56,9 @@ class TemperedPosterior:
 
     def log_increment(
         self,
-        particles: np.ndarray,
+        particles: Array,
         context: "StepContext",
-    ) -> float | np.ndarray:
+    ) -> float | Any:
         """Return the log-weight increment required by the tempering step."""
         log_like = _evaluate(self.log_likelihood, particles, context)
         if self.log_proposal is None:
@@ -65,9 +74,9 @@ class TemperedPosterior:
 
     def log_prob(
         self,
-        particles: np.ndarray,
+        particles: Array,
         context: "StepContext",
-    ) -> float | np.ndarray:
+    ) -> float | Any:
         """Return the tempered log posterior evaluated at the current β."""
         beta = float(context.shared.get("temperature", 0.0))
         log_prior = _evaluate(self.log_prior, particles, context)

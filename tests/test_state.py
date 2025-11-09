@@ -59,11 +59,8 @@ def test_with_updates_returns_new_state(particle_state: ParticleState) -> None:
 def test_resample_returns_equal_weights_and_track_ancestors(
     particle_state: ParticleState, rng
 ) -> None:
-    indices = rng.integers(
-        0,
-        len(particle_state.log_weights),
-        size=len(particle_state.log_weights),
-    )
+    n = len(particle_state.log_weights)
+    indices = np.asarray(rng.choice(n, size=n, replace=True))
     resampled = particle_state.resample(indices)
 
     assert np.allclose(

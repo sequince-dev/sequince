@@ -6,17 +6,21 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .._array_api import to_numpy
+from .._typing import Array
 from ..proposals import ProposalKernel
 from ..utils import _call_with_optional_context
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    from orng import ArrayRNG
+
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
 
 
-ProposalFactory = Callable[[np.ndarray, StepContext], ProposalKernel]
+ProposalFactory = Callable[[Array, StepContext], ProposalKernel]
 
 
 class WasteFreeResampleMove(SMCStep):
@@ -63,7 +67,7 @@ class WasteFreeResampleMove(SMCStep):
         self,
         log_prob_fn: Callable[..., Any],
         proposal: ProposalKernel
-        | Callable[[np.ndarray, StepContext], ProposalKernel],
+        | Callable[[Array, StepContext], ProposalKernel],
         *,
         resample_ancestors: bool = True,
         proposals_per_particle: int = 1,
@@ -75,7 +79,7 @@ class WasteFreeResampleMove(SMCStep):
         if hasattr(proposal, "sample") and hasattr(proposal, "log_density"):
             self._proposal: ProposalKernel | None = proposal  # type: ignore[assignment]
             self._proposal_factory: (
-                Callable[[np.ndarray, StepContext], ProposalKernel] | None
+                Callable[[Array, StepContext], ProposalKernel] | None
             ) = None
         elif callable(proposal):
             self._proposal = None
@@ -93,7 +97,7 @@ class WasteFreeResampleMove(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> "ParticleState":
         n = state.log_weights.shape[0]
         if n == 0:
@@ -109,9 +113,9 @@ class WasteFreeResampleMove(SMCStep):
 
         if self._resample:
             weights = state.weights
-            ancestor_indices: np.ndarray = np.asarray(
+            ancestor_indices = to_numpy(
                 rng.choice(n, size=n, replace=True, p=weights)
-            )
+            ).astype(int)
             logger.debug(
                 "WasteFreeResampleMove drew ancestors with effective ESS %.4f.",
                 float(state.effective_sample_size()),
@@ -128,8 +132,8 @@ class WasteFreeResampleMove(SMCStep):
         remaining_log_mass = np.full(n, log_base_weight, dtype=float)
 
         candidate_particles = [parent_particles]
-        proposal_log_weights: list[np.ndarray] = []
-        acceptance_history: list[np.ndarray] = []
+        proposal_log_weights: list[Array] = []
+        acceptance_history: list[Array] = []
 
         for _ in range(self._n_proposals):
             proposals = kernel.sample(parent_particles, rng)
@@ -179,12 +183,14 @@ class WasteFreeResampleMove(SMCStep):
             )
         weights = (weights / weight_sum).reshape(-1)
 
-        selected = rng.choice(
-            combined_particles.shape[0],
-            size=n,
-            replace=True,
-            p=weights,
-        )
+        selected = to_numpy(
+            rng.choice(
+                combined_particles.shape[0],
+                size=n,
+                replace=True,
+                p=weights,
+            )
+        ).astype(int)
 
         new_particles = combined_particles[selected]
         if squeeze_last:
@@ -231,9 +237,9 @@ class WasteFreeResampleMove(SMCStep):
 
     def _evaluate_log_prob(
         self,
-        particles: np.ndarray,
+        particles: Array,
         context: StepContext,
-    ) -> np.ndarray:
+    ) -> Array:
         values = _call_with_optional_context(
             self._log_prob_fn,
             (particles,),
@@ -255,7 +261,7 @@ class WasteFreeResampleMove(SMCStep):
 
     def _resolve_proposal(
         self,
-        parent_particles: np.ndarray,
+        parent_particles: Array,
         context: StepContext,
     ) -> ProposalKernel:
         if self._proposal_factory is not None:

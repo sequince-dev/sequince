@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 
@@ -12,6 +14,9 @@ from sequince.steps import (
     SystematicResampling,
 )
 from sequince.steps.base import SMCStep, StepContext
+
+if TYPE_CHECKING:
+    from orng import ArrayRNG
 
 
 def _quadratic_log_prior(particles: np.ndarray, context=None) -> np.ndarray:
@@ -104,7 +109,7 @@ def test_make_standard_bayesian_smc_can_disable_mutation() -> None:
 
 
 class IdentityMutation(SMCStep):
-    def apply(self, state, context: StepContext, rng):
+    def apply(self, state, context: StepContext, rng: "ArrayRNG"):
         return state
 
 

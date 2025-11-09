@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 
@@ -23,6 +25,9 @@ from sequince.steps.weighting import (
     LogLikelihoodWeighting,
     TemperedWeighting,
 )
+
+if TYPE_CHECKING:
+    from orng import ArrayRNG
 
 
 def test_step_context_request_stop(step_context: StepContext) -> None:
@@ -193,7 +198,7 @@ def test_minipcn_mutation_runs_single_step(
     pytest.importorskip("minipcn")
 
     def log_prob(position: np.ndarray, context: StepContext) -> float:
-        return float(-0.5 * np.sum(position**2))
+        return -0.5 * np.sum(position**2, axis=-1)
 
     context = context_factory(shared={"temperature": 1.0})
     step = MiniPCNMutation(log_prob, n_steps=1)
@@ -388,9 +393,7 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
 def test_dimensionality_expansion_appends_block(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
-    def sampler(
-        state: ParticleState, *, rng: np.random.Generator
-    ) -> np.ndarray:
+    def sampler(state: ParticleState, *, rng: "ArrayRNG") -> np.ndarray:
         n = state.particles.shape[0]
         return np.full((n, 2), fill_value=0.5)
 

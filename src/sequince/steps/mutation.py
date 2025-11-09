@@ -6,9 +6,13 @@ from typing import TYPE_CHECKING, Any, Callable, cast
 import emcee
 import numpy as np
 
+from .._array_api import asarray, namespace, to_numpy
+from .._typing import Array
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    from orng import ArrayRNG
+
     from ..posterior import TemperedPosterior
     from ..state import ParticleState
 
@@ -17,21 +21,37 @@ logger = logging.getLogger(__name__)
 
 def _call_log_prob(
     fn: LogProbFn,
-    position: np.ndarray,
+    position: Array,
     context: StepContext,
-) -> float:
+) -> Any:
     try:
         return fn(position, context)
     except TypeError:
         return fn(position)
 
 
-LogProbFn = Callable[..., float]
+LogProbFn = Callable[..., Array | float]
+
+
+def _as_scalar_log_prob(value: Any) -> float:
+    array = to_numpy(value)
+    if array.ndim == 0:
+        return float(array)
+    if array.size == 1:
+        return float(array.reshape(()))
+    raise TypeError(
+        "Log-probability function must return a scalar when vectorization is disabled."
+    )
+
+
+def _as_vector_log_prob(value: Any, length: int) -> np.ndarray:
+    array = to_numpy(value)
+    return array.reshape(length)
 
 
 class MutationStep(SMCStep):
     def __init__(
-        self, log_prob_fn: Callable[..., float] | "TemperedPosterior"
+        self, log_prob_fn: Callable[..., Array | float] | "TemperedPosterior"
     ):
         super().__init__()
         if hasattr(log_prob_fn, "log_prob"):
@@ -62,7 +82,7 @@ class EmceeMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
         *,
         n_steps: int = 1,
         move: emcee.moves.Move | None = None,
@@ -81,9 +101,11 @@ class EmceeMutation(MutationStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: np.random.Generator,
+        rng: "ArrayRNG",
     ) -> ParticleState:
-        particles = np.asarray(state.particles)
+        xp = namespace(state.particles)
+        xp = namespace(state.particles)
+        particles = to_numpy(state.particles)
         if particles.ndim == 1:
             initial_positions = particles[:, np.newaxis]
             squeeze_last = True
@@ -99,13 +121,40 @@ class EmceeMutation(MutationStep):
             self._n_steps,
         )
 
-        def log_prob(position: np.ndarray) -> float:
-            return _call_log_prob(self._log_prob_fn, position, context)
+        vectorized = bool(self._kwargs.get("vectorize", False))
+
+        if vectorized:
+
+            def _log_prob_vectorized(positions: np.ndarray) -> np.ndarray:
+                backend_positions = asarray(
+                    positions, xp=xp, like=state.particles
+                )
+                result = _call_log_prob(
+                    self._log_prob_fn, backend_positions, context
+                )
+                return _as_vector_log_prob(result, backend_positions.shape[0])
+
+            log_prob_callable: Callable[[np.ndarray], Any] = (
+                _log_prob_vectorized
+            )
+
+        else:
+
+            def _log_prob_scalar(position: np.ndarray) -> float:
+                backend_position = asarray(
+                    position, xp=xp, like=state.particles
+                )
+                result = _call_log_prob(
+                    self._log_prob_fn, backend_position, context
+                )
+                return _as_scalar_log_prob(result)
+
+            log_prob_callable = _log_prob_scalar
 
         sampler = emcee.EnsembleSampler(
             n_walkers,
             ndim,
-            log_prob,
+            log_prob_callable,
             moves=self._move,
             **self._kwargs,
         )
@@ -119,9 +168,11 @@ class EmceeMutation(MutationStep):
         new_positions = state_result.coords
 
         if squeeze_last:
-            new_particles = new_positions[:, 0]
+            result_np = new_positions[:, 0]
         else:
-            new_particles = new_positions
+            result_np = new_positions
+
+        new_particles = asarray(result_np, xp=xp, like=state.particles)
 
         metadata = dict(state.metadata)
         metadata["emcee_acceptance"] = float(
@@ -160,7 +211,7 @@ class MiniPCNMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
         *,
         n_steps: int = 1,
         step_fn: str = "tpcn",
@@ -176,8 +227,15 @@ class MiniPCNMutation(MutationStep):
         self._kwargs = kwargs
         self._kwargs.setdefault("target_acceptance_rate", 0.234)
 
-    def apply(self, state, context, rng):
+    def apply(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "ArrayRNG",
+    ):
         from minipcn import Sampler
+
+        xp = namespace(state.particles)
 
         def log_prob_fn(position):
             return _call_log_prob(self._log_prob_fn, position, context)
@@ -189,17 +247,16 @@ class MiniPCNMutation(MutationStep):
             step_fn=self._step_fn,
             rng=rng,
             dims=dims,
+            xp=xp,
             **self._kwargs,
         )
 
-        x = np.asarray(state.particles)
-
         chain, history = sampler.sample(
-            x,
+            state.particles,
             n_steps=self._n_steps,
             verbose=self._verbose,
         )
-        new_particles = chain[-1]
+        new_particles = asarray(chain[-1], xp=xp, like=state.particles)
 
         metadata = dict(state.metadata)
         metadata["minipcn_acceptance"] = float(
