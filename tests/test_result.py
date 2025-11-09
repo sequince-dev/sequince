@@ -4,12 +4,13 @@ from sequince.result import SMCResult
 
 
 @pytest.fixture
-def dummy_results(particle_state):
+def dummy_results(particle_state, context_factory) -> SMCResult:
     return SMCResult(
         [
             particle_state,
         ]
-        * 10
+        * 10,
+        context_factory(),
     )
 
 
