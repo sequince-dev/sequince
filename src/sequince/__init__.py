@@ -5,7 +5,7 @@ import logging
 
 from .posterior import TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
-from .result import SMCResults
+from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .state import ParticleState
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ParticleState",
     "SequentialMonteCarlo",
-    "SMCResults",
+    "SMCResult",
     "TemperedPosterior",
     "make_standard_bayesian_smc",
 ]

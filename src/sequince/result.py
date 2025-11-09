@@ -16,6 +16,8 @@ from .utils import _ensure_rng
 if TYPE_CHECKING:
     from orng import ArrayRNG
 
+    from .steps.base import StepContext
+
 
 def _as_2d(array: Any) -> Any:
     """Ensure particle arrays are 2-D with rows corresponding to samples."""
@@ -27,10 +29,11 @@ def _as_2d(array: Any) -> Any:
 
 
 @dataclass(frozen=True)
-class SMCResults:
+class SMCResult:
     """Lightweight container exposing diagnostics for a completed SMC run."""
 
     states: Sequence[ParticleState]
+    context: StepContext
 
     def __post_init__(self) -> None:
         if not self.states:

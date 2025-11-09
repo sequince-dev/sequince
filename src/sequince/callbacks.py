@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .result import SMCResults
+    from .result import SMCResult
     from .state import ParticleState
     from .steps.base import StepContext
 
@@ -16,7 +16,7 @@ class SMCCallback:
         self,
         state: "ParticleState",
         context: "StepContext",
-        results: "SMCResults",
+        results: "SMCResult",
     ) -> None:
         self.apply(state, context, results)
 
@@ -24,7 +24,7 @@ class SMCCallback:
         self,
         state: "ParticleState",
         context: "StepContext",
-        results: "SMCResults",
+        results: "SMCResult",
     ) -> None:
         raise NotImplementedError(
             "SMCCallback subclasses must implement apply()."
@@ -100,7 +100,7 @@ class TracePlot(PlotCallback):
         self,
         state: "ParticleState",
         context: "StepContext",
-        results: "SMCResults",
+        results: "SMCResult",
     ) -> None:
         results.plot_trace(
             parameter_inds=self.parameter_inds,
@@ -142,7 +142,7 @@ class StatePlot(PlotCallback):
         self,
         state: "ParticleState",
         context: "StepContext",
-        results: "SMCResults",
+        results: "SMCResult",
     ) -> None:
         import matplotlib.pyplot as plt
 

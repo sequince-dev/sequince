@@ -326,3 +326,37 @@ class MiniPCNMutation(MutationStep):
             self._n_steps,
         )
         return state.with_updates(particles=new_particles, metadata=metadata)
+
+
+def get_mutation_step(
+    mutation: str | SMCStep | None,
+    posterior: "TemperedPosterior",
+    mutation_n_steps: int = 10,
+    mutation_kwargs: dict[str, Any] | None = None,
+    mutation_run_kwargs: dict[str, Any] | None = None,
+    **kwargs,
+) -> SMCStep | None:
+    kwargs = dict(mutation_kwargs or {})
+    if isinstance(mutation, SMCStep):
+        mutation_step = mutation
+    elif mutation == "emcee":
+        run_kwargs = dict(mutation_run_kwargs or {})
+        mutation_step = EmceeMutation(
+            posterior,
+            n_steps=mutation_n_steps,
+            run_kwargs=run_kwargs,
+            **kwargs,
+        )
+    elif mutation == "minipcn":
+        mutation_step = MiniPCNMutation(
+            posterior,
+            n_steps=mutation_n_steps,
+            **kwargs,
+        )
+    elif mutation == "none":
+        mutation_step = None
+    else:
+        raise ValueError(
+            "mutation must be 'emcee', 'minipcn', 'none', or an SMCStep instance."
+        )
+    return mutation_step

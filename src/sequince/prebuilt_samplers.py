@@ -1,22 +1,24 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Literal, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
+from ._typing import MutationStrategy
 from .posterior import TemperedPosterior
-from .result import SMCResults
+from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .steps import (
     AdaptiveTemperedWeighting,
-    EmceeMutation,
-    MiniPCNMutation,
     MultinomialResampling,
     StratifiedResampling,
     SystematicResampling,
 )
 from .steps.base import SMCStep, StepContext
+from .steps.mutation import get_mutation_step
+
+if TYPE_CHECKING:
+    from .state import ParticleState
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
-MutationStrategy = Literal["emcee", "minipcn", "none"]
 
 
 def make_standard_bayesian_smc(
@@ -36,7 +38,9 @@ def make_standard_bayesian_smc(
     mutation_run_kwargs: Dict[str, Any] | None = None,
     mutation_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
-    callbacks: Sequence[Callable[[SMCResults, StepContext], None]]
+    callbacks: Sequence[
+        Callable[[ParticleState, StepContext, SMCResult], None]
+    ]
     | None = None,
 ) -> Tuple[SequentialMonteCarlo, TemperedPosterior, Dict[str, Any]]:
     """Return a SequentialMonteCarlo instance configured with standard SMC steps.
@@ -121,32 +125,14 @@ def make_standard_bayesian_smc(
         always_resample=always_resample,
     )
 
-    mutation_step: SMCStep | None
-    if isinstance(mutation, SMCStep):
-        mutation_step = mutation
-    elif mutation == "emcee":
-        mutation_kwargs_dict = dict(mutation_kwargs or {})
-        run_kwargs = dict(mutation_run_kwargs or {})
-        mutation_step = EmceeMutation(
-            posterior,
-            n_steps=mutation_n_steps,
-            move=mutation_move,
-            run_kwargs=run_kwargs,
-            **mutation_kwargs_dict,
-        )
-    elif mutation == "minipcn":
-        mutation_kwargs_dict = dict(mutation_kwargs or {})
-        mutation_step = MiniPCNMutation(
-            posterior,
-            n_steps=mutation_n_steps,
-            **mutation_kwargs_dict,
-        )
-    elif mutation == "none":
-        mutation_step = None
-    else:
-        raise ValueError(
-            "mutation must be 'emcee', 'minipcn', 'none', or an SMCStep instance."
-        )
+    mutation_step = get_mutation_step(
+        mutation,
+        posterior,
+        n_steps=mutation_n_steps,
+        move=mutation_move,
+        run_kwargs=mutation_run_kwargs,
+        mutation_kwargs=mutation_kwargs,
+    )
 
     steps = [weighting_step, resampling_step]
     if mutation_step is not None:
