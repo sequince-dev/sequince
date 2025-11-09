@@ -25,6 +25,7 @@ from sequince.steps.weighting import (
     LogLikelihoodWeighting,
     TemperedWeighting,
 )
+from sequince.transforms import AffineTransform
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -192,6 +193,25 @@ def test_emcee_mutation_runs_single_step(
     assert mutated.metadata["emcee_steps"] == 1
 
 
+def test_emcee_mutation_with_transform(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    pytest.importorskip("emcee")
+
+    def log_prob(position: np.ndarray, context: StepContext) -> float:
+        return float(-0.5 * np.sum(position**2))
+
+    context = context_factory(shared={"temperature": 1.0})
+    transform = AffineTransform(columns=[0])
+    transform.fit(particle_state.particles)
+    step = EmceeMutation(log_prob, n_steps=1, transform=transform)
+    mutated = step(particle_state, context, rng)
+
+    assert mutated.particles.shape == particle_state.particles.shape
+    assert "emcee_acceptance" in mutated.metadata
+    assert mutated.metadata["emcee_steps"] == 1
+
+
 def test_minipcn_mutation_runs_single_step(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
@@ -207,6 +227,25 @@ def test_minipcn_mutation_runs_single_step(
     assert mutated.particles.shape == particle_state.particles.shape
     assert "minipcn_acceptance" in mutated.metadata
     assert mutated.metadata["minipcn_steps"] == 1
+
+
+def test_minipcn_mutation_with_transform(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    pytest.importorskip("minipcn")
+
+    def log_prob(position: np.ndarray, context: StepContext) -> float:
+        return float(-0.5 * np.sum(position**2))
+
+    context = context_factory(shared={"temperature": 1.0})
+    transform = AffineTransform(columns=[1])
+    transform.fit(particle_state.particles)
+    step = MiniPCNMutation(log_prob, n_steps=3, transform=transform)
+    mutated = step(particle_state, context, rng)
+
+    assert mutated.particles.shape == particle_state.particles.shape
+    assert "minipcn_acceptance" in mutated.metadata
+    assert mutated.metadata["minipcn_steps"] == 3
 
 
 def test_adapt_gaussian_proposal_updates_scale(
