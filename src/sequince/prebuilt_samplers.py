@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
 from ._typing import MutationStrategy
 from .posterior import TemperedPosterior
-from .result import SMCResults
+from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .steps import (
     AdaptiveTemperedWeighting,
@@ -39,7 +39,7 @@ def make_standard_bayesian_smc(
     mutation_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
     callbacks: Sequence[
-        Callable[[ParticleState, StepContext, SMCResults], None]
+        Callable[[ParticleState, StepContext, SMCResult], None]
     ]
     | None = None,
 ) -> Tuple[SequentialMonteCarlo, TemperedPosterior, Dict[str, Any]]:

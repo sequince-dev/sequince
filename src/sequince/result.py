@@ -29,7 +29,7 @@ def _as_2d(array: Any) -> Any:
 
 
 @dataclass(frozen=True)
-class SMCResults:
+class SMCResult:
     """Lightweight container exposing diagnostics for a completed SMC run."""
 
     states: Sequence[ParticleState]

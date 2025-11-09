@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from orng import ArrayRNG
 
     from ._typing import MutationStrategy
-    from .result import SMCResults
+    from .result import SMCResult
     from .steps.base import StepContext
 
 ArrayLikeFn = Callable[..., Array | float]
@@ -102,7 +102,7 @@ def draw_additional_samples(
     log_likelihood: Callable[..., Any] | None = None,
     log_proposal: Callable[..., Any] | None = None,
     posterior: TemperedPosterior | None = None,
-    result: SMCResults,
+    result: SMCResult,
     rng: "ArrayRNG",
     n_particles: int,
     mutation: MutationStrategy | None = "minipcn",

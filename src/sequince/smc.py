@@ -11,7 +11,7 @@ from typing import (
     Sequence,
 )
 
-from .result import SMCResults
+from .result import SMCResult
 from .state import ParticleState
 from .steps.base import StepContext
 from .utils import _ensure_rng
@@ -50,7 +50,7 @@ class SequentialMonteCarlo:
         ],
         *,
         callbacks: Sequence[
-            Callable[[ParticleState, StepContext, SMCResults], None]
+            Callable[[ParticleState, StepContext, SMCResult], None]
         ]
         | None = None,
         auto_normalize: bool = True,
@@ -66,7 +66,7 @@ class SequentialMonteCarlo:
         num_steps: int | None = None,
         rng: "ArrayRNG" | np.random.Generator | int | None = None,
         shared_context: MutableMapping[str, Any] | None = None,
-    ) -> SMCResults:
+    ) -> SMCResult:
         rng = _ensure_rng(rng)
         shared_context = shared_context or {}
 
@@ -136,7 +136,7 @@ class SequentialMonteCarlo:
                 callback(
                     state,
                     context,
-                    SMCResults(states=produced_states, context=context),
+                    SMCResult(states=produced_states, context=context),
                 )
 
             if context.stop_requested:
@@ -153,4 +153,4 @@ class SequentialMonteCarlo:
             len(produced_states),
             len(produced_states),
         )
-        return SMCResults(states=produced_states, context=context)
+        return SMCResult(states=produced_states, context=context)
