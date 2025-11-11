@@ -8,6 +8,7 @@ from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .steps import (
     AdaptiveTemperedWeighting,
+    LoggingStep,
     MultinomialResampling,
     StratifiedResampling,
     SystematicResampling,
@@ -38,6 +39,7 @@ def make_standard_bayesian_smc(
     mutation_kwargs: Dict[str, Any] | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
     particle_transform_kwargs: Dict[str, Any] | None = None,
+    logging_frequency: int = 1,
     auto_normalize: bool = True,
     callbacks: Sequence[
         Callable[[ParticleState, StepContext, SMCResult], None]
@@ -83,6 +85,9 @@ def make_standard_bayesian_smc(
         Extra keyword arguments forwarded to the mutation step constructor.
         For ``"emcee"`` these are passed to ``emcee.EnsembleSampler``; for
         ``"minipcn"`` they are provided to ``MiniPCNMutation``.
+    logging_frequency:
+        Frequency (in SMC iterations) at which to log sampler status.
+        Defaults to 1 (log every iteration). If set to 0, logging is disabled.
     auto_normalize:
         Normalize log weights after every iteration (default ``True``).
     callbacks:
@@ -148,8 +153,23 @@ def make_standard_bayesian_smc(
     if mutation_step is not None:
         steps.append(mutation_step)
 
+    if logging_frequency > 0:
+
+        def logging_fn(state: ParticleState, context: StepContext) -> str:
+            current_temp = context.shared.get("temperature", 0.0)
+            return (
+                f"SMC iteration {context.t}: "
+                f"Temperature={current_temp:.4f}, "
+                f"Log Evidence={state.log_evidence:.2f}, "
+            )
+
+        logging_step = LoggingStep(
+            str_fn=logging_fn, frequency=logging_frequency
+        )
+        steps.append(logging_step)
+
     sampler = SequentialMonteCarlo(
-        steps=steps, auto_normalize=auto_normalize, callbacks=callbacks
+        steps=steps, callbacks=callbacks, auto_normalize=auto_normalize
     )
 
     shared_context: Dict[str, Any] = {
