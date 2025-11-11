@@ -36,7 +36,7 @@ jobs:
         # Install backends for orng
         # Can't use cupy since it requires CUDA toolkit to be installed
         pip install jax
-        pip install -e .[minipcn] --group test
+        pip install -e . --group test
     - name: Test with pytest
       run: |
         python -m pytest
