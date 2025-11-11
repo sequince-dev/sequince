@@ -32,7 +32,7 @@ def make_standard_bayesian_smc(
     resampling: ResamplingStrategy = "systematic",
     resampling_ess_threshold: float | None = 0.5,
     always_resample: bool = False,
-    mutation: MutationStrategy | SMCStep = "emcee",
+    mutation: MutationStrategy | SMCStep = "minipcn",
     mutation_n_steps: int = 5,
     mutation_move: Any = None,
     mutation_run_kwargs: Dict[str, Any] | None = None,
