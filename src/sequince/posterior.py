@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
+from sequince.transforms import ParticleTransform, get_prebuilt_transform
+
 from ._array_api import asarray, full, namespace
 from ._typing import Array
 from .state import ParticleState
@@ -108,6 +110,8 @@ def draw_additional_samples(
     mutation: MutationStrategy | None = "minipcn",
     mutation_n_steps: int = 10,
     mutation_kwargs: dict[str, Any] | None = None,
+    particle_transform: ParticleTransform | str | None = "affine",
+    particle_transform_kwargs: dict[str, Any] | None = None,
 ) -> ParticleState:
     """Draw additional samples from the current particles to fill up to n_particles.
 
@@ -138,6 +142,9 @@ def draw_additional_samples(
         Number of mutation steps to apply if mutation is used.
     mutation_kwargs:
         Additional keyword arguments to pass to the mutation step.
+    particle_transform:
+        ParticleTransform instance or string identifier for the transform to use
+        during mutation. If `None`, no transform is applied.
     """
     from .steps.mutation import get_mutation_step
 
@@ -168,11 +175,28 @@ def draw_additional_samples(
         particles=resampled_particles, log_weights=state.log_weights
     )
 
+    if isinstance(particle_transform, str):
+        particle_transform_kwargs = particle_transform_kwargs or {}
+        particle_transform = get_prebuilt_transform(
+            particle_transform, **particle_transform_kwargs
+        )
+    elif (
+        isinstance(particle_transform, ParticleTransform)
+        or particle_transform is None
+    ):
+        pass
+    else:
+        raise ValueError(
+            "particle_transform must be a string identifier, "
+            "a ParticleTransform instance, or None."
+        )
+
     mutation_step = get_mutation_step(
-        mutation,
-        posterior,
-        mutation_n_steps,
-        mutation_kwargs,
+        mutation=mutation,
+        posterior=posterior,
+        mutation_n_steps=mutation_n_steps,
+        mutation_kwargs=mutation_kwargs,
+        transform=particle_transform,
     )
     if mutation_step is None:
         return resampled_state
