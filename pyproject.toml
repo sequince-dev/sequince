@@ -13,7 +13,7 @@ dependencies = [
     "scipy>=1.8",
     "matplotlib>=3.5",
     "numpy>=1.22",
-    "emcee>=3.1",
+    "minipcn[array-api]>=0.2.0a1",
     "array-api-compat>=1.5",
     "orng",
 ]
@@ -35,8 +35,8 @@ include = ["sequince*"]
 [tool.setuptools_scm]
 
 [project.optional-dependencies]
-minipcn = [
-    "minipcn[array-api]>=0.2.0a1",
+emcee = [
+    "emcee>=3.0",
 ]
 corner = [
     "corner",
@@ -47,6 +47,7 @@ test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "corner",
+    "emcee>=3.0",
 ]
 dev = [
     "pre-commit",
