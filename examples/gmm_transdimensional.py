@@ -10,7 +10,7 @@ distributions to encourage efficient exploration.
 
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from typing import Callable, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,8 +30,8 @@ from sequince.steps.base import StepContext
 
 
 def generate_gmm_data(
-    weights: Iterable[float],
-    means: Iterable[float],
+    weights: Sequence[float],
+    means: Sequence[float],
     *,
     std: float,
     n_samples: int,
@@ -39,7 +39,7 @@ def generate_gmm_data(
 ) -> np.ndarray:
     """Draw observations from a 1D Gaussian mixture."""
     weights = np.array(weights, dtype=float)
-    weights /= weights.sum()
+    weights /= np.sum(weights)
     means = np.array(means, dtype=float)
     assignments = rng.choice(len(weights), size=n_samples, p=weights)
     return rng.normal(loc=means[assignments], scale=std, size=n_samples)
@@ -321,7 +321,7 @@ def main() -> None:
                 posterior,
                 target_ess_ratio=0.7,
                 max_temperature=1.0,
-                min_delta=1e-4,
+                min_delta=1e-8,
             ),
             SystematicResampling(always_resample=True),
             MiniPCNMutation(posterior, n_steps=20),

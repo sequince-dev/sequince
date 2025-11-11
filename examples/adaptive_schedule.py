@@ -5,7 +5,7 @@ from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
 from sequince.posterior import draw_additional_samples
 from sequince.steps import (
     AdaptiveTemperedWeighting,
-    EmceeMutation,
+    MiniPCNMutation,
     SystematicResampling,
 )
 
@@ -41,7 +41,7 @@ def main() -> None:
 
     # Prior over the static mean parameter
     lower_bound, upper_bound = bounds
-    n_particles = 200
+    n_particles = 50
     initial_particles = rng.uniform(
         low=lower_bound, high=upper_bound, size=(n_particles, dims)
     )
@@ -62,11 +62,12 @@ def main() -> None:
         steps=[
             AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
             SystematicResampling(always_resample=True),
-            EmceeMutation(posterior, n_steps=20, vectorize=True),
-        ]
+            MiniPCNMutation(posterior, n_steps=20),
+        ],
+        auto_normalize=False,
     )
 
-    results = smc.run(
+    result = smc.run(
         initial_state,
         rng=rng,
         shared_context={
@@ -75,8 +76,8 @@ def main() -> None:
             "temperature": 0.0,
         },
     )
-    posterior_state = results.final_state
 
+    posterior_state = result.final_state
     log_evidence = posterior_state.log_evidence
     print(f"Estimated log evidence: {log_evidence:.4f}")
     print(f"True log evidence:      {true_log_evidence:.4f}")
@@ -86,7 +87,7 @@ def main() -> None:
     posterior_state = draw_additional_samples(
         log_prior=log_prior,
         log_likelihood=log_likelihood,
-        result=results,
+        result=result,
         rng=rng,
         n_particles=1000,
         mutation="minipcn",
@@ -100,10 +101,21 @@ def main() -> None:
     print(f"Posterior mean estimate: {mean_estimate}")
     print(f"Posterior covariance estimate:\n{cov_estimate}")
 
-    fig, axes = plt.subplots(2, 1)
-    results.plot_log_evidence(ax=axes[1])
-    results.plot_metadata_history("temperature", ax=axes[0])
+    fig, axes = plt.subplots(3, 1)
+    result.plot_log_evidence(ax=axes[1])
+    result.plot_metadata_history("temperature", ax=axes[0])
     fig.savefig("adaptive_temperature_history.png")
+
+    fig, ax = plt.subplots(2, 1)
+    result.plot_metadata_history(
+        "normalization_increment_variance",
+        ax=ax[0],
+    )
+    result.plot_metadata_history(
+        "normalization_variance",
+        ax=ax[1],
+    )
+    fig.savefig("normalization_variance.png")
 
 
 if __name__ == "__main__":
