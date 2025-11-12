@@ -296,7 +296,7 @@ class SMCResult:
         from corner import corner
 
         state = self.states[state_index]
-        particles = _as_2d(state.particles)
+        particles = to_numpy(_as_2d(state.particles))
 
         default_kwargs = dict(
             bins=32,
