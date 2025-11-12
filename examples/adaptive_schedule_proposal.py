@@ -8,7 +8,7 @@ import numpy as np
 from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
 from sequince.steps import (
     AdaptiveTemperedWeighting,
-    EmceeMutation,
+    MiniPCNMutation,
     SystematicResampling,
 )
 
@@ -76,7 +76,7 @@ def main() -> None:
         steps=[
             AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
             SystematicResampling(always_resample=True),
-            EmceeMutation(posterior, n_steps=8, vectorize=True),
+            MiniPCNMutation(posterior, n_steps=8),
         ],
     )
 

@@ -8,12 +8,14 @@ from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .steps import (
     AdaptiveTemperedWeighting,
+    LoggingStep,
     MultinomialResampling,
     StratifiedResampling,
     SystematicResampling,
 )
 from .steps.base import SMCStep, StepContext
 from .steps.mutation import get_mutation_step
+from .transforms import ParticleTransform, get_prebuilt_transform
 
 if TYPE_CHECKING:
     from .state import ParticleState
@@ -28,15 +30,16 @@ def make_standard_bayesian_smc(
     log_proposal: Callable[..., Any] | None = None,
     target_ess_ratio: float = 0.7,
     max_temperature: float = 1.0,
-    min_delta: float = 1e-4,
+    min_delta: float = 1e-8,
     resampling: ResamplingStrategy = "systematic",
     resampling_ess_threshold: float | None = 0.5,
     always_resample: bool = False,
-    mutation: MutationStrategy | SMCStep = "emcee",
+    mutation: MutationStrategy | SMCStep = "minipcn",
     mutation_n_steps: int = 5,
-    mutation_move: Any = None,
-    mutation_run_kwargs: Dict[str, Any] | None = None,
     mutation_kwargs: Dict[str, Any] | None = None,
+    particle_transform: ParticleTransform | str | None = "affine",
+    particle_transform_kwargs: Dict[str, Any] | None = None,
+    logging_frequency: int = 1,
     auto_normalize: bool = True,
     callbacks: Sequence[
         Callable[[ParticleState, StepContext, SMCResult], None]
@@ -78,16 +81,13 @@ def make_standard_bayesian_smc(
         ``"minipcn"``, ``"none"``, or a pre-built ``SMCStep`` instance.
     mutation_n_steps:
         Number of mutation steps to run per iteration.
-    mutation_move:
-        Optional emcee move kernel (defaults to ``StretchMove``). Only used
-        when ``mutation="emcee"``.
-    mutation_run_kwargs:
-        Additional keyword arguments passed to ``sampler.run_mcmc``.
-        Only used when ``mutation="emcee"``.
     mutation_kwargs:
         Extra keyword arguments forwarded to the mutation step constructor.
         For ``"emcee"`` these are passed to ``emcee.EnsembleSampler``; for
         ``"minipcn"`` they are provided to ``MiniPCNMutation``.
+    logging_frequency:
+        Frequency (in SMC iterations) at which to log sampler status.
+        Defaults to 1 (log every iteration). If set to 0, logging is disabled.
     auto_normalize:
         Normalize log weights after every iteration (default ``True``).
     callbacks:
@@ -125,12 +125,27 @@ def make_standard_bayesian_smc(
         always_resample=always_resample,
     )
 
+    if isinstance(particle_transform, str):
+        particle_transform_kwargs = particle_transform_kwargs or {}
+        particle_transform = get_prebuilt_transform(
+            particle_transform, **particle_transform_kwargs
+        )
+    elif (
+        isinstance(particle_transform, ParticleTransform)
+        or particle_transform is None
+    ):
+        pass
+    else:
+        raise ValueError(
+            "particle_transform must be a string identifier, "
+            "a ParticleTransform instance, or None."
+        )
+
     mutation_step = get_mutation_step(
         mutation,
-        posterior,
-        n_steps=mutation_n_steps,
-        move=mutation_move,
-        run_kwargs=mutation_run_kwargs,
+        posterior=posterior,
+        transform=particle_transform,
+        mutation_n_steps=mutation_n_steps,
         mutation_kwargs=mutation_kwargs,
     )
 
@@ -138,8 +153,23 @@ def make_standard_bayesian_smc(
     if mutation_step is not None:
         steps.append(mutation_step)
 
+    if logging_frequency > 0:
+
+        def logging_fn(state: ParticleState, context: StepContext) -> str:
+            current_temp = context.shared.get("temperature", 0.0)
+            return (
+                f"SMC iteration {context.t}: "
+                f"Temperature={current_temp:.4f}, "
+                f"Log Evidence={state.log_evidence:.2f}, "
+            )
+
+        logging_step = LoggingStep(
+            str_fn=logging_fn, frequency=logging_frequency
+        )
+        steps.append(logging_step)
+
     sampler = SequentialMonteCarlo(
-        steps=steps, auto_normalize=auto_normalize, callbacks=callbacks
+        steps=steps, callbacks=callbacks, auto_normalize=auto_normalize
     )
 
     shared_context: Dict[str, Any] = {

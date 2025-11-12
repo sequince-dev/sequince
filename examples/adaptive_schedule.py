@@ -1,13 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
+from sequince import ParticleState
+from sequince.logging_utils import configure_logging
 from sequince.posterior import draw_additional_samples
-from sequince.steps import (
-    AdaptiveTemperedWeighting,
-    EmceeMutation,
-    SystematicResampling,
-)
+from sequince.prebuilt_samplers import make_standard_bayesian_smc
 
 # Number of dimensions in the multivariate normal model
 dims = 4
@@ -39,9 +36,12 @@ def log_prior(particles: np.ndarray, context) -> np.ndarray:
 def main() -> None:
     rng = np.random.default_rng(seed=123)
 
+    # Enable logging
+    configure_logging()
+
     # Prior over the static mean parameter
     lower_bound, upper_bound = bounds
-    n_particles = 200
+    n_particles = 50
     initial_particles = rng.uniform(
         low=lower_bound, high=upper_bound, size=(n_particles, dims)
     )
@@ -51,32 +51,26 @@ def main() -> None:
     )
 
     # Small helper to create the tempered posterior
-    # This allows the different steps to use either the log prior, log likelihood,
-    # or the full tempered posterior as needed.
-    posterior = TemperedPosterior(
+    smc, posterior, shared_context = make_standard_bayesian_smc(
         log_prior=log_prior,
         log_likelihood=log_likelihood,
+        target_ess_ratio=0.7,
+        max_temperature=1.0,
+        min_delta=1e-8,
+        always_resample=True,
+        mutation="minipcn",
+        mutation_n_steps=10,
+        particle_transform="affine",
+        auto_normalize=True,
     )
 
-    smc = SequentialMonteCarlo(
-        steps=[
-            AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
-            SystematicResampling(always_resample=True),
-            EmceeMutation(posterior, n_steps=20, vectorize=True),
-        ]
-    )
+    # Add prior bounds to the shared context
+    shared_context["lower_bound"] = lower_bound
+    shared_context["upper_bound"] = upper_bound
 
-    results = smc.run(
-        initial_state,
-        rng=rng,
-        shared_context={
-            "lower_bound": lower_bound,
-            "upper_bound": upper_bound,
-            "temperature": 0.0,
-        },
-    )
-    posterior_state = results.final_state
+    result = smc.run(initial_state, rng=rng, shared_context=shared_context)
 
+    posterior_state = result.final_state
     log_evidence = posterior_state.log_evidence
     print(f"Estimated log evidence: {log_evidence:.4f}")
     print(f"True log evidence:      {true_log_evidence:.4f}")
@@ -86,7 +80,7 @@ def main() -> None:
     posterior_state = draw_additional_samples(
         log_prior=log_prior,
         log_likelihood=log_likelihood,
-        result=results,
+        result=result,
         rng=rng,
         n_particles=1000,
         mutation="minipcn",
@@ -100,10 +94,21 @@ def main() -> None:
     print(f"Posterior mean estimate: {mean_estimate}")
     print(f"Posterior covariance estimate:\n{cov_estimate}")
 
-    fig, axes = plt.subplots(2, 1)
-    results.plot_log_evidence(ax=axes[1])
-    results.plot_metadata_history("temperature", ax=axes[0])
+    fig, axes = plt.subplots(3, 1)
+    result.plot_log_evidence(ax=axes[1])
+    result.plot_metadata_history("temperature", ax=axes[0])
     fig.savefig("adaptive_temperature_history.png")
+
+    fig, ax = plt.subplots(2, 1)
+    result.plot_metadata_history(
+        "normalization_increment_variance",
+        ax=ax[0],
+    )
+    result.plot_metadata_history(
+        "normalization_variance",
+        ax=ax[1],
+    )
+    fig.savefig("normalization_variance.png")
 
 
 if __name__ == "__main__":

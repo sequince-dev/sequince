@@ -420,3 +420,43 @@ class CompositeTransform(ParticleTransform):
                 data.shape[0], dtype=asarray(data, xp=xp).dtype
             )
         return data, total_log_det
+
+
+_transform_registry = {
+    "identity": IdentityTransform,
+    "affine": AffineTransform,
+    "bounded_to_unit_hypercube": BoundedToUnitHypercubeTransform,
+    "bounded_to_unbounded": BoundedToUnboundedTransform,
+    "periodic_boundary": PeriodicBoundaryTransform,
+}
+
+
+def get_prebuilt_transform(
+    name: str,
+    **kwargs,
+) -> ParticleTransform:
+    """Return a prebuilt particle transform by name.
+
+    Parameters
+    ----------
+    name : str
+        Name of the desired transform. Supported options are
+        ``"identity"``, ``"affine"``, ``"bounded_to_unit_hypercube"``,
+        ``"bounded_to_unbounded"``, and ``"periodic_boundary"``.
+    **kwargs :
+        Additional keyword arguments passed to the transform constructor.
+
+    Returns
+    -------
+    ParticleTransform
+        The requested particle transform instance.
+    """
+    try:
+        transform_cls = _transform_registry[name.lower()]
+    except KeyError as exc:
+        valid = ", ".join(sorted(_transform_registry))
+        raise ValueError(
+            f"Unknown transform '{name}'. Valid options are: {valid}."
+        ) from exc
+
+    return transform_cls(**kwargs)

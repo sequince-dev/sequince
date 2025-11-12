@@ -331,16 +331,17 @@ class MiniPCNMutation(MutationStep):
 def get_mutation_step(
     mutation: str | SMCStep | None,
     posterior: "TemperedPosterior",
+    transform: ParticleTransform | None = None,
     mutation_n_steps: int = 10,
     mutation_kwargs: dict[str, Any] | None = None,
-    mutation_run_kwargs: dict[str, Any] | None = None,
-    **kwargs,
 ) -> SMCStep | None:
     kwargs = dict(mutation_kwargs or {})
+    if transform is not None:
+        kwargs["transform"] = transform
     if isinstance(mutation, SMCStep):
         mutation_step = mutation
     elif mutation == "emcee":
-        run_kwargs = dict(mutation_run_kwargs or {})
+        run_kwargs = kwargs.pop("run_kwargs", {})
         mutation_step = EmceeMutation(
             posterior,
             n_steps=mutation_n_steps,

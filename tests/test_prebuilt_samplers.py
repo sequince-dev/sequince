@@ -9,7 +9,7 @@ from sequince import ParticleState, TemperedPosterior
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 from sequince.steps import (
     AdaptiveTemperedWeighting,
-    EmceeMutation,
+    LoggingStep,
     MiniPCNMutation,
     SystematicResampling,
 )
@@ -44,10 +44,11 @@ def test_make_standard_bayesian_smc_builds_default_steps() -> None:
     assert shared_context["temperature_delta"] == 0.0
 
     steps = smc._steps  # noqa: SLF001 - inspecting configured steps for testing.
-    assert len(steps) == 3
+    assert len(steps) == 4
     assert isinstance(steps[0], AdaptiveTemperedWeighting)
     assert isinstance(steps[1], SystematicResampling)
-    assert isinstance(steps[2], EmceeMutation)
+    assert isinstance(steps[2], MiniPCNMutation)
+    assert isinstance(steps[3], LoggingStep)
 
 
 def test_make_standard_bayesian_smc_reaches_max_temperature(rng) -> None:
@@ -103,9 +104,10 @@ def test_make_standard_bayesian_smc_can_disable_mutation() -> None:
     )
 
     steps = smc._steps  # noqa: SLF001
-    assert len(steps) == 2
+    assert len(steps) == 3
     assert isinstance(steps[0], AdaptiveTemperedWeighting)
     assert isinstance(steps[1], SystematicResampling)
+    assert isinstance(steps[2], LoggingStep)
 
 
 class IdentityMutation(SMCStep):
@@ -122,7 +124,7 @@ def test_make_standard_bayesian_smc_accepts_custom_mutation_step() -> None:
     )
 
     steps = smc._steps  # noqa: SLF001
-    assert steps[-1] is custom
+    assert steps[-2] is custom
 
 
 def test_make_standard_bayesian_smc_validates_mutation_name() -> None:
