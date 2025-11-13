@@ -117,7 +117,8 @@ class DimensionalityExpansion(SMCStep):
             metadata.pop("temperature_delta", None)
             context.shared["temperature"] = 0.0
             context.shared["temperature_delta"] = 0.0
-            log_evidence = 0.0
+            log_evidence = state.log_evidence
+
             logger.debug(
                 "DimensionalityExpansion reset temperature after adding %d dimensions.",
                 new_block.shape[1],
