@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable, cast
 
-import emcee
 import numpy as np
 
 from .._array_api import asarray, namespace, to_numpy
@@ -12,6 +11,7 @@ from ..transforms import ParticleTransform
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
+    import emcee
     from orng import ArrayRNG
 
     from ..posterior import TemperedPosterior
@@ -129,6 +129,8 @@ class EmceeMutation(MutationStep):
         transform: ParticleTransform | None = None,
         **kwargs,
     ):
+        import emcee
+
         super().__init__(log_prob_fn, transform=transform)
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -143,6 +145,8 @@ class EmceeMutation(MutationStep):
         context: StepContext,
         rng: "ArrayRNG",
     ) -> ParticleState:
+        import emcee
+
         xp = namespace(state.particles)
         transform = self._prepare_transform(state.particles)
         latent_particles = self._forward_transform(state.particles, transform)
