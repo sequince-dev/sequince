@@ -104,6 +104,7 @@ class TracePlot(PlotCallback):
     ) -> None:
         results.plot_trace(
             parameter_inds=self.parameter_inds,
+            parameter_labels=self.parameter_labels,
             filename=self.full_path,
             **self.plot_kwargs,
         )
