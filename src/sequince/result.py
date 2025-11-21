@@ -389,7 +389,7 @@ class SMCResult:
             default_kwargs.update(plot_kwargs)
 
         all_particles = np.array(
-            [_as_2d(state.particles) for state in self.states]
+            [to_numpy(_as_2d(state.particles)) for state in self.states]
         )  # (n_iterations, n_particles, n_parameters)
         n_iterations = len(all_particles)
 
