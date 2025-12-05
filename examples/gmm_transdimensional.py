@@ -10,18 +10,22 @@ distributions to encourage efficient exploration.
 
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from typing import Any, Callable, MutableMapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from orng import ArrayRNG
 from scipy.special import gammaln, logsumexp, softmax
 
-from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
+from sequince import (
+    MetaSequentialMonteCarlo,
+    ParticleState,
+    SequentialMonteCarlo,
+    TemperedPosterior,
+)
 from sequince.logging_utils import configure_logging
 from sequince.steps import (
     AdaptiveTemperedWeighting,
-    ContinueWhile,
-    DimensionalityExpansion,
     LoggingStep,
     MiniPCNMutation,
     SystematicResampling,
@@ -89,7 +93,10 @@ def log_prior(position: np.ndarray, context: StepContext) -> np.ndarray:
 
 
 def gmm_log_likelihood(
-    particles: np.ndarray, context: StepContext
+    particles: np.ndarray,
+    context: StepContext,
+    *,
+    active_components: int | None = None,
 ) -> np.ndarray:
     """Log likelihood of the dataset under a shared-variance mixture."""
     data = context.shared["data"]
@@ -97,12 +104,21 @@ def gmm_log_likelihood(
     variance = std**2
 
     n_particles, param_dim = particles.shape
-    if param_dim % 2 != 0:
+    if active_components is None:
+        n_components = int(context.shared.get("active_components", 0))
+        if n_components <= 0:
+            if param_dim % 2 != 0:
+                raise ValueError(
+                    "Particle array must contain logits followed by means."
+                )
+            n_components = param_dim // 2
+    else:
+        n_components = active_components
+    if param_dim < 2 * n_components:
         raise ValueError(
-            "Particle array must contain logits followed by means."
+            "Particle array has fewer dimensions than requested components."
         )
 
-    n_components = param_dim // 2
     logits = particles[:, :n_components]
     means = particles[:, n_components:]
     log_weights = logits - logsumexp(logits, axis=1, keepdims=True)
@@ -133,89 +149,6 @@ def component_sampler(
     new_means = anchors + rng.normal(scale=spread, size=(n, 1))
     new_means = np.clip(new_means, bounds[0], bounds[1])
     return np.concatenate([new_logits, new_means], axis=1)
-
-
-def make_continue_annealing_predicate(
-    target_components: int,
-    trigger_temperature: float,
-) -> Callable[[ParticleState, StepContext], bool]:
-    """Return predicate that keeps iterating until target components are ready."""
-
-    def _predicate(state: ParticleState, context: StepContext) -> bool:
-        components = state.particles.shape[1] // 2
-        temperature = float(state.metadata.get("temperature", 0.0))
-        return (
-            components < target_components or temperature < trigger_temperature
-        )
-
-    return _predicate
-
-
-class TemperatureTriggeredExpansion(DimensionalityExpansion):
-    """Append a component whenever the current annealing cycle finishes."""
-
-    def __init__(
-        self,
-        *,
-        target_components: int,
-        trigger_temperature: float = 0.999,
-    ):
-        super().__init__(
-            component_sampler,
-            expected_block_size=2,
-            metadata_key="param_dim",
-            context_key="param_dim",
-            context_delta_key="param_delta",
-        )
-        self._target_components = target_components
-        self._trigger_temperature = trigger_temperature
-
-    def apply(
-        self,
-        state: ParticleState,
-        context: StepContext,
-        rng: np.random.Generator,
-    ) -> ParticleState:
-        current_components = state.particles.shape[1] // 2
-        if current_components >= self._target_components:
-            return state
-
-        temperature = float(state.metadata.get("temperature", 0.0))
-        if temperature < self._trigger_temperature:
-            return state
-
-        pre_particles = np.asarray(state.particles)
-        if pre_particles.ndim == 1:
-            pre_particles = pre_particles[:, np.newaxis]
-
-        expanded = super().apply(state, context, rng)
-        post_particles = np.asarray(expanded.particles)
-        if post_particles.ndim == 1:
-            post_particles = post_particles[:, np.newaxis]
-
-        # Reorder so that logits always precede means.
-        new_block = post_particles[:, -2:]
-        current_logits = pre_particles[:, :current_components]
-        current_means = pre_particles[:, current_components:]
-        new_logits = new_block[:, 0][:, np.newaxis]
-        new_means = new_block[:, 1][:, np.newaxis]
-        reordered = np.concatenate(
-            [
-                np.concatenate([current_logits, new_logits], axis=1),
-                np.concatenate([current_means, new_means], axis=1),
-            ],
-            axis=1,
-        )
-
-        expanded = expanded.with_updates(particles=reordered)
-        context.shared["components"] = expanded.particles.shape[1] // 2
-        # Reset temperature bookkeeping so the next annealing cycle starts at 0.
-        context.shared["temperature"] = 0.0
-        context.shared["temperature_delta"] = 0.0
-        metadata = dict(expanded.metadata)
-        metadata["temperature"] = 0.0
-        metadata.pop("temperature_delta", None)
-        return expanded.with_updates(metadata=metadata)
 
 
 def posterior_summary(state: ParticleState) -> tuple[np.ndarray, np.ndarray]:
@@ -252,7 +185,7 @@ def mixture_density(
 
 def logging_str_fn(state: ParticleState, context: StepContext) -> str:
     temperature = context.shared["temperature"]
-    components = context.shared["components"]
+    components = context.shared["active_components"]
     ess = state.effective_sample_size()
     n_particles = state.log_weights.shape[0]
     ess_ratio = ess / n_particles if n_particles else 0.0
@@ -282,7 +215,7 @@ def main() -> None:
         rng=rng,
     )
 
-    n_particles = 500
+    n_particles = 1000
     mean_bounds = (
         observations.min() - 3.0 * component_std,
         observations.max() + 3.0 * component_std,
@@ -300,23 +233,72 @@ def main() -> None:
     initial_state = ParticleState(
         particles=initial_particles,
         log_weights=log_weights,
-        metadata={"temperature": 0.0, "components": 1},
+        metadata={"temperature": 0.0, "active_components": 1},
     )
+
+    target_components = 5
 
     posterior = TemperedPosterior(
         log_prior=log_prior,
         log_likelihood=gmm_log_likelihood,
     )
 
-    target_components = 5
-    trigger_temperature = 0.999
+    def make_log_target(
+        n_components: int,
+    ) -> Callable[[np.ndarray, StepContext], np.ndarray]:
+        def _target(particles: np.ndarray, context: StepContext) -> np.ndarray:
+            arr = np.asarray(particles)
+            if arr.ndim == 1:
+                arr = arr[:, np.newaxis]
+            arr = arr[:, : 2 * n_components]
+            ctx = StepContext(
+                t=context.t,
+                observation=context.observation,
+                shared=context.shared,
+            )
+            return log_prior(arr, ctx) + gmm_log_likelihood(
+                arr, ctx, active_components=n_components
+            )
 
-    smc = SequentialMonteCarlo(
+        return _target
+
+    def expand_components(
+        state: ParticleState,
+        shared: MutableMapping[str, Any],
+        rng: ArrayRNG,
+    ) -> ParticleState:
+        current_components = shared["active_components"]
+        if current_components >= target_components:
+            return state
+
+        np_rng: np.random.Generator = shared["np_rng"]
+        prep_context = StepContext(t=0, shared=shared)
+        new_block = component_sampler(state, context=prep_context, rng=np_rng)
+
+        particles = np.asarray(state.particles)
+        if particles.ndim == 1:
+            particles = particles[:, np.newaxis]
+
+        existing_logits = particles[:, :current_components]
+        existing_means = particles[:, current_components:]
+        new_logits = new_block[:, 0:1]
+        new_means = new_block[:, 1:2]
+
+        logits = np.concatenate([existing_logits, new_logits], axis=1)
+        means = np.concatenate([existing_means, new_means], axis=1)
+        reordered = np.concatenate([logits, means], axis=1)
+
+        metadata = dict(state.metadata)
+        metadata["active_components"] = current_components + 1
+        shared["active_components"] = current_components + 1
+        return state.with_updates(particles=reordered, metadata=metadata)
+
+    targets: list[Callable[..., np.ndarray]] = [
+        make_log_target(k) for k in range(1, target_components + 1)
+    ]
+
+    inner_runner = SequentialMonteCarlo(
         steps=[
-            TemperatureTriggeredExpansion(
-                target_components=target_components,
-                trigger_temperature=trigger_temperature,
-            ),
             AdaptiveTemperedWeighting(
                 posterior,
                 target_ess_ratio=0.7,
@@ -324,44 +306,50 @@ def main() -> None:
                 min_delta=1e-8,
             ),
             SystematicResampling(always_resample=True),
-            MiniPCNMutation(posterior, n_steps=20),
+            MiniPCNMutation(posterior, n_steps=50),
             LoggingStep(logging_str_fn),
-            ContinueWhile(
-                make_continue_annealing_predicate(
-                    target_components=target_components,
-                    trigger_temperature=trigger_temperature,
-                )
-            ),
-        ],
-        auto_normalize=True,
+        ]
     )
 
-    results = smc.run(
+    shared_context = {
+        "data": observations,
+        "component_std": component_std,
+        "temperature": 0.0,
+        "temperature_delta": 0.0,
+        "active_components": 1,
+        "mean_bounds": mean_bounds,
+        "logit_prior_scale": logit_prior_scale,
+        "component_count_rate": 3.0,
+        "np_rng": rng,
+    }
+
+    meta = MetaSequentialMonteCarlo(
+        targets=targets,
+        inner_runner=inner_runner,
+        model_transition=expand_components,
+    )
+
+    meta_result = meta.run(
         initial_state,
         rng=rng,
-        shared_context={
-            "data": observations,
-            "component_std": component_std,
-            "temperature": 0.0,
-            "temperature_delta": 0.0,
-            "components": 1,
-            "mean_bounds": mean_bounds,
-            "logit_prior_scale": logit_prior_scale,
-            "component_count_rate": 3.0,
-        },
+        shared_context=shared_context,
     )
 
-    final_state = results.final_state
+    all_states = meta_result.all_states
+    final_state = meta_result.final_state
     est_weights, est_means = posterior_summary(final_state)
     print("Posterior mixture weights:", np.round(est_weights, 3))
     print("Posterior component means:", np.round(est_means, 3))
     print(f"Final log evidence: {final_state.log_evidence:.2f}")
 
-    iterations = np.arange(len(results))
-    component_counts = [s.particles.shape[1] // 2 for s in results.states]
-    temperatures = [s.metadata.get("temperature", 0.0) for s in results.states]
+    iterations = np.arange(len(all_states))
+    component_counts = [
+        s.metadata.get("active_components", s.particles.shape[1] // 2)
+        for s in all_states
+    ]
+    temperatures = [s.metadata.get("temperature", 0.0) for s in all_states]
     temperature_deltas = [
-        s.metadata.get("temperature_delta", 0.0) for s in results.states
+        s.metadata.get("temperature_delta", 0.0) for s in all_states
     ]
 
     x_grid = np.linspace(mean_bounds[0], mean_bounds[1], 400)
@@ -384,9 +372,7 @@ def main() -> None:
             {
                 "iteration": int(iter_idx - 1),
                 "components": int(component_counts[iter_idx - 1]),
-                "log_evidence": float(
-                    results.states[iter_idx - 1].log_evidence
-                ),
+                "log_evidence": float(all_states[iter_idx - 1].log_evidence),
             }
             for iter_idx in new_component_iters
             if iter_idx > 0
@@ -395,9 +381,17 @@ def main() -> None:
     else:
         print("No component expansions detected during run.")
 
-    evidence_by_components = {}
-    for comp_count, state in zip(component_counts, results.states):
-        evidence_by_components[comp_count] = float(state.log_evidence)
+    evidence_by_components: dict[int, float] = {}
+    for inter_result in meta_result.results:
+        comp = int(
+            inter_result.final_state.metadata.get(
+                "active_components",
+                inter_result.final_state.particles.shape[1] // 2,
+            )
+        )
+        evidence_by_components[comp] = float(
+            inter_result.final_state.log_evidence
+        )
     if evidence_by_components:
         print("Log evidence by active component count:")
         for comp in sorted(evidence_by_components):
@@ -415,6 +409,10 @@ def main() -> None:
         print("Bayes factors vs. 1-component model:")
         for comp in sorted(log_bayes_factors):
             print(f"  components={comp}: ln BF={log_bayes_factors[comp]:.3f}")
+        best_comp = max(
+            evidence_by_components, key=lambda c: evidence_by_components[c]
+        )
+        print(f"Favoured model by log evidence: {best_comp} components")
 
     fig, axes = plt.subplots(nrows=3, figsize=(10, 9))
 
