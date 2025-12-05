@@ -15,6 +15,7 @@ from .weighting import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
     LogLikelihoodWeighting,
+    TargetRatioWeighting,
     TemperedWeighting,
 )
 
@@ -28,6 +29,7 @@ __all__ = [
     "StratifiedResampling",
     "SystematicResampling",
     "LogLikelihoodWeighting",
+    "TargetRatioWeighting",
     "TemperedWeighting",
     "AdaptiveTemperedWeighting",
     "FixedTemperedWeighting",

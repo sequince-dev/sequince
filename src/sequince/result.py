@@ -437,3 +437,61 @@ class SMCResult:
             plt.close()
         else:
             return ax.get_figure()
+
+
+@dataclass(frozen=True)
+class MetaSMCResult:
+    """Aggregate results from a multi-step MetaSequentialMonteCarlo run."""
+
+    results: Sequence[SMCResult]
+
+    def __post_init__(self) -> None:
+        if not self.results:
+            raise ValueError(
+                "MetaSMCResult requires at least one meta step result."
+            )
+
+    def __len__(self) -> int:
+        return len(self.results)
+
+    def __getitem__(self, index: int) -> SMCResult:
+        return self.results[index]
+
+    @property
+    def final_result(self) -> SMCResult:
+        """Return the final meta-step result."""
+        return self.results[-1]
+
+    @property
+    def final_state(self) -> ParticleState:
+        """Return the final particle state from the last meta step."""
+        return self.final_result.final_state
+
+    @property
+    def all_states(self) -> list[ParticleState]:
+        """Flatten particle states across all meta steps in execution order."""
+        return [state for result in self.results for state in result.states]
+
+    def log_evidence_history(self) -> Array:
+        """Return the log evidence trajectory across all meta steps."""
+        reference = self.final_state.log_weights
+        xp = namespace(reference)
+        values = [float(state.log_evidence) for state in self.all_states]
+        return asarray(values, xp=xp, like=reference)
+
+    def summary(self) -> dict[str, Any]:
+        """Return a concise dictionary of high-level diagnostics."""
+        summary_dict: dict[str, Any] = {
+            "meta_steps": len(self.results),
+            "total_iterations": len(self.all_states),
+            "final_log_evidence": float(self.final_state.log_evidence),
+        }
+        try:
+            ess = float(self.final_state.effective_sample_size())
+            summary_dict["final_ess"] = ess
+            summary_dict["final_ess_ratio"] = float(
+                ess / self.final_state.particles.shape[0]
+            )
+        except Exception:
+            pass
+        return summary_dict

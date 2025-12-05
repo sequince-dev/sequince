@@ -119,6 +119,86 @@ class LogLikelihoodWeighting(SMCStep):
         return updated_state
 
 
+class TargetRatioWeighting(SMCStep):
+    """Increment log weights by log p_new - log p_old.
+
+    This step is useful when the target distribution changes (e.g., added
+    waveform modes or latent dimensions) and you need to reweight particles
+    by the ratio of the new and previous unnormalised targets.
+
+    The supplied callables may have signature ``(particles,)`` or
+    ``(particles, context)``; the current ``StepContext`` is passed when
+    required.
+    """
+
+    def __init__(
+        self,
+        current_log_target: Callable[..., Any],
+        previous_log_target: Callable[..., Any] | None = None,
+        *,
+        normalize_after: bool = True,
+    ):
+        self._current = current_log_target
+        self._previous = previous_log_target
+        self._normalize_after = normalize_after
+
+    def apply(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "ArrayRNG",
+    ) -> ParticleState:
+        current_vals = _call_with_optional_context(
+            self._current,
+            (state.particles,),
+            context,
+        )
+        xp = namespace(current_vals, state.log_weights)
+        current = _as_1d_array(current_vals, xp=xp, like=state.log_weights)
+
+        if self._previous is None:
+            previous = full(
+                current.shape,
+                0.0,
+                xp=xp,
+                dtype=current.dtype,
+                like=current,
+            )
+        else:
+            previous_vals = _call_with_optional_context(
+                self._previous,
+                (state.particles,),
+                context,
+            )
+            previous = _as_1d_array(
+                previous_vals, xp=xp, like=state.log_weights
+            )
+            if previous.shape[0] != current.shape[0]:
+                raise ValueError(
+                    "Previous log-target must return one value per particle."
+                )
+
+        if current.shape[0] != state.log_weights.shape[0]:
+            raise ValueError(
+                "Current log-target must return one value per particle."
+            )
+
+        increments = current - previous
+        updated_state = state.with_updates(
+            log_weights=state.log_weights + increments
+        )
+
+        if self._normalize_after:
+            updated_state, _ = updated_state.normalize()
+
+        logger.debug(
+            "TargetRatioWeighting: mean Δlogw %.6f (normalize_after=%s).",
+            float(to_numpy(xp.sum(increments) / increments.shape[0])),
+            self._normalize_after,
+        )
+        return updated_state
+
+
 class TemperedWeighting(SMCStep):
     """Apply tempering by scaling log-weight increments with a temperature schedule.
 
