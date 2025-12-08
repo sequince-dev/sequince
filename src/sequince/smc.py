@@ -6,6 +6,7 @@ from typing import (
     Any,
     Callable,
     Iterable,
+    Iterator,
     List,
     MutableMapping,
     Sequence,
@@ -168,13 +169,16 @@ class MetaSequentialMonteCarlo:
     Parameters
     ----------
     targets:
-        A sequence of callables evaluating the (unnormalized) log-density of
-        each target, or a callable returning such an iterable. The call
-        signature should match ``(particles,)`` or ``(particles, context)``;
-        the provided ``StepContext`` is passed when required. The incremental
-        weight for stage ``k`` is ``log_target_k - log_target_(k-1)``.
-        When ``targets`` is callable, it is invoked as ``targets()``; if that
-        raises ``TypeError`` it is retried as ``targets(shared_context)``.
+        An ordered sequence of callables evaluating the (unnormalized)
+        log-density of each target. Each callable should accept
+        ``(particles,)`` or ``(particles, context)``; the provided
+        ``StepContext`` is passed when required. The incremental weight for
+        stage ``k`` is ``log_target_k - log_target_(k-1)``.
+    target_generator:
+        Callable with signature ``(state, context)`` returning the next target
+        function, or ``None`` when no further targets are available. Use this
+        for open-ended or state-dependent sequences. Mutually exclusive with
+        ``targets``; at least one must be provided.
     inner_runner:
         Optional ``SequentialMonteCarlo`` instance applied within each stage
         after reweighting.
@@ -200,8 +204,11 @@ class MetaSequentialMonteCarlo:
 
     def __init__(
         self,
-        targets: Sequence[Callable[..., Any]]
-        | Callable[..., Iterable[Callable[..., Any]]],
+        targets: Sequence[Callable[..., Any]] | None = None,
+        target_generator: Callable[
+            [ParticleState, StepContext], Callable[..., Any] | None
+        ]
+        | None = None,
         *,
         inner_runner: SequentialMonteCarlo | None = None,
         inner_steps: Sequence[
@@ -229,20 +236,27 @@ class MetaSequentialMonteCarlo:
                 "Provide either inner_runner or inner_steps, not both."
             )
 
-        self._targets: Sequence[Callable[..., Any]] | None = None
-        self._target_factory: (
-            Callable[..., Iterable[Callable[..., Any]]] | None
-        ) = None
-        if isinstance(targets, Sequence):
-            if len(targets) == 0:
-                raise ValueError(
-                    "MetaSequentialMonteCarlo requires at least one target."
-                )
-            self._targets = list(targets)
-        elif callable(targets):
-            self._target_factory = targets
-        else:
-            raise TypeError("targets must be a sequence or a callable.")
+        if targets is None and target_generator is None:
+            raise ValueError(
+                "Provide either targets or target_generator to MetaSequentialMonteCarlo."
+            )
+        if targets is not None and target_generator is not None:
+            raise ValueError(
+                "Specify only one of targets or target_generator, not both."
+            )
+
+        if isinstance(targets, Sequence) and len(targets) == 0:
+            raise ValueError(
+                "MetaSequentialMonteCarlo requires at least one target."
+            )
+
+        self._targets: Sequence[Callable[..., Any]] | None = (
+            list(targets) if isinstance(targets, Sequence) else None
+        )
+        self._next_target_fn: (
+            Callable[[ParticleState, StepContext], Callable[..., Any] | None]
+            | None
+        ) = target_generator
 
         self._normalize_after_reweight = normalize_after_reweight
         self._callbacks = list(callbacks) if callbacks is not None else []
@@ -277,30 +291,44 @@ class MetaSequentialMonteCarlo:
         rng = _ensure_rng(rng)
         shared_context = shared_context or {}
 
-        target_list = list(self._iter_targets(shared_context))
-        if not target_list:
+        if self._targets is not None:
+            logger.info(
+                "Starting MetaSequentialMonteCarlo over %d targets.",
+                len(self._targets),
+            )
+            target_iterator: Iterator[Callable[..., Any]] | None = iter(
+                self._targets
+            )
+        else:
+            logger.info(
+                "Starting MetaSequentialMonteCarlo with dynamic targets."
+            )
+            target_iterator = None
+
+        state = initial_state
+        shared_context["meta_step"] = 0
+        context = StepContext(t=0, shared=shared_context)
+
+        current_target = self._get_next_target(
+            state, context, iterator=target_iterator
+        )
+        if current_target is None:
             raise ValueError(
                 "MetaSequentialMonteCarlo requires at least one target."
             )
-        logger.info(
-            "Starting MetaSequentialMonteCarlo over %d targets.",
-            len(target_list),
-        )
 
         results: list[SMCResult] = []
-        state = initial_state
         previous_target: Callable[..., Any] | None = None
+        step_idx = 0
 
-        for step_idx, target in enumerate(target_list):
-            shared_context["meta_step"] = step_idx
+        while True:
             logger.debug("MetaSMC: entering step %d.", step_idx)
-            context = StepContext(t=0, shared=shared_context)
 
             if previous_target is not None:
                 state = self._apply_reweight(
                     state,
                     context,
-                    current_target=target,
+                    current_target=current_target,
                     previous_target=previous_target,
                 )
 
@@ -319,11 +347,17 @@ class MetaSequentialMonteCarlo:
                     callback(state, context, result)
 
             results.append(result)
-            previous_target = target
+
             if (
-                self._model_transition is not None
-                and step_idx < len(target_list) - 1
+                self._targets is not None
+                and step_idx >= len(self._targets) - 1
             ):
+                break
+
+            pre_transition_state = state
+            shared_snapshot: MutableMapping[str, Any] | None = None
+            if self._model_transition is not None:
+                shared_snapshot = dict(shared_context)
                 state = self._model_transition(state, shared_context, rng)
                 if self._reset_temperature_between_models:
                     shared_context["temperature"] = 0.0
@@ -332,6 +366,29 @@ class MetaSequentialMonteCarlo:
                     metadata["temperature"] = 0.0
                     metadata.pop("temperature_delta", None)
                     state = state.with_updates(metadata=metadata)
+
+            next_step_idx = step_idx + 1
+            shared_context["meta_step"] = next_step_idx
+            next_context = StepContext(t=0, shared=shared_context)
+            next_target = self._get_next_target(
+                state, next_context, iterator=target_iterator
+            )
+            if next_target is None:
+                if (
+                    self._model_transition is not None
+                    and shared_snapshot is not None
+                ):
+                    shared_context.clear()
+                    shared_context.update(shared_snapshot)
+                    state = pre_transition_state
+                else:
+                    shared_context["meta_step"] = step_idx
+                break
+
+            previous_target = current_target
+            current_target = next_target
+            context = next_context
+            step_idx += 1
 
         logger.info(
             "Finished MetaSequentialMonteCarlo; produced %d meta steps.",
@@ -388,20 +445,23 @@ class MetaSequentialMonteCarlo:
             )
         return arr
 
-    def _iter_targets(
-        self, shared_context: MutableMapping[str, Any]
-    ) -> Iterable[Callable[..., Any]]:
-        if self._targets is not None:
-            return iter(self._targets)
-        if self._target_factory is None:
-            raise RuntimeError("No targets or target factory provided.")
+    def _get_next_target(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        *,
+        iterator: Iterator[Callable[..., Any]] | None,
+    ) -> Callable[..., Any] | None:
+        if self._next_target_fn is not None:
+            return self._next_target_fn(state, context)
+
+        if iterator is None:
+            raise RuntimeError("No target source configured.")
+
         try:
-            targets_iterable = self._target_factory()
-        except TypeError:
-            targets_iterable = self._target_factory(shared_context)
-        if targets_iterable is None:
-            raise ValueError("Target factory returned None.")
-        return iter(targets_iterable)
+            return next(iterator)
+        except StopIteration:
+            return None
 
     @staticmethod
     def _resolve_num_steps(
