@@ -14,6 +14,7 @@ from sequince.steps import (
     WasteFreeResampleMove,
 )
 from sequince.steps.base import StepContext
+from sequince.steps.control import StepEveryNIterations
 from sequince.steps.mutation import EmceeMutation, MiniPCNMutation
 from sequince.steps.resampling import (
     MultinomialResampling,
@@ -492,3 +493,28 @@ def test_continue_while_overrides_stop_request(
     assert final_result is late_state
     assert context_late.stop_requested
     assert predicate_calls == [(0.5, 0), (1.0, 1)]
+
+
+def test_step_every_n_iterations_applies_step_conditionally(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    applied_iterations: list[int] = []
+
+    class RecordingStep(AdaptGaussianProposal):
+        def apply(
+            self,
+            state: ParticleState,
+            context: StepContext,
+            rng: "ArrayRNG",
+        ) -> ParticleState:
+            applied_iterations.append(context.t)
+            return state
+
+    recording_step = RecordingStep(initial_scale=0.1, target_acceptance=None)
+    step = StepEveryNIterations(recording_step, n=3, offset=1)
+
+    for t in range(10):
+        context = context_factory(t=t)
+        step(particle_state, context, rng)
+
+    assert applied_iterations == [1, 4, 7]
