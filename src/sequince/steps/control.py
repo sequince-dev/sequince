@@ -50,3 +50,51 @@ class ContinueWhile(SMCStep):
                 "ContinueWhile left stop flag set at iteration %d.", context.t
             )
         return state
+
+
+class PeriodicStep(SMCStep):
+    """Apply a step every N iterations.
+
+    This step applies the supplied ``step`` only on iterations where the current
+    iteration number is a multiple of ``n``.  On other iterations, it simply
+    returns the input state unchanged.
+
+    Parameters
+    ----------
+    step:
+        The step to apply every N iterations.
+    n:
+        The number of iterations between applications of the step.
+    offset:
+        An optional offset to apply to the iteration number before checking for
+        divisibility.  This allows you to, for example, apply a step every 5
+        iterations starting from iteration 2 by setting ``n=5`` and ``offset=2``.
+    """
+
+    def __init__(self, step: SMCStep, n: int, offset: int = 0):
+        self.step = step
+        self.n = n
+        self.offset = offset
+
+    def apply(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "ArrayRNG",
+    ) -> "ParticleState":
+        if (context.t - self.offset) % self.n == 0:
+            logger.debug(
+                "Applying step at iteration %d (every %d iterations with offset %d).",
+                context.t,
+                self.n,
+                self.offset,
+            )
+            return self.step.apply(state, context, rng)
+        else:
+            logger.debug(
+                "Skipping step at iteration %d (not a multiple of %d with offset %d).",
+                context.t,
+                self.n,
+                self.offset,
+            )
+            return state
