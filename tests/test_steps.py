@@ -14,7 +14,7 @@ from sequince.steps import (
     WasteFreeResampleMove,
 )
 from sequince.steps.base import StepContext
-from sequince.steps.control import StepEveryNIterations
+from sequince.steps.control import PeriodicStep
 from sequince.steps.mutation import EmceeMutation, MiniPCNMutation
 from sequince.steps.resampling import (
     MultinomialResampling,
@@ -511,7 +511,7 @@ def test_step_every_n_iterations_applies_step_conditionally(
             return state
 
     recording_step = RecordingStep(initial_scale=0.1, target_acceptance=None)
-    step = StepEveryNIterations(recording_step, n=3, offset=1)
+    step = PeriodicStep(recording_step, n=3, offset=1)
 
     for t in range(10):
         context = context_factory(t=t)
