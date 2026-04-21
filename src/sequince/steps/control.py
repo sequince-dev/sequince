@@ -52,7 +52,7 @@ class ContinueWhile(SMCStep):
         return state
 
 
-class StepEveryNIterations(SMCStep):
+class PeriodicStep(SMCStep):
     """Apply a step every N iterations.
 
     This step applies the supplied ``step`` only on iterations where the current
