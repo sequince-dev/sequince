@@ -72,9 +72,9 @@ class PeriodicStep(SMCStep):
     """
 
     def __init__(self, step: SMCStep, n: int, offset: int = 0):
-        self._step = step
-        self._n = n
-        self._offset = offset
+        self.step = step
+        self.n = n
+        self.offset = offset
 
     def apply(
         self,
@@ -82,19 +82,19 @@ class PeriodicStep(SMCStep):
         context: StepContext,
         rng: "ArrayRNG",
     ) -> "ParticleState":
-        if (context.t - self._offset) % self._n == 0:
+        if (context.t - self.offset) % self.n == 0:
             logger.debug(
                 "Applying step at iteration %d (every %d iterations with offset %d).",
                 context.t,
-                self._n,
-                self._offset,
+                self.n,
+                self.offset,
             )
-            return self._step.apply(state, context, rng)
+            return self.step.apply(state, context, rng)
         else:
             logger.debug(
                 "Skipping step at iteration %d (not a multiple of %d with offset %d).",
                 context.t,
-                self._n,
-                self._offset,
+                self.n,
+                self.offset,
             )
             return state
