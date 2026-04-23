@@ -156,7 +156,7 @@ def make_standard_bayesian_smc(
     if logging_frequency > 0:
 
         def logging_fn(state: ParticleState, context: StepContext) -> str:
-            current_temp = context.shared.get("temperature", 0.0)
+            current_temp = context.metadata.get("temperature", 0.0)
             return (
                 f"SMC iteration {context.t}: "
                 f"Temperature={current_temp:.4f}, "
