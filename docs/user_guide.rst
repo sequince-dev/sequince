@@ -96,7 +96,7 @@ To implement bespoke step logic, derive from
 :class:`~sequince.steps.base.SMCStep`. Override the ``apply`` method to
 perform work and return the new state. The base class offers utilities for
 logging, stopping the overall run, and accessing metadata stored on the context,
-including the mutable ``StepContext.shared`` dictionary for cross-step state.
+including the mutable ``StepContext.metadata`` dictionary for cross-step state.
 
 Similarly, custom callbacks can be implemented by sub-classing
 :class:`~sequince.callbacks.SMCCallback` and overriding the ``apply`` method

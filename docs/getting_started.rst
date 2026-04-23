@@ -33,10 +33,12 @@ the usage demonstrated in the README
     def log_likelihood(theta):
         ...
 
-    smc, posterior, shared_context = make_standard_bayesian_smc(
+    smc, posterior, meta_data = make_standard_bayesian_smc(
         log_prior,
         log_likelihood,
     )
+
+    shared_context = dict()
 
     # Build the initial particle cloud
     n = 2_048
@@ -44,15 +46,26 @@ the usage demonstrated in the README
     initial_state = ParticleState(
         particles=initial_particles,
         log_weights=np.full(n, -np.log(n)),
-        metadata={"temperature": 0.0},
     )
 
     results = smc.run(
         initial_state,
         rng=np.random.default_rng(),
         shared_context=shared_context,
+        meta_data=meta_data,
     )
     samples = results.posterior_samples(1_000)
 
 Check the :doc:`user_guide` for a deeper look at how to customise the SMC loop
 and swap in different building blocks.
+
+
+Meta data & shared context
+--------------------------
+
+The ``meta_data`` dictionary is intended to hold information that needs to be
+passed between steps in the SMC loop. It can be updated at each step.
+
+The ``shared_context`` dictionary is intended to hold information that needs to be
+passed between steps in the SMC loop, but is not intended to be updated. For example,
+it can be used to store static data that is needed by the likelihood function.
