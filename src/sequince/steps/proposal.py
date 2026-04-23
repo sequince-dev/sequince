@@ -18,13 +18,13 @@ class AdaptGaussianProposal(SMCStep):
     """Adapt Gaussian proposal parameters between SMC steps.
 
     This step leaves the particle state untouched while updating entries inside
-    ``StepContext.shared`` so downstream proposal kernels can react to the
+    ``StepContext.metadata`` so downstream proposal kernels can react to the
     latest diagnostics.
 
     Parameters
     ----------
     scale_key:
-        Name of the entry in ``context.shared`` storing the scalar proposal
+        Name of the entry in ``context.metadata`` storing the scalar proposal
         scale. If the key is missing the ``initial_scale`` is injected.
     initial_scale:
         Default scale used when the key is absent.
@@ -40,13 +40,13 @@ class AdaptGaussianProposal(SMCStep):
         Metadata field read from the particle state for the last acceptance
         statistic (defaults to ``"waste_free_acceptance"``).
     acceptance_context_key:
-        Fallback key looked up in ``context.shared`` when the metadata entry is
+        Fallback key looked up in ``context.metadata`` when the metadata entry is
         missing.
     scale_metadata_key:
         Optional metadata entry that mirrors the adapted scale for inspection.
     covariance_key:
         When supplied, the empirical covariance of the current particles is
-        stored at this ``context.shared`` entry after applying diagonal jitter.
+        stored at this ``context.metadata`` entry after applying diagonal jitter.
     mean_key:
         Optional entry saving the empirical particle mean alongside the
         covariance estimate.
@@ -76,10 +76,10 @@ class AdaptGaussianProposal(SMCStep):
     ) -> "ParticleState":
         del rng  # Step does not require randomness.
 
-        scale = float(context.shared.get(self.scale_key, self.initial_scale))
+        scale = float(context.metadata.get(self.scale_key, self.initial_scale))
         acceptance = state.metadata.get(self.acceptance_metadata_key)
         if acceptance is None and self.acceptance_context_key is not None:
-            acceptance = context.shared.get(self.acceptance_context_key)
+            acceptance = context.metadata.get(self.acceptance_context_key)
         if (
             acceptance is not None
             and self.target_acceptance is not None
@@ -88,7 +88,7 @@ class AdaptGaussianProposal(SMCStep):
             delta = float(acceptance) - float(self.target_acceptance)
             scale *= float(np.exp(self.adaptation_rate * delta))
         scale = float(np.clip(scale, self.min_scale, self.max_scale))
-        context.shared[self.scale_key] = scale
+        context.metadata[self.scale_key] = scale
 
         updated_state = state
         if self.scale_metadata_key is not None:
@@ -117,8 +117,8 @@ class AdaptGaussianProposal(SMCStep):
             if not np.all(np.isfinite(cov)):
                 cov = np.eye(dim, dtype=float)
             cov += float(self.covariance_jitter) * np.eye(dim, dtype=float)
-            context.shared[self.covariance_key] = cov
+            context.metadata[self.covariance_key] = cov
             if self.mean_key is not None:
-                context.shared[self.mean_key] = mean
+                context.metadata[self.mean_key] = mean
 
         return updated_state

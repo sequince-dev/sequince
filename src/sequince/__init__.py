@@ -5,8 +5,8 @@ import logging
 
 from .posterior import TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
-from .result import MetaSMCResult, SMCResult
-from .smc import MetaSequentialMonteCarlo, SequentialMonteCarlo
+from .result import SMCResult
+from .smc import SequentialMonteCarlo
 from .state import ParticleState
 
 try:
@@ -21,7 +21,6 @@ __all__ = [
     "SequentialMonteCarlo",
     "MetaSequentialMonteCarlo",
     "SMCResult",
-    "MetaSMCResult",
     "TemperedPosterior",
     "make_standard_bayesian_smc",
 ]

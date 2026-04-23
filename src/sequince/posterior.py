@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable
 
 from sequince.transforms import ParticleTransform, get_prebuilt_transform
@@ -8,6 +9,7 @@ from sequince.transforms import ParticleTransform, get_prebuilt_transform
 from ._array_api import asarray, full, namespace
 from ._typing import Array
 from .state import ParticleState
+from .steps.base import StepContext
 from .utils import _call_with_optional_context
 
 if TYPE_CHECKING:
@@ -85,7 +87,7 @@ class TemperedPosterior:
         context: "StepContext",
     ) -> float | Any:
         """Return the tempered log posterior evaluated at the current β."""
-        beta = float(context.shared.get("temperature", 0.0))
+        beta = float(context.metadata.get("temperature", 0.0))
         log_prior = _evaluate(self.log_prior, particles, context)
         log_like = _evaluate(self.log_likelihood, particles, context)
         if self.log_proposal is None:
@@ -96,6 +98,22 @@ class TemperedPosterior:
         if particles.ndim == 1:
             return float(posterior[0])
         return posterior
+
+    def freeze_log_prob(self, context: StepContext):
+        frozen_context = StepContext(
+            t=context.t,
+            observation=context.observation,
+            shared=copy.deepcopy(dict(context.shared)),
+            metadata=copy.deepcopy(dict(context.metadata)),
+        )
+
+        def _frozen_log_prob(particles):
+            return self.log_prob(particles, frozen_context)
+
+        return _frozen_log_prob
+
+    def with_log_proposal(self, log_proposal):
+        return replace(self, log_proposal=log_proposal)
 
 
 def draw_additional_samples(

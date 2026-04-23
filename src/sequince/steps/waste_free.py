@@ -219,14 +219,16 @@ class WasteFreeResampleMove(SMCStep):
         metadata["waste_free_selected_proposals_by_round"] = proposal_counts
         metadata["waste_free_proposal_repeats"] = self._n_proposals
 
-        context.shared["waste_free_acceptance"] = metadata[
+        context.metadata["waste_free_acceptance"] = metadata[
             "waste_free_acceptance"
         ]
-        context.shared["waste_free_acceptance_by_round"] = acceptance_by_round
-        context.shared["waste_free_selected_proposals"] = metadata[
+        context.metadata["waste_free_acceptance_by_round"] = (
+            acceptance_by_round
+        )
+        context.metadata["waste_free_selected_proposals"] = metadata[
             "waste_free_selected_proposals"
         ]
-        context.shared["waste_free_total_proposals"] = n * self._n_proposals
+        context.metadata["waste_free_total_proposals"] = n * self._n_proposals
 
         log_weights = np.full(n, -np.log(n), dtype=float)
         return state.with_updates(

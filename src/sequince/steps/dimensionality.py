@@ -39,10 +39,10 @@ class DimensionalityExpansion(SMCStep):
     metadata_key:
         Metadata entry updated with the total dimensionality after expansion.
     context_key:
-        Optional ``StepContext.shared`` entry mirroring the current
+        Optional ``StepContext.metadata`` entry mirroring the current
         dimensionality for downstream steps.
     context_delta_key:
-        Optional ``StepContext.shared`` entry receiving the number of
+        Optional ``StepContext.metadata`` entry receiving the number of
         dimensions added by the latest expansion.
     reset_temperature:
         When ``True`` (default) the step resets any temperature bookkeeping in
@@ -115,8 +115,8 @@ class DimensionalityExpansion(SMCStep):
         if self._reset_temperature:
             metadata["temperature"] = 0.0
             metadata.pop("temperature_delta", None)
-            context.shared["temperature"] = 0.0
-            context.shared["temperature_delta"] = 0.0
+            context.metadata["temperature"] = 0.0
+            context.metadata["temperature_delta"] = 0.0
             log_evidence = state.log_evidence
 
             logger.debug(
@@ -127,9 +127,9 @@ class DimensionalityExpansion(SMCStep):
             log_evidence = state.log_evidence
 
         if self._context_key is not None:
-            context.shared[self._context_key] = total_dims
+            context.metadata[self._context_key] = total_dims
         if self._context_delta_key is not None:
-            context.shared[self._context_delta_key] = new_block.shape[1]
+            context.metadata[self._context_delta_key] = new_block.shape[1]
 
         logger.info(
             "DimensionalityExpansion appended %d dims (total=%d).",
