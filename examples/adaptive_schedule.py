@@ -51,7 +51,7 @@ def main() -> None:
     )
 
     # Small helper to create the tempered posterior
-    smc, posterior, shared_context = make_standard_bayesian_smc(
+    smc, posterior, metadata = make_standard_bayesian_smc(
         log_prior=log_prior,
         log_likelihood=log_likelihood,
         target_ess_ratio=0.7,
@@ -64,11 +64,17 @@ def main() -> None:
         auto_normalize=True,
     )
 
+    shared_context = {}
     # Add prior bounds to the shared context
     shared_context["lower_bound"] = lower_bound
     shared_context["upper_bound"] = upper_bound
 
-    result = smc.run(initial_state, rng=rng, shared_context=shared_context)
+    result = smc.run(
+        initial_state,
+        rng=rng,
+        shared_context=shared_context,
+        metadata=metadata,
+    )
 
     posterior_state = result.final_state
     log_evidence = posterior_state.log_evidence

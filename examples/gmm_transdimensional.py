@@ -10,7 +10,7 @@ distributions to encourage efficient exploration.
 
 from __future__ import annotations
 
-from typing import Any, Callable, MutableMapping, Sequence
+from typing import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,19 +18,21 @@ from orng import ArrayRNG
 from scipy.special import gammaln, logsumexp, softmax
 
 from sequince import (
-    MetaSequentialMonteCarlo,
     ParticleState,
     SequentialMonteCarlo,
     TemperedPosterior,
 )
 from sequince.logging_utils import configure_logging
+from sequince.result import NestedSMCResult
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     LoggingStep,
     MiniPCNMutation,
     SystematicResampling,
 )
-from sequince.steps.base import StepContext
+from sequince.steps.base import SMCStep, StepContext
+from sequince.steps.control import StopIf
+from sequince.steps.nested import NestedSMCStep
 
 
 def generate_gmm_data(
@@ -105,7 +107,7 @@ def gmm_log_likelihood(
 
     n_particles, param_dim = particles.shape
     if active_components is None:
-        n_components = int(context.shared.get("active_components", 0))
+        n_components = int(context.metadata.get("active_components", 0))
         if n_components <= 0:
             if param_dim % 2 != 0:
                 raise ValueError(
@@ -184,8 +186,8 @@ def mixture_density(
 
 
 def logging_str_fn(state: ParticleState, context: StepContext) -> str:
-    temperature = context.shared["temperature"]
-    components = context.shared["active_components"]
+    temperature = context.metadata["temperature"]
+    components = context.metadata["active_components"]
     ess = state.effective_sample_size()
     n_particles = state.log_weights.shape[0]
     ess_ratio = ess / n_particles if n_particles else 0.0
@@ -197,6 +199,56 @@ def logging_str_fn(state: ParticleState, context: StepContext) -> str:
         f"ESS: {ess:.1f} ({ess_ratio:.3f}), "
         f"Log Evidence: {log_evidence:.1f}"
     )
+
+
+class ExpandComponents(SMCStep):
+    """Increase the mixture order between outer SMC iterations."""
+
+    def __init__(self, target_components: int):
+        self._target_components = target_components
+
+    def apply(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: ArrayRNG,
+    ) -> ParticleState:
+        current_components = int(context.metadata["active_components"])
+
+        # The first outer iteration should sample the initial 1-component model.
+        if context.t == 0:
+            return state
+
+        if current_components >= self._target_components:
+            context.request_stop()
+            return state
+
+        new_block = component_sampler(state, context=context, rng=rng)
+
+        particles = np.asarray(state.particles)
+        if particles.ndim == 1:
+            particles = particles[:, np.newaxis]
+
+        existing_logits = particles[:, :current_components]
+        existing_means = particles[:, current_components:]
+        new_logits = new_block[:, 0:1]
+        new_means = new_block[:, 1:2]
+
+        logits = np.concatenate([existing_logits, new_logits], axis=1)
+        means = np.concatenate([existing_means, new_means], axis=1)
+        reordered = np.concatenate([logits, means], axis=1)
+
+        next_components = current_components + 1
+        metadata = dict(state.metadata)
+        metadata["active_components"] = next_components
+        metadata["temperature"] = 0.0
+        metadata.pop("temperature_delta", None)
+
+        context.metadata["active_components"] = next_components
+        context.metadata["temperature"] = 0.0
+        context.metadata["temperature_delta"] = 0.0
+
+        return state.with_updates(particles=reordered, metadata=metadata)
 
 
 def main() -> None:
@@ -233,69 +285,15 @@ def main() -> None:
     initial_state = ParticleState(
         particles=initial_particles,
         log_weights=log_weights,
-        metadata={"temperature": 0.0, "active_components": 1},
+        metadata={"active_components": 1},
     )
 
-    target_components = 5
+    target_components = 6
 
     posterior = TemperedPosterior(
         log_prior=log_prior,
         log_likelihood=gmm_log_likelihood,
     )
-
-    def make_log_target(
-        n_components: int,
-    ) -> Callable[[np.ndarray, StepContext], np.ndarray]:
-        def _target(particles: np.ndarray, context: StepContext) -> np.ndarray:
-            arr = np.asarray(particles)
-            if arr.ndim == 1:
-                arr = arr[:, np.newaxis]
-            arr = arr[:, : 2 * n_components]
-            ctx = StepContext(
-                t=context.t,
-                observation=context.observation,
-                shared=context.shared,
-            )
-            return log_prior(arr, ctx) + gmm_log_likelihood(
-                arr, ctx, active_components=n_components
-            )
-
-        return _target
-
-    def expand_components(
-        state: ParticleState,
-        shared: MutableMapping[str, Any],
-        rng: ArrayRNG,
-    ) -> ParticleState:
-        current_components = shared["active_components"]
-        if current_components >= target_components:
-            return state
-
-        np_rng: np.random.Generator = shared["np_rng"]
-        prep_context = StepContext(t=0, shared=shared)
-        new_block = component_sampler(state, context=prep_context, rng=np_rng)
-
-        particles = np.asarray(state.particles)
-        if particles.ndim == 1:
-            particles = particles[:, np.newaxis]
-
-        existing_logits = particles[:, :current_components]
-        existing_means = particles[:, current_components:]
-        new_logits = new_block[:, 0:1]
-        new_means = new_block[:, 1:2]
-
-        logits = np.concatenate([existing_logits, new_logits], axis=1)
-        means = np.concatenate([existing_means, new_means], axis=1)
-        reordered = np.concatenate([logits, means], axis=1)
-
-        metadata = dict(state.metadata)
-        metadata["active_components"] = current_components + 1
-        shared["active_components"] = current_components + 1
-        return state.with_updates(particles=reordered, metadata=metadata)
-
-    targets: list[Callable[..., np.ndarray]] = [
-        make_log_target(k) for k in range(1, target_components + 1)
-    ]
 
     inner_runner = SequentialMonteCarlo(
         steps=[
@@ -314,25 +312,39 @@ def main() -> None:
     shared_context = {
         "data": observations,
         "component_std": component_std,
-        "temperature": 0.0,
-        "temperature_delta": 0.0,
-        "active_components": 1,
         "mean_bounds": mean_bounds,
         "logit_prior_scale": logit_prior_scale,
         "component_count_rate": 3.0,
-        "np_rng": rng,
     }
 
-    meta = MetaSequentialMonteCarlo(
-        targets=targets,
-        inner_runner=inner_runner,
-        model_transition=expand_components,
+    outer_runner = SequentialMonteCarlo(
+        steps=[
+            ExpandComponents(target_components),
+            NestedSMCStep(
+                inner_runner,
+                posterior=posterior,
+                evidence_mode="incremental",
+                record_outputs=True,
+                output_key="inner_results",
+            ),
+            StopIf(
+                lambda state, context: (
+                    context.metadata["active_components"] >= target_components
+                )
+            ),
+        ]
     )
 
-    meta_result = meta.run(
+    metadata = {"active_components": 1}
+
+    outer_result = outer_runner.run(
         initial_state,
         rng=rng,
         shared_context=shared_context,
+        metadata=metadata,
+    )
+    meta_result = NestedSMCResult(
+        outer_result.context.outputs["inner_results"]
     )
 
     all_states = meta_result.all_states
