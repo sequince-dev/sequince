@@ -34,14 +34,13 @@ def _zero_log_likelihood(particles: np.ndarray, context=None) -> np.ndarray:
 
 
 def test_make_standard_bayesian_smc_builds_default_steps() -> None:
-    smc, posterior, shared_context = make_standard_bayesian_smc(
+    smc, posterior, metadata = make_standard_bayesian_smc(
         _quadratic_log_prior,
         _zero_log_likelihood,
     )
 
     assert isinstance(posterior, TemperedPosterior)
-    assert shared_context["temperature"] == 0.0
-    assert shared_context["temperature_delta"] == 0.0
+    assert metadata == {"max_temperature": 1.0}
 
     steps = smc._steps  # noqa: SLF001 - inspecting configured steps for testing.
     assert len(steps) == 4
@@ -53,7 +52,7 @@ def test_make_standard_bayesian_smc_builds_default_steps() -> None:
 
 def test_make_standard_bayesian_smc_reaches_max_temperature(rng) -> None:
     max_temperature = 0.5
-    smc, _, shared_context = make_standard_bayesian_smc(
+    smc, _, metadata = make_standard_bayesian_smc(
         _quadratic_log_prior,
         _zero_log_likelihood,
         max_temperature=max_temperature,
@@ -68,12 +67,12 @@ def test_make_standard_bayesian_smc_reaches_max_temperature(rng) -> None:
         metadata={"temperature": 0.0},
     )
 
-    results = smc.run(initial_state, rng=rng, shared_context=shared_context)
+    results = smc.run(initial_state, rng=rng, metadata=metadata)
 
     assert results.states[-1].metadata["temperature"] == pytest.approx(
         max_temperature
     )
-    assert shared_context["temperature"] == pytest.approx(max_temperature)
+    assert metadata["temperature"] == pytest.approx(max_temperature)
 
 
 def test_make_standard_bayesian_smc_validates_resampling_name() -> None:

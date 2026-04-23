@@ -7,13 +7,13 @@ import pytest
 
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
-from sequince.utils import _ensure_rng
+from sequince.utils import resolve_rng
 
 
 @pytest.fixture
 def rng():
     """Seeded ArrayRNG for deterministic tests."""
-    return _ensure_rng(12345)
+    return resolve_rng(12345)
 
 
 @pytest.fixture
@@ -50,10 +50,15 @@ def context_factory() -> Callable[..., StepContext]:
         *,
         observation: object = None,
         shared: Dict[str, object] | None = None,
+        metadata: Dict[str, object] | None = None,
     ) -> StepContext:
         if shared is None:
             shared = {}
-        return StepContext(t=t, observation=observation, shared=shared)
+        if metadata is None:
+            metadata = {}
+        return StepContext(
+            t=t, observation=observation, shared=shared, metadata=metadata
+        )
 
     return _factory
 

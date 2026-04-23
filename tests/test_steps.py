@@ -33,9 +33,9 @@ if TYPE_CHECKING:
 
 
 def test_step_context_request_stop(step_context: StepContext) -> None:
-    assert not step_context.stop_requested
+    assert step_context.metadata["stop_requested"] is False
     step_context.request_stop()
-    assert step_context.stop_requested
+    assert step_context.metadata["stop_requested"] is True
 
 
 def test_log_likelihood_weighting_updates_log_weights(
@@ -64,10 +64,10 @@ def test_tempered_weighting_scales_log_likelihood(
         return np.ones(particles.shape[0])
 
     def schedule(t: int, context: StepContext) -> float:
-        context.shared.setdefault("temperatures", []).append(t)
+        context.metadata.setdefault("temperatures", []).append(t)
         return 0.5 + 0.1 * t
 
-    context = context_factory(t=2, shared={})
+    context = context_factory(t=2, metadata={})
     step = TemperedWeighting(log_like, schedule, normalize_after=False)
     updated = step(particle_state, context, rng)
 
@@ -77,7 +77,7 @@ def test_tempered_weighting_scales_log_likelihood(
     assert np.allclose(
         updated.log_weights, particle_state.log_weights + expected_increment
     )
-    assert context.shared["temperatures"] == [2]
+    assert context.metadata["temperatures"] == [2]
 
 
 def test_fixed_tempered_weighting_updates_metadata_and_context(
@@ -86,15 +86,15 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
         return np.ones(particles.shape[0])
 
-    context = context_factory(shared={"temperature": 0.0})
+    context = context_factory(metadata={"temperature": 0.0})
     step = FixedTemperedWeighting(
         log_like, temperature_increment=0.25, normalize_after=False
     )
     updated = step(particle_state, context, rng)
 
     assert updated.metadata["temperature"] == pytest.approx(0.25)
-    assert context.shared["temperature"] == pytest.approx(0.25)
-    assert context.shared["temperature_delta"] == pytest.approx(0.25)
+    assert context.metadata["temperature"] == pytest.approx(0.25)
+    assert context.metadata["temperature_delta"] == pytest.approx(0.25)
 
 
 def test_adaptive_tempered_weighting_reaches_max_temperature(
@@ -112,13 +112,12 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
     )
 
     state = particle_state.with_updates(metadata={"temperature": 0.0})
-    shared_context: dict[str, float] = {}
 
     stop_step = None
     for t in range(20):
-        context = context_factory(t=t, shared=shared_context)
+        context = context_factory(t=t)
         state = step(state, context, rng)
-        if context.stop_requested:
+        if context.metadata["stop_requested"]:
             stop_step = t
             break
 
@@ -126,10 +125,10 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
         "Adaptive tempering did not request stop within 20 iterations."
     )
     assert state.metadata["temperature"] == pytest.approx(0.6, abs=1e-6)
-    assert shared_context["temperature"] == pytest.approx(
+    assert context.metadata["temperature"] == pytest.approx(
         state.metadata["temperature"]
     )
-    assert "temperature_delta" in shared_context
+    assert "temperature_delta" in context.metadata
 
 
 def test_adaptive_tempered_weighting_no_op_when_max_reached(
@@ -140,14 +139,19 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
 
     step = AdaptiveTemperedWeighting(log_like, max_temperature=1.0)
     state = particle_state.with_updates(metadata={"temperature": 1.0})
-    context = context_factory(shared={})
+    context = context_factory(metadata={"temperature": 1.0})
 
-    result = step(state, context, rng)
+    result_state = step(state, context, rng)
 
-    assert result is state
-    assert context.stop_requested
-    assert context.shared["temperature"] == 1.0
-    assert context.shared["temperature_delta"] == 0.0
+    expected_state = state.with_updates(
+        metadata=dict(state.metadata, temperature=1.0)
+    )
+
+    assert np.array_equal(result_state.particles, expected_state.particles)
+    assert result_state.metadata == expected_state.metadata
+    assert context.metadata["stop_requested"] is True
+    assert context.metadata["temperature"] == 1.0
+    assert context.metadata["temperature_delta"] == 0.0
 
 
 def test_systematic_resampling_skips_when_not_required(
@@ -257,7 +261,7 @@ def test_adapt_gaussian_proposal_updates_scale(
     metadata = dict(particle_state.metadata)
     metadata["waste_free_acceptance"] = 0.6
     state = particle_state.with_updates(metadata=metadata)
-    context = context_factory(shared={})
+    context = context_factory(metadata=metadata)
 
     adapter = AdaptGaussianProposal(
         initial_scale=0.5,
@@ -273,7 +277,8 @@ def test_adapt_gaussian_proposal_updates_scale(
 
     assert updated.metadata["proposal_scale"] > 0.5
     assert (
-        context.shared["proposal_scale"] == updated.metadata["proposal_scale"]
+        context.metadata["proposal_scale"]
+        == updated.metadata["proposal_scale"]
     )
 
 
@@ -282,7 +287,7 @@ def test_adapt_gaussian_proposal_adds_covariance(
     context_factory,
     rng,
 ) -> None:
-    context = context_factory(shared={})
+    context = context_factory(metadata={})
     adapter = AdaptGaussianProposal(
         covariance_key="proposal_cov",
         mean_key="proposal_mean",
@@ -291,8 +296,8 @@ def test_adapt_gaussian_proposal_adds_covariance(
 
     adapter(particle_state, context, rng)
 
-    cov = context.shared["proposal_cov"]
-    mean = context.shared["proposal_mean"]
+    cov = context.metadata["proposal_cov"]
+    mean = context.metadata["proposal_mean"]
     dims = particle_state.particles.shape[1]
     assert cov.shape == (dims, dims)
     assert np.all(np.isfinite(cov))
@@ -387,7 +392,7 @@ def test_waste_free_resample_move_multiple_proposals(
         sum(updated.metadata["waste_free_selected_proposals_by_round"])
         == updated.metadata["waste_free_selected_proposals"]
     )
-    assert context.shared["waste_free_total_proposals"] == n * 3
+    assert context.metadata["waste_free_total_proposals"] == n * 3
 
 
 def test_waste_free_resample_move_supports_dynamic_proposal(
@@ -399,11 +404,11 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
         pts = np.asarray(particles, dtype=float)
         return -0.5 * np.sum(np.atleast_2d(pts) ** 2, axis=-1)
 
-    context = context_factory(shared={"proposal_scale": 0.15})
+    context = context_factory(metadata={"proposal_scale": 0.15})
 
     def factory(parents: np.ndarray, ctx: StepContext) -> GaussianRandomWalk:
-        scale = float(ctx.shared.get("proposal_scale", 0.15))
-        ctx.shared.setdefault("factory_scales", []).append(scale)
+        scale = float(ctx.metadata.get("proposal_scale", 0.15))
+        ctx.metadata.setdefault("factory_scales", []).append(scale)
         return GaussianRandomWalk(scale=scale)
 
     adapter = AdaptGaussianProposal(
@@ -423,10 +428,10 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
 
     step(particle_state, context, rng)
 
-    assert context.shared["factory_scales"]
+    assert context.metadata["factory_scales"]
     assert all(
-        scale == context.shared["proposal_scale"]
-        for scale in context.shared["factory_scales"]
+        scale == context.metadata["proposal_scale"]
+        for scale in context.metadata["factory_scales"]
     )  # noqa: PLR2004
 
 
@@ -456,11 +461,11 @@ def test_dimensionality_expansion_appends_block(
     assert expanded.metadata["dims"] == expanded.particles.shape[1]
     assert expanded.metadata["added_dimensions"] == 2
     assert expanded.metadata["last_dimension_delta"] == 2
-    assert context.shared["dims"] == expanded.particles.shape[1]
-    assert context.shared["dim_delta"] == 2
+    assert context.metadata["dims"] == expanded.particles.shape[1]
+    assert context.metadata["dim_delta"] == 2
     assert expanded.metadata["temperature"] == 0.0
-    assert context.shared["temperature"] == 0.0
-    assert context.shared["temperature_delta"] == 0.0
+    assert context.metadata["temperature"] == 0.0
+    assert context.metadata["temperature_delta"] == 0.0
 
 
 def test_continue_while_overrides_stop_request(
@@ -482,7 +487,7 @@ def test_continue_while_overrides_stop_request(
     result = step(state, context, rng)
 
     assert result is state
-    assert not context.stop_requested
+    assert not context.metadata["stop_requested"]
 
     context_late = context_factory(t=1)
     context_late.request_stop()
@@ -491,7 +496,7 @@ def test_continue_while_overrides_stop_request(
     final_result = step(late_state, context_late, rng)
 
     assert final_result is late_state
-    assert context_late.stop_requested
+    assert context_late.metadata["stop_requested"] is True
     assert predicate_calls == [(0.5, 0), (1.0, 1)]
 
 
