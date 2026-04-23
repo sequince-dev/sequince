@@ -1,78 +1,79 @@
 from __future__ import annotations
 
-import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .._array_api import asarray, namespace
-from .._typing import Array
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
 
+    from .._typing import Array
     from ..state import ParticleState
-
-
-ComponentSampler = Callable[..., Array]
 
 logger = logging.getLogger(__name__)
 
 
-class DimensionalityExpansion(SMCStep):
-    """Append new latent dimensions to each particle.
+@dataclass
+class SMCTransformation:
+    """Transformation between successive SMC targets."""
 
-    The supplied ``component_sampler`` is responsible for generating the new
-    coordinates for every particle.  The sampler receives the current particle
-    state as its first positional argument and can optionally request the
-    calling ``StepContext`` and the RNG via keyword parameters named
-    ``context`` and ``rng`` respectively.
+    def forward(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "ArrayRNG",
+    ) -> "ParticleState":
+        raise NotImplementedError
 
-    Parameters
-    ----------
-    component_sampler:
-        Callable returning an ``(n_particles, k)`` array containing the new
-        coordinates to append.  A 1-D array of length ``n_particles`` is also
-        accepted and treated as ``k == 1``.
-    expected_block_size:
-        Optional integrity check enforcing the number of appended dimensions.
-    metadata_key:
-        Metadata entry updated with the total dimensionality after expansion.
-    context_key:
-        Optional ``StepContext.metadata`` entry mirroring the current
-        dimensionality for downstream steps.
-    context_delta_key:
-        Optional ``StepContext.metadata`` entry receiving the number of
-        dimensions added by the latest expansion.
-    reset_temperature:
-        When ``True`` (default) the step resets any temperature bookkeeping in
-        the particle metadata and shared context to zero, enabling a fresh
-        annealing cycle after expanding the latent space.
-    """
+    def inverse(
+        self,
+        particles: "Array",
+        context: StepContext,
+    ) -> "Array":
+        raise NotImplementedError
+
+    def log_auxiliary_density(
+        self,
+        particles: "Array",
+        context: StepContext,
+    ) -> "Array | float":
+        xp = namespace(particles)
+        arr = asarray(particles, xp=xp)
+        return xp.zeros(arr.shape[0], dtype=arr.dtype)
+
+    def log_jacobian(
+        self,
+        particles: "Array",
+        context: StepContext,
+    ) -> "Array | float":
+        xp = namespace(particles)
+        arr = asarray(particles, xp=xp)
+        return xp.zeros(arr.shape[0], dtype=arr.dtype)
+
+
+class ExpandDimensions(SMCStep):
+    """Apply an SMC transformation that increases the particle dimension."""
 
     def __init__(
         self,
-        component_sampler: ComponentSampler,
+        transformation: SMCTransformation,
         *,
         expected_block_size: int | None = None,
         metadata_key: str = "dimensions",
-        context_key: str | None = "dimensions",
-        context_delta_key: str | None = "dimension_delta",
-        reset_temperature: bool = True,
     ):
-        self._component_sampler = component_sampler
+        self._transformation = transformation
         self._expected_block_size = expected_block_size
         self._metadata_key = metadata_key
-        self._context_key = context_key
-        self._context_delta_key = context_delta_key
-        self._reset_temperature = reset_temperature
 
     def apply(
         self,
-        state: ParticleState,
+        state: "ParticleState",
         context: StepContext,
         rng: "ArrayRNG",
-    ) -> ParticleState:
+    ) -> "ParticleState":
         xp = namespace(state.particles)
         current_particles = asarray(state.particles, xp=xp)
         if current_particles.ndim == 1:
@@ -80,105 +81,48 @@ class DimensionalityExpansion(SMCStep):
                 current_particles, (current_particles.shape[0], 1)
             )
 
-        new_block = self._invoke_sampler(state, context, rng)
-        new_block = asarray(new_block, xp=xp)
-        if new_block.ndim == 1:
-            new_block = xp.reshape(new_block, (new_block.shape[0], 1))
+        expanded_state = self._transformation.forward(state, context, rng)
+        expanded_particles = asarray(expanded_state.particles, xp=xp)
+        if expanded_particles.ndim == 1:
+            expanded_particles = xp.reshape(
+                expanded_particles, (expanded_particles.shape[0], 1)
+            )
 
-        if new_block.shape[0] != current_particles.shape[0]:
+        if expanded_particles.shape[0] != current_particles.shape[0]:
             raise ValueError(
-                "Component sampler must return one row per particle."
+                "Transformation must preserve the number of particles."
             )
-        if self._expected_block_size is not None:
-            logger.debug(
-                "DimensionalityExpansion: expecting block size %d.",
-                self._expected_block_size,
-            )
-            if new_block.shape[1] != self._expected_block_size:
-                raise ValueError(
-                    "Component sampler returned unexpected block size: "
-                    f"{new_block.shape[1]} (expected "
-                    f"{self._expected_block_size})."
-                )
 
-        expanded_particles = xp.concatenate(
-            [current_particles, new_block], axis=1
-        )
-        metadata = dict(state.metadata)
+        delta = expanded_particles.shape[1] - current_particles.shape[1]
+        if delta < 0:
+            raise ValueError(
+                "ExpandDimensions requires a transformation that increases "
+                "or preserves dimensionality."
+            )
+        if (
+            self._expected_block_size is not None
+            and delta != self._expected_block_size
+        ):
+            raise ValueError(
+                "Transformation changed dimensionality by "
+                f"{delta} (expected {self._expected_block_size})."
+            )
+
         total_dims = expanded_particles.shape[1]
-        metadata[self._metadata_key] = total_dims
-        metadata["added_dimensions"] = (
-            metadata.get("added_dimensions", 0) + new_block.shape[1]
-        )
-        metadata["last_dimension_delta"] = new_block.shape[1]
+        state_metadata = dict(expanded_state.metadata)
+        state_metadata[self._metadata_key] = total_dims
 
-        if self._reset_temperature:
-            metadata["temperature"] = 0.0
-            metadata.pop("temperature_delta", None)
-            context.metadata["temperature"] = 0.0
-            context.metadata["temperature_delta"] = 0.0
-            log_evidence = state.log_evidence
-
-            logger.debug(
-                "DimensionalityExpansion reset temperature after adding %d dimensions.",
-                new_block.shape[1],
-            )
-        else:
-            log_evidence = state.log_evidence
-
-        if self._context_key is not None:
-            context.metadata[self._context_key] = total_dims
-        if self._context_delta_key is not None:
-            context.metadata[self._context_delta_key] = new_block.shape[1]
+        context.metadata[self._metadata_key] = total_dims
+        context.metadata["added_dimensions"] = context.metadata.get(
+            "added_dimensions", 0
+        ) + max(delta, 0)
+        context.metadata["last_dimension_delta"] = delta
+        context.metadata["smc_transformation"] = self._transformation
 
         logger.info(
-            "DimensionalityExpansion appended %d dims (total=%d).",
-            new_block.shape[1],
+            "ExpandDimensions changed dimensionality by %d (total=%d).",
+            delta,
             total_dims,
         )
 
-        return state.with_updates(
-            particles=expanded_particles,
-            metadata=metadata,
-            log_evidence=log_evidence,
-        )
-
-    def _invoke_sampler(
-        self,
-        state: ParticleState,
-        context: StepContext,
-        rng: "ArrayRNG",
-    ) -> Array:
-        sampler = self._component_sampler
-        signature = inspect.signature(sampler)
-        params = signature.parameters
-
-        kwargs: dict[str, Any] = {}
-        if "context" in params:
-            kwargs["context"] = context
-        if "rng" in params:
-            kwargs["rng"] = rng
-
-        positional_params = [
-            param
-            for param in params.values()
-            if param.kind
-            in {
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            }
-        ]
-
-        args: list[Any] = []
-        if positional_params:
-            first_name = positional_params[0].name
-            if first_name in {"particles", "coords", "positions"}:
-                args.append(state.particles)
-            else:
-                args.append(state)
-
-        logger.debug(
-            "Invoking component sampler %s for dimensionality expansion.",
-            getattr(sampler, "__name__", sampler.__class__.__name__),
-        )
-        return sampler(*args, **kwargs)
+        return expanded_state.with_updates(metadata=state_metadata)

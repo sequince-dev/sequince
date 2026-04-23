@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from sequince.transforms import ParticleTransform, get_prebuilt_transform
@@ -106,14 +106,38 @@ class TemperedPosterior:
             shared=copy.deepcopy(dict(context.shared)),
             metadata=copy.deepcopy(dict(context.metadata)),
         )
+        log_prior = self.log_prior
+        log_likelihood = self.log_likelihood
+        log_proposal = self.log_proposal
 
         def _frozen_log_prob(particles):
-            return self.log_prob(particles, frozen_context)
+            beta = float(frozen_context.metadata.get("temperature", 0.0))
+            frozen_log_prior = _evaluate(log_prior, particles, frozen_context)
+            frozen_log_like = _evaluate(
+                log_likelihood,
+                particles,
+                frozen_context,
+            )
+            if log_proposal is None:
+                posterior = frozen_log_prior + beta * frozen_log_like
+            else:
+                frozen_log_prop = _evaluate(
+                    log_proposal,
+                    particles,
+                    frozen_context,
+                )
+                posterior = (1.0 - beta) * frozen_log_prop + beta * (
+                    frozen_log_prior + frozen_log_like
+                )
+            if particles.ndim == 1:
+                return float(posterior[0])
+            return posterior
 
         return _frozen_log_prob
 
-    def with_log_proposal(self, log_proposal):
-        return replace(self, log_proposal=log_proposal)
+    def update_log_proposal(self, log_proposal: Callable) -> None:
+        """Updates the log_proposal to match the current target distribution."""
+        object.__setattr__(self, "log_proposal", log_proposal)
 
 
 def draw_additional_samples(

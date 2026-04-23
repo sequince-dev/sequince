@@ -1,70 +1,49 @@
-"""Steps for Meta SMC algorithms."""
+"""Nested SMC steps."""
 
 from __future__ import annotations
 
 import copy
 import logging
+from typing import Any, Callable
 
 from orng import ArrayRNG
 
 from ..state import ParticleState
+from ..utils import _call_with_optional_context
 from .base import SMCStep, StepContext
 
 logger = logging.getLogger(__name__)
 
 
 class NestedSMCStep(SMCStep):
-    """SMC step that uses another SMC loop.
-
-    Parameters
-    ----------
-    runner:
-        An instance of ``SequentialMonteCarlo`` that will be used to run the
-        nested SMC loop at each iteration.
-    posterior:
-        The posterior distribution object that will be updated with the log
-        proposal from the nested SMC at each iteration.
-    evidence_mode:
-        Determines how the log-evidence from the nested SMC is handled. If
-        "cumulative" (default), the log-evidence in the state will accumulate
-        the evidence from all mutation steps. If "incremental", the log-evidence
-        in the state will be reset to 0 before each mutation SMC run, so it will
-        only reflect the evidence from the current mutation step.
-    record_outputs:
-        If ``True``, the full result of each mutation SMC run will be recorded
-        in the context outputs under the key specified by ``output_key``. This
-        can be useful for diagnostics or analysis of the mutation SMC runs.
-    output_key:
-        The key under which to record the mutation SMC results in the context
-        outputs if ``record_outputs`` is ``True``. Default is
-        "smc_mutation_results".
-    run_kwargs:
-        Additional keyword arguments to pass to the SMC runner's ``run`` method.
-    """
+    """SMC step that runs another SMC loop in the same target space."""
 
     def __init__(
         self,
         smc_runner,
         posterior,
         *,
-        evidence_mode="cumulative",
         record_outputs=False,
         run_kwargs=None,
         output_key="smc_mutation_results",
     ):
         self.runner = smc_runner
         self.run_kwargs = run_kwargs or {}
-        self.base_posterior = posterior
         self.posterior = posterior
         self.record_outputs = record_outputs
         self.output_key = output_key
 
-        if evidence_mode not in ("cumulative", "incremental"):
-            raise ValueError(
-                f"Invalid evidence_mode: {evidence_mode}. Must be 'cumulative' or 'incremental'."
-            )
+    def make_input_log_proposal(
+        self,
+        context: StepContext,
+    ) -> Callable[..., Any] | None:
+        return getattr(self.posterior, "log_proposal", None)
 
-        self.evidence_mode = evidence_mode
+    def make_output_log_proposal(
+        self,
+        context: StepContext,
+    ) -> Callable[..., Any] | None:
+        return self.posterior.freeze_log_prob(context)
 
     def apply(
         self,
@@ -73,31 +52,67 @@ class NestedSMCStep(SMCStep):
         rng: "ArrayRNG",
     ) -> "ParticleState":
         if self.runner is None:
-            raise ValueError("SMCMutation requires an SMC runner.")
+            raise ValueError("NestedSMCStep requires an SMC runner.")
 
-        if self.evidence_mode == "incremental":
-            # Reset the log-evidence in the state to 0 before running the mutation SMC, so that it only captures the incremental evidence from the mutation steps
-            state = state.with_updates(log_evidence=0.0)
+        input_log_proposal = self.make_input_log_proposal(context)
+        if input_log_proposal is not None:
+            self.posterior.update_log_proposal(input_log_proposal)
 
+        input_state = state
         logger.debug(
-            "Running mutation SMC loop with %d particles.",
-            len(state.particles),
+            "Running nested SMC loop with %d particles.",
+            len(input_state.particles),
         )
         metadata = copy.deepcopy(context.metadata)
-        metadata.pop(
-            "stop_requested", None
-        )  # Ensure mutation SMC doesn't inherit stop request
-        logger.debug("Mutation SMC context metadata: %s", context.metadata)
+        metadata.pop("stop_requested", None)
         result = self.runner.run(
-            state,
+            input_state,
             rng=rng,
             shared_context=context.shared,
             metadata=metadata,
             **self.run_kwargs,
         )
         final_context = result.context
-        log_q_next = self.posterior.freeze_log_prob(final_context)
-        self.posterior = self.posterior.with_log_proposal(log_q_next)
+        output_log_proposal = self.make_output_log_proposal(final_context)
+        if output_log_proposal is not None:
+            self.posterior.update_log_proposal(output_log_proposal)
         if self.record_outputs:
             context.record_output(self.output_key, result)
         return result.final_state
+
+
+class TransDimensionalNestedSMCStep(NestedSMCStep):
+    """Nested SMC step that accounts for an outer SMC transformation."""
+
+    def make_input_log_proposal(
+        self,
+        context: StepContext,
+    ) -> Callable[..., Any] | None:
+        base_log_proposal = getattr(self.posterior, "log_proposal", None)
+        transformation = context.metadata.get("smc_transformation")
+        if base_log_proposal is None or transformation is None:
+            return base_log_proposal
+
+        def _transformed_log_proposal(
+            particles,
+            inner_context,
+        ):
+            old_particles = transformation.inverse(particles, inner_context)
+            values = _call_with_optional_context(
+                base_log_proposal,
+                (old_particles,),
+                inner_context,
+            )
+            values = values + _call_with_optional_context(
+                transformation.log_auxiliary_density,
+                (particles,),
+                inner_context,
+            )
+            values = values - _call_with_optional_context(
+                transformation.log_jacobian,
+                (particles,),
+                inner_context,
+            )
+            return values
+
+        return _transformed_log_proposal
