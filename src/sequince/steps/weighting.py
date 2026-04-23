@@ -149,9 +149,6 @@ class BaseTemperedStep(SMCStep):
             state = state.with_updates(metadata=state_metadata)
         if "temperature_delta" not in context.metadata:
             context.metadata["temperature_delta"] = 0.0
-            state_metadata = dict(state.metadata)
-            state_metadata["temperature_delta"] = 0.0
-            state = state.with_updates(metadata=state_metadata)
         return state
 
     def apply(self, state, context, rng):
@@ -365,7 +362,6 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         new_log_weights = state.log_weights + delta * increments
         metadata = dict(state.metadata)
         metadata["temperature"] = current_temp + delta
-        metadata["temperature_delta"] = delta
 
         updated_state = state.with_updates(
             log_weights=new_log_weights, metadata=metadata
