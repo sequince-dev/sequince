@@ -11,6 +11,7 @@ from numpy.random import Generator as NumPyGenerator
 from ._array_api import asarray, namespace, to_numpy
 from ._typing import Array
 from .state import ParticleState
+from .steps.nested import NESTED_SMC_OUTPUT_KEY
 from .utils import resolve_rng
 
 if TYPE_CHECKING:
@@ -53,6 +54,16 @@ class SMCResult:
 
     def __getitem__(self, index: int) -> ParticleState:
         return self.states[index]
+
+    def get_nested_results(
+        self,
+        key: str = NESTED_SMC_OUTPUT_KEY,
+    ) -> NestedSMCResult | None:
+        """Return a NestedSMCResult if the specified key is present in the context metadata."""
+        nested_results = self.context.metadata.get(key)
+        if nested_results is not None:
+            return NestedSMCResult(results=nested_results)
+        return None
 
     @property
     def final_state(self) -> ParticleState:

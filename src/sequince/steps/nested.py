@@ -13,6 +13,8 @@ from .context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
 
 logger = logging.getLogger(__name__)
 
+NESTED_SMC_OUTPUT_KEY = "smc_mutation_results"
+
 
 class NestedSMCStep(SMCStep):
     """SMC step that runs another SMC loop in the same target space."""
@@ -24,7 +26,7 @@ class NestedSMCStep(SMCStep):
         *,
         record_outputs=False,
         run_kwargs=None,
-        output_key="smc_mutation_results",
+        output_key=NESTED_SMC_OUTPUT_KEY,
         log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         self.runner = smc_runner
@@ -48,6 +50,7 @@ class NestedSMCStep(SMCStep):
             "Running nested SMC loop with %d particles.",
             len(input_state.particles),
         )
+        # TODO: is there a better way to do this? Avoid copying?
         metadata = copy.deepcopy(context.metadata)
         metadata.pop("stop_requested", None)
         result = self.runner.run(
