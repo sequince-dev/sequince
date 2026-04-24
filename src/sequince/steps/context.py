@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from .._typing import MetaData, Outputs, SharedContext
@@ -32,6 +33,7 @@ class StepContext:
     def __post_init__(self):
         if "stop_requested" not in self.metadata:
             self.metadata["stop_requested"] = False
+        self.shared = MappingProxyType(self.shared)
 
     def request_stop(self) -> None:
         """Signal that the SMC runner should halt after this iteration."""
