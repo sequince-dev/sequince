@@ -59,8 +59,10 @@ class SMCResult:
         self,
         key: str = NESTED_SMC_OUTPUT_KEY,
     ) -> NestedSMCResult | None:
-        """Return a NestedSMCResult if the specified key is present in the context metadata."""
-        nested_results = self.context.metadata.get(key)
+        """Return a NestedSMCResult if the specified key is present in the
+        context outputs.
+        """
+        nested_results = self.context.outputs.get(key)
         if nested_results is not None:
             return NestedSMCResult(results=nested_results)
         return None
