@@ -28,9 +28,11 @@ from sequince.steps import (
     AdaptiveTemperedWeighting,
     LoggingStep,
     MiniPCNMutation,
+    SMCTransformation,
     SystematicResampling,
+    TransformationStep,
 )
-from sequince.steps.base import SMCStep, StepContext
+from sequince.steps.base import StepContext
 from sequince.steps.control import StopIf
 from sequince.steps.nested import NestedSMCStep
 
@@ -133,24 +135,232 @@ def gmm_log_likelihood(
     return np.sum(log_mix, axis=1)
 
 
-def component_sampler(
-    state: ParticleState,
-    *,
-    context: StepContext,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Draw a new component's logit and mean from data-informed proposals."""
-    n = state.particles.shape[0]
-    bounds: tuple[float, float] = context.shared["mean_bounds"]
-    data = context.shared["data"]
-    spread = context.shared["component_std"]
-    logit_prior_scale = float(context.shared["logit_prior_scale"])
+class GMMExpansionTransformation(SMCTransformation):
+    """Add one mixture component using the component prior as proposal."""
 
-    new_logits = rng.normal(loc=0.0, scale=logit_prior_scale, size=(n, 1))
-    anchors = rng.choice(data, size=(n, 1))
-    new_means = anchors + rng.normal(scale=spread, size=(n, 1))
-    new_means = np.clip(new_means, bounds[0], bounds[1])
-    return np.concatenate([new_logits, new_means], axis=1)
+    def forward(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: ArrayRNG,
+    ) -> ParticleState:
+        current_components = int(context.metadata["active_components"])
+        particles = np.asarray(state.particles)
+        if particles.ndim == 1:
+            particles = particles[:, np.newaxis]
+
+        n = particles.shape[0]
+        bounds: tuple[float, float] = context.shared["mean_bounds"]
+        logit_prior_scale = float(context.shared["logit_prior_scale"])
+
+        new_logits = rng.normal(loc=0.0, scale=logit_prior_scale, size=(n, 1))
+        new_means = rng.uniform(low=bounds[0], high=bounds[1], size=(n, 1))
+
+        existing_logits = particles[:, :current_components]
+        existing_means = particles[:, current_components:]
+        logits = np.concatenate([existing_logits, new_logits], axis=1)
+        means = np.concatenate([existing_means, new_means], axis=1)
+        expanded_particles = np.concatenate([logits, means], axis=1)
+
+        next_components = current_components + 1
+        metadata = dict(state.metadata)
+        metadata["previous_active_components"] = current_components
+        metadata["active_components"] = next_components
+        metadata["temperature"] = 0.0
+        metadata.pop("temperature_delta", None)
+
+        context.metadata["previous_active_components"] = current_components
+        context.metadata["active_components"] = next_components
+        context.metadata["temperature"] = 0.0
+        context.metadata["temperature_delta"] = 0.0
+
+        return state.with_updates(
+            particles=expanded_particles,
+            metadata=metadata,
+        )
+
+    def inverse(
+        self,
+        particles: np.ndarray,
+        context: StepContext,
+    ) -> np.ndarray:
+        pts = np.atleast_2d(particles)
+        current_components = int(context.metadata["active_components"])
+        previous_components = int(
+            context.metadata.get(
+                "previous_active_components", current_components
+            )
+        )
+        logits = pts[:, :current_components]
+        means = pts[:, current_components : 2 * current_components]
+        old_logits = logits[:, :previous_components]
+        old_means = means[:, :previous_components]
+        inverse_particles = np.concatenate([old_logits, old_means], axis=1)
+        if particles.ndim == 1:
+            return inverse_particles[0]
+        return inverse_particles
+
+    def log_auxiliary_density(
+        self,
+        particles: np.ndarray,
+        context: StepContext,
+    ) -> np.ndarray:
+        pts = np.atleast_2d(particles)
+        current_components = int(context.metadata["active_components"])
+        previous_components = int(
+            context.metadata.get(
+                "previous_active_components", current_components
+            )
+        )
+        if previous_components >= current_components:
+            return np.zeros(pts.shape[0], dtype=float)
+
+        bounds: tuple[float, float] = context.shared["mean_bounds"]
+        width = bounds[1] - bounds[0]
+        scale = float(context.shared["logit_prior_scale"])
+        if width <= 0.0 or scale <= 0.0:
+            raise ValueError(
+                "Invalid prior configuration for expansion proposal."
+            )
+
+        logits = pts[:, :current_components]
+        means = pts[:, current_components : 2 * current_components]
+        new_logits = logits[:, previous_components]
+        new_means = means[:, previous_components]
+
+        norm_const = np.log(np.sqrt(2.0 * np.pi) * scale)
+        logit_density = -0.5 * (new_logits / scale) ** 2 - norm_const
+
+        in_bounds = (new_means >= bounds[0]) & (new_means <= bounds[1])
+        mean_density = np.full(pts.shape[0], -np.inf, dtype=float)
+        mean_density[in_bounds] = -np.log(width)
+        density = logit_density + mean_density
+        if particles.ndim == 1:
+            return np.array(density[0], ndmin=1)
+        return density
+
+
+class GMMTemperedPosterior(TemperedPosterior):
+    """Posterior with a custom increment for one-component expansions.
+
+    When a new mixture component is introduced via the prior-driven
+    transformation below, the prior term cancels against the auxiliary
+    proposal density and the increment reduces to the likelihood change.
+    This method computes the old and new mixture likelihoods from one pass
+    over the component log densities.
+    """
+
+    def log_increment(
+        self,
+        particles: np.ndarray,
+        context: StepContext,
+        *,
+        log_proposal_override=None,
+    ) -> np.ndarray:
+        previous_components = context.metadata.get(
+            "previous_active_components"
+        )
+        current_components = int(context.metadata.get("active_components", 0))
+
+        if (
+            log_proposal_override is None
+            or previous_components is None
+            or int(previous_components) != current_components - 1
+            or current_components <= 1
+        ):
+            return super().log_increment(
+                particles,
+                context,
+                log_proposal_override=log_proposal_override,
+            )
+
+        data = context.shared["data"]
+        std = float(context.shared["component_std"])
+        variance = std**2
+
+        pts = np.atleast_2d(particles)
+        logits = pts[:, :current_components]
+        means = pts[:, current_components : 2 * current_components]
+        log_weights = logits - logsumexp(logits, axis=1, keepdims=True)
+
+        residual = data[np.newaxis, :, np.newaxis] - means[:, np.newaxis, :]
+        log_component = -0.5 * (residual**2) / variance - 0.5 * np.log(
+            2.0 * np.pi * variance
+        )
+
+        old_log_mix = logsumexp(
+            log_weights[:, np.newaxis, :previous_components]
+            + log_component[:, :, :previous_components],
+            axis=2,
+        )
+        new_log_mix = logsumexp(
+            log_weights[:, np.newaxis, :] + log_component,
+            axis=2,
+        )
+        increments = np.sum(new_log_mix - old_log_mix, axis=1)
+
+        if particles.ndim == 1:
+            return np.array(increments[0], ndmin=1)
+        return increments
+
+    def log_prob(
+        self,
+        particles: np.ndarray,
+        context: StepContext,
+        *,
+        log_proposal_override=None,
+    ) -> np.ndarray:
+        previous_components = context.metadata.get(
+            "previous_active_components"
+        )
+        current_components = int(context.metadata.get("active_components", 0))
+
+        if (
+            log_proposal_override is None
+            or previous_components is None
+            or int(previous_components) != current_components - 1
+            or current_components <= 1
+        ):
+            return super().log_prob(
+                particles,
+                context,
+                log_proposal_override=log_proposal_override,
+            )
+
+        data = context.shared["data"]
+        std = float(context.shared["component_std"])
+        variance = std**2
+        beta = float(context.metadata.get("temperature", 0.0))
+
+        pts = np.atleast_2d(particles)
+        logits = pts[:, :current_components]
+        means = pts[:, current_components : 2 * current_components]
+        log_weights = logits - logsumexp(logits, axis=1, keepdims=True)
+
+        residual = data[np.newaxis, :, np.newaxis] - means[:, np.newaxis, :]
+        log_component = -0.5 * (residual**2) / variance - 0.5 * np.log(
+            2.0 * np.pi * variance
+        )
+
+        old_log_mix = logsumexp(
+            log_weights[:, np.newaxis, :previous_components]
+            + log_component[:, :, :previous_components],
+            axis=2,
+        )
+        new_log_mix = logsumexp(
+            log_weights[:, np.newaxis, :] + log_component,
+            axis=2,
+        )
+        old_log_like = np.sum(old_log_mix, axis=1)
+        new_log_like = np.sum(new_log_mix, axis=1)
+        log_prior_vals = log_prior(pts, context)
+        posterior = (
+            log_prior_vals + (1.0 - beta) * old_log_like + beta * new_log_like
+        )
+
+        if particles.ndim == 1:
+            return np.array(posterior[0], ndmin=1)
+        return posterior
 
 
 def posterior_summary(state: ParticleState) -> tuple[np.ndarray, np.ndarray]:
@@ -201,10 +411,14 @@ def logging_str_fn(state: ParticleState, context: StepContext) -> str:
     )
 
 
-class ExpandComponents(SMCStep):
+class ExpandComponents(TransformationStep):
     """Increase the mixture order between outer SMC iterations."""
 
-    def __init__(self, target_components: int):
+    def __init__(self, target_components: int, posterior: TemperedPosterior):
+        super().__init__(
+            transformation=GMMExpansionTransformation(),
+            posterior=posterior,
+        )
         self._target_components = target_components
 
     def apply(
@@ -215,7 +429,6 @@ class ExpandComponents(SMCStep):
     ) -> ParticleState:
         current_components = int(context.metadata["active_components"])
 
-        # The first outer iteration should sample the initial 1-component model.
         if context.t == 0:
             return state
 
@@ -223,32 +436,7 @@ class ExpandComponents(SMCStep):
             context.request_stop()
             return state
 
-        new_block = component_sampler(state, context=context, rng=rng)
-
-        particles = np.asarray(state.particles)
-        if particles.ndim == 1:
-            particles = particles[:, np.newaxis]
-
-        existing_logits = particles[:, :current_components]
-        existing_means = particles[:, current_components:]
-        new_logits = new_block[:, 0:1]
-        new_means = new_block[:, 1:2]
-
-        logits = np.concatenate([existing_logits, new_logits], axis=1)
-        means = np.concatenate([existing_means, new_means], axis=1)
-        reordered = np.concatenate([logits, means], axis=1)
-
-        next_components = current_components + 1
-        metadata = dict(state.metadata)
-        metadata["active_components"] = next_components
-        metadata["temperature"] = 0.0
-        metadata.pop("temperature_delta", None)
-
-        context.metadata["active_components"] = next_components
-        context.metadata["temperature"] = 0.0
-        context.metadata["temperature_delta"] = 0.0
-
-        return state.with_updates(particles=reordered, metadata=metadata)
+        return super().apply(state, context, rng)
 
 
 def main() -> None:
@@ -267,7 +455,7 @@ def main() -> None:
         rng=rng,
     )
 
-    n_particles = 1000
+    n_particles = 500
     mean_bounds = (
         observations.min() - 3.0 * component_std,
         observations.max() + 3.0 * component_std,
@@ -290,7 +478,7 @@ def main() -> None:
 
     target_components = 6
 
-    posterior = TemperedPosterior(
+    posterior = GMMTemperedPosterior(
         log_prior=log_prior,
         log_likelihood=gmm_log_likelihood,
     )
@@ -299,12 +487,12 @@ def main() -> None:
         steps=[
             AdaptiveTemperedWeighting(
                 posterior,
-                target_ess_ratio=0.7,
+                target_ess_ratio=0.6,
                 max_temperature=1.0,
                 min_delta=1e-8,
             ),
             SystematicResampling(always_resample=True),
-            MiniPCNMutation(posterior, n_steps=50),
+            MiniPCNMutation(posterior, n_steps=10),
             LoggingStep(logging_str_fn),
         ]
     )
@@ -319,11 +507,10 @@ def main() -> None:
 
     outer_runner = SequentialMonteCarlo(
         steps=[
-            ExpandComponents(target_components),
+            ExpandComponents(target_components, posterior),
             NestedSMCStep(
                 inner_runner,
                 posterior=posterior,
-                evidence_mode="incremental",
                 record_outputs=True,
                 output_key="inner_results",
             ),

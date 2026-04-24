@@ -64,10 +64,10 @@ def main() -> None:
         auto_normalize=True,
     )
 
-    shared_context = {}
-    # Add prior bounds to the shared context
-    shared_context["lower_bound"] = lower_bound
-    shared_context["upper_bound"] = upper_bound
+    shared_context = dict(
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
 
     result = smc.run(
         initial_state,
