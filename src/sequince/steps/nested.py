@@ -37,7 +37,34 @@ class NestedSMCStep(SMCStep):
         self,
         context: StepContext,
     ) -> Callable[..., Any] | None:
-        return getattr(self.posterior, "log_proposal", None)
+        base_log_proposal = getattr(self.posterior, "log_proposal", None)
+        transformation = context.metadata.get("smc_transformation")
+        if base_log_proposal is None or transformation is None:
+            return base_log_proposal
+
+        def _transformed_log_proposal(
+            particles,
+            inner_context,
+        ):
+            old_particles = transformation.inverse(particles, inner_context)
+            values = _call_with_optional_context(
+                base_log_proposal,
+                (old_particles,),
+                inner_context,
+            )
+            values = values + _call_with_optional_context(
+                transformation.log_auxiliary_density,
+                (particles,),
+                inner_context,
+            )
+            values = values - _call_with_optional_context(
+                transformation.log_jacobian,
+                (particles,),
+                inner_context,
+            )
+            return values
+
+        return _transformed_log_proposal
 
     def make_output_log_proposal(
         self,
@@ -79,40 +106,3 @@ class NestedSMCStep(SMCStep):
         if self.record_outputs:
             context.record_output(self.output_key, result)
         return result.final_state
-
-
-class TransDimensionalNestedSMCStep(NestedSMCStep):
-    """Nested SMC step that accounts for an outer SMC transformation."""
-
-    def make_input_log_proposal(
-        self,
-        context: StepContext,
-    ) -> Callable[..., Any] | None:
-        base_log_proposal = getattr(self.posterior, "log_proposal", None)
-        transformation = context.metadata.get("smc_transformation")
-        if base_log_proposal is None or transformation is None:
-            return base_log_proposal
-
-        def _transformed_log_proposal(
-            particles,
-            inner_context,
-        ):
-            old_particles = transformation.inverse(particles, inner_context)
-            values = _call_with_optional_context(
-                base_log_proposal,
-                (old_particles,),
-                inner_context,
-            )
-            values = values + _call_with_optional_context(
-                transformation.log_auxiliary_density,
-                (particles,),
-                inner_context,
-            )
-            values = values - _call_with_optional_context(
-                transformation.log_jacobian,
-                (particles,),
-                inner_context,
-            )
-            return values
-
-        return _transformed_log_proposal

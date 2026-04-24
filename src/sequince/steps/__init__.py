@@ -2,18 +2,20 @@
 
 from .base import StepContext
 from .control import ContinueWhile
-from .dimensionality import (
-    ExpandDimensions,
-    SMCTransformation,
-)
 from .log import LoggingStep
 from .mutation import EmceeMutation, MiniPCNMutation
-from .nested import NestedSMCStep, TransDimensionalNestedSMCStep
+from .nested import NestedSMCStep
 from .proposal import AdaptGaussianProposal
 from .resampling import (
     MultinomialResampling,
     StratifiedResampling,
     SystematicResampling,
+)
+from .transformations import (
+    ExpandDimensions,
+    MetadataTransformation,
+    SMCTransformation,
+    TransformationStep,
 )
 from .waste_free import WasteFreeResampleMove
 from .weighting import (
@@ -27,11 +29,12 @@ __all__ = [
     "StepContext",
     "ContinueWhile",
     "ExpandDimensions",
+    "MetadataTransformation",
     "SMCTransformation",
+    "TransformationStep",
     "EmceeMutation",
     "MiniPCNMutation",
     "NestedSMCStep",
-    "TransDimensionalNestedSMCStep",
     "AdaptGaussianProposal",
     "MultinomialResampling",
     "StratifiedResampling",

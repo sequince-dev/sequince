@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from .._array_api import asarray, namespace
 from .base import SMCStep, StepContext
@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MetadataUpdateFn = Callable[
+    ["ParticleState", StepContext, "ArrayRNG"],
+    dict[str, Any] | None,
+]
+
 
 @dataclass
 class SMCTransformation:
@@ -26,14 +31,14 @@ class SMCTransformation:
         context: StepContext,
         rng: "ArrayRNG",
     ) -> "ParticleState":
-        raise NotImplementedError
+        return state
 
     def inverse(
         self,
         particles: "Array",
         context: StepContext,
     ) -> "Array":
-        raise NotImplementedError
+        return particles
 
     def log_auxiliary_density(
         self,
@@ -54,7 +59,55 @@ class SMCTransformation:
         return xp.zeros(arr.shape[0], dtype=arr.dtype)
 
 
-class ExpandDimensions(SMCStep):
+@dataclass
+class MetadataTransformation(SMCTransformation):
+    """Same-space transformation that only updates metadata."""
+
+    state_metadata_fn: MetadataUpdateFn | None = None
+    context_metadata_fn: MetadataUpdateFn | None = None
+
+    def forward(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "ArrayRNG",
+    ) -> "ParticleState":
+        state_metadata = dict(state.metadata)
+        if self.state_metadata_fn is not None:
+            state_updates = self.state_metadata_fn(state, context, rng) or {}
+            state_metadata.update(state_updates)
+        if self.context_metadata_fn is not None:
+            context_updates = (
+                self.context_metadata_fn(state, context, rng) or {}
+            )
+            context.metadata.update(context_updates)
+        return state.with_updates(metadata=state_metadata)
+
+
+class TransformationStep(SMCStep):
+    """Apply a general SMC transformation and expose it to later steps."""
+
+    def __init__(
+        self,
+        transformation: SMCTransformation,
+        *,
+        transformation_key: str = "smc_transformation",
+    ):
+        self._transformation = transformation
+        self._transformation_key = transformation_key
+
+    def apply(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "ArrayRNG",
+    ) -> "ParticleState":
+        transformed_state = self._transformation.forward(state, context, rng)
+        context.metadata[self._transformation_key] = self._transformation
+        return transformed_state
+
+
+class ExpandDimensions(TransformationStep):
     """Apply an SMC transformation that increases the particle dimension."""
 
     def __init__(
@@ -63,10 +116,18 @@ class ExpandDimensions(SMCStep):
         *,
         expected_block_size: int | None = None,
         metadata_key: str = "dimensions",
+        added_dimensions_key: str = "added_dimensions",
+        dimension_delta_key: str = "last_dimension_delta",
+        transformation_key: str = "smc_transformation",
     ):
-        self._transformation = transformation
+        super().__init__(
+            transformation,
+            transformation_key=transformation_key,
+        )
         self._expected_block_size = expected_block_size
         self._metadata_key = metadata_key
+        self._added_dimensions_key = added_dimensions_key
+        self._dimension_delta_key = dimension_delta_key
 
     def apply(
         self,
@@ -81,7 +142,7 @@ class ExpandDimensions(SMCStep):
                 current_particles, (current_particles.shape[0], 1)
             )
 
-        expanded_state = self._transformation.forward(state, context, rng)
+        expanded_state = super().apply(state, context, rng)
         expanded_particles = asarray(expanded_state.particles, xp=xp)
         if expanded_particles.ndim == 1:
             expanded_particles = xp.reshape(
@@ -111,13 +172,16 @@ class ExpandDimensions(SMCStep):
         total_dims = expanded_particles.shape[1]
         state_metadata = dict(expanded_state.metadata)
         state_metadata[self._metadata_key] = total_dims
+        state_metadata[self._added_dimensions_key] = state_metadata.get(
+            self._added_dimensions_key, 0
+        ) + max(delta, 0)
+        state_metadata[self._dimension_delta_key] = delta
 
         context.metadata[self._metadata_key] = total_dims
-        context.metadata["added_dimensions"] = context.metadata.get(
-            "added_dimensions", 0
+        context.metadata[self._added_dimensions_key] = context.metadata.get(
+            self._added_dimensions_key, 0
         ) + max(delta, 0)
-        context.metadata["last_dimension_delta"] = delta
-        context.metadata["smc_transformation"] = self._transformation
+        context.metadata[self._dimension_delta_key] = delta
 
         logger.info(
             "ExpandDimensions changed dimensionality by %d (total=%d).",
