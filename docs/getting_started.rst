@@ -33,7 +33,7 @@ the usage demonstrated in the README
     def log_likelihood(theta):
         ...
 
-    smc, posterior, meta_data = make_standard_bayesian_smc(
+    smc, posterior, metadata = make_standard_bayesian_smc(
         log_prior,
         log_likelihood,
     )
@@ -52,7 +52,7 @@ the usage demonstrated in the README
         initial_state,
         rng=np.random.default_rng(),
         shared_context=shared_context,
-        meta_data=meta_data,
+        metadata=metadata,
     )
     samples = results.posterior_samples(1_000)
 
@@ -63,9 +63,9 @@ and swap in different building blocks.
 Meta data & shared context
 --------------------------
 
-The ``meta_data`` dictionary is intended to hold information that needs to be
+The ``metadata`` dictionary is intended to hold information that needs to be
 passed between steps in the SMC loop. It can be updated at each step.
 
-The ``shared_context`` dictionary is intended to hold information that needs to be
+The ``shared`` dictionary is intended to hold information that needs to be
 passed between steps in the SMC loop, but is not intended to be updated. For example,
 it can be used to store static data that is needed by the likelihood function.
