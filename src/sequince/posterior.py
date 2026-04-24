@@ -63,6 +63,15 @@ class TemperedPosterior:
     log_likelihood: ArrayLikeFn
     log_proposal: ArrayLikeFn | None = None
 
+    def resolve_log_proposal(
+        self,
+        log_proposal_override: ArrayLikeFn | None = None,
+    ) -> ArrayLikeFn | None:
+        """Return the effective proposal callable for the current evaluation."""
+        if log_proposal_override is not None:
+            return log_proposal_override
+        return self.log_proposal
+
     def log_increment(
         self,
         particles: Array,
@@ -72,11 +81,7 @@ class TemperedPosterior:
     ) -> float | Any:
         """Return the log-weight increment required by the tempering step."""
         log_like = _evaluate(self.log_likelihood, particles, context)
-        log_proposal = (
-            log_proposal_override
-            if log_proposal_override is not None
-            else self.log_proposal
-        )
+        log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             if particles.ndim == 1:
                 return float(log_like[0])
@@ -99,11 +104,7 @@ class TemperedPosterior:
         beta = float(context.metadata.get("temperature", 0.0))
         log_prior = _evaluate(self.log_prior, particles, context)
         log_like = _evaluate(self.log_likelihood, particles, context)
-        log_proposal = (
-            log_proposal_override
-            if log_proposal_override is not None
-            else self.log_proposal
-        )
+        log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             posterior = log_prior + beta * log_like
         else:
@@ -127,11 +128,7 @@ class TemperedPosterior:
         )
         log_prior = self.log_prior
         log_likelihood = self.log_likelihood
-        log_proposal = (
-            log_proposal_override
-            if log_proposal_override is not None
-            else self.log_proposal
-        )
+        log_proposal = self.resolve_log_proposal(log_proposal_override)
 
         def _frozen_log_prob(particles):
             beta = float(frozen_context.metadata.get("temperature", 0.0))
