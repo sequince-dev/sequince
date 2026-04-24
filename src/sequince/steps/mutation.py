@@ -59,7 +59,22 @@ class MutationStep(SMCStep):
     ):
         super().__init__()
         if hasattr(log_prob_fn, "log_prob"):
-            self._log_prob_fn = cast(LogProbFn, log_prob_fn.log_prob)
+            posterior = log_prob_fn
+
+            def _wrapped_log_prob(
+                particles: Array,
+                context: StepContext,
+            ) -> Array | float:
+                log_proposal_override = context.metadata.get(
+                    "log_proposal_override"
+                )
+                return posterior.log_prob(
+                    particles,
+                    context,
+                    log_proposal_override=log_proposal_override,
+                )
+
+            self._log_prob_fn = cast(LogProbFn, _wrapped_log_prob)
         else:
             self._log_prob_fn = cast(LogProbFn, log_prob_fn)
         self._transform = transform

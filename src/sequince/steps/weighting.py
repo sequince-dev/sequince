@@ -62,8 +62,15 @@ def _resolve_increment_fn(
         posterior = increment  # type: ignore[assignment]
 
         def _wrapped(particles: Array, context: StepContext) -> Array | float:
+            log_proposal_override = context.metadata.get(
+                "log_proposal_override"
+            )
             # type: ignore[attr-defined]
-            return posterior.log_increment(particles, context)  # type: ignore[union-attr]
+            return posterior.log_increment(  # type: ignore[union-attr]
+                particles,
+                context,
+                log_proposal_override=log_proposal_override,
+            )
 
         return _wrapped
     if callable(increment):

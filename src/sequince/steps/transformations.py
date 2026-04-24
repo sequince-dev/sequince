@@ -5,12 +5,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from .._array_api import asarray, namespace
-from .base import SMCStep, StepContext
+from ..utils import _call_with_optional_context
+from .base import SMCStep
+from .context import (
+    LOG_PROPOSAL_OVERRIDE_KEY,
+    SMC_TRANSFORMATION_KEY,
+    StepContext,
+)
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
 
     from .._typing import Array
+    from ..posterior import TemperedPosterior
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
@@ -91,10 +98,14 @@ class TransformationStep(SMCStep):
         self,
         transformation: SMCTransformation,
         *,
-        transformation_key: str = "smc_transformation",
+        posterior: "TemperedPosterior | None" = None,
+        transformation_key: str = SMC_TRANSFORMATION_KEY,
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         self._transformation = transformation
+        self._posterior = posterior
         self._transformation_key = transformation_key
+        self._log_proposal_override_key = log_proposal_override_key
 
     def apply(
         self,
@@ -104,6 +115,41 @@ class TransformationStep(SMCStep):
     ) -> "ParticleState":
         transformed_state = self._transformation.forward(state, context, rng)
         context.metadata[self._transformation_key] = self._transformation
+        if self._posterior is not None:
+            base_log_proposal = context.metadata.get(
+                self._log_proposal_override_key,
+                self._posterior.log_proposal,
+            )
+            if base_log_proposal is not None:
+                transformation = self._transformation
+
+                def _transformed_log_proposal(
+                    particles,
+                    inner_context,
+                ):
+                    old_particles = transformation.inverse(
+                        particles, inner_context
+                    )
+                    values = _call_with_optional_context(
+                        transformation.log_auxiliary_density,
+                        (particles,),
+                        inner_context,
+                    )
+                    base_values = _call_with_optional_context(
+                        base_log_proposal,
+                        (old_particles,),
+                        inner_context,
+                    )
+                    jacobian = _call_with_optional_context(
+                        transformation.log_jacobian,
+                        (particles,),
+                        inner_context,
+                    )
+                    return base_values + values - jacobian
+
+                context.metadata[self._log_proposal_override_key] = (
+                    _transformed_log_proposal
+                )
         return transformed_state
 
 
@@ -118,11 +164,15 @@ class ExpandDimensions(TransformationStep):
         metadata_key: str = "dimensions",
         added_dimensions_key: str = "added_dimensions",
         dimension_delta_key: str = "last_dimension_delta",
-        transformation_key: str = "smc_transformation",
+        posterior: "TemperedPosterior | None" = None,
+        transformation_key: str = SMC_TRANSFORMATION_KEY,
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__(
             transformation,
+            posterior=posterior,
             transformation_key=transformation_key,
+            log_proposal_override_key=log_proposal_override_key,
         )
         self._expected_block_size = expected_block_size
         self._metadata_key = metadata_key

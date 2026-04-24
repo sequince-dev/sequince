@@ -1,6 +1,10 @@
 """Composable SMC steps."""
 
-from .base import StepContext
+from .context import (
+    LOG_PROPOSAL_OVERRIDE_KEY,
+    SMC_TRANSFORMATION_KEY,
+    StepContext,
+)
 from .control import ContinueWhile
 from .log import LoggingStep
 from .mutation import EmceeMutation, MiniPCNMutation
@@ -27,6 +31,8 @@ from .weighting import (
 
 __all__ = [
     "StepContext",
+    "LOG_PROPOSAL_OVERRIDE_KEY",
+    "SMC_TRANSFORMATION_KEY",
     "ContinueWhile",
     "ExpandDimensions",
     "MetadataTransformation",
