@@ -159,7 +159,7 @@ def make_standard_bayesian_smc(
             current_temp = context.metadata.get("temperature", 0.0)
             return (
                 f"SMC iteration {context.t}: "
-                f"Temperature={current_temp:.4f}, "
+                f"Temperature={current_temp:.2e}, "
                 f"Log Evidence={state.log_evidence:.2f}, "
             )
 
