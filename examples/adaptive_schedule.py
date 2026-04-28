@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from sequince import ParticleState
-from sequince.logging_utils import configure_logging
+from sequince.log import configure_logging
 from sequince.posterior import draw_additional_samples
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 
