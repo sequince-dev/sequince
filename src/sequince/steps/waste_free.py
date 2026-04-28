@@ -73,7 +73,22 @@ class WasteFreeResampleMove(SMCStep):
         proposals_per_particle: int = 1,
     ):
         if hasattr(log_prob_fn, "log_prob"):
-            self._log_prob_fn = log_prob_fn.log_prob  # type: ignore[assignment, union-attr]
+            posterior = log_prob_fn
+
+            def _wrapped_log_prob(
+                particles: Array,
+                context: StepContext,
+            ) -> Any:
+                log_proposal_override = context.metadata.get(
+                    "log_proposal_override"
+                )
+                return posterior.log_prob(
+                    particles,
+                    context,
+                    log_proposal_override=log_proposal_override,
+                )
+
+            self._log_prob_fn = _wrapped_log_prob
         else:
             self._log_prob_fn = log_prob_fn
         if hasattr(proposal, "sample") and hasattr(proposal, "log_density"):
@@ -219,14 +234,16 @@ class WasteFreeResampleMove(SMCStep):
         metadata["waste_free_selected_proposals_by_round"] = proposal_counts
         metadata["waste_free_proposal_repeats"] = self._n_proposals
 
-        context.shared["waste_free_acceptance"] = metadata[
+        context.metadata["waste_free_acceptance"] = metadata[
             "waste_free_acceptance"
         ]
-        context.shared["waste_free_acceptance_by_round"] = acceptance_by_round
-        context.shared["waste_free_selected_proposals"] = metadata[
+        context.metadata["waste_free_acceptance_by_round"] = (
+            acceptance_by_round
+        )
+        context.metadata["waste_free_selected_proposals"] = metadata[
             "waste_free_selected_proposals"
         ]
-        context.shared["waste_free_total_proposals"] = n * self._n_proposals
+        context.metadata["waste_free_total_proposals"] = n * self._n_proposals
 
         log_weights = np.full(n, -np.log(n), dtype=float)
         return state.with_updates(

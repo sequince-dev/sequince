@@ -1,14 +1,25 @@
 """Composable SMC steps."""
 
+from .context import (
+    LOG_PROPOSAL_OVERRIDE_KEY,
+    SMC_TRANSFORMATION_KEY,
+    StepContext,
+)
 from .control import ContinueWhile
-from .dimensionality import DimensionalityExpansion
 from .log import LoggingStep
 from .mutation import EmceeMutation, MiniPCNMutation
+from .nested import NestedSMCStep
 from .proposal import AdaptGaussianProposal
 from .resampling import (
     MultinomialResampling,
     StratifiedResampling,
     SystematicResampling,
+)
+from .transformations import (
+    ExpandDimensions,
+    MetadataTransformation,
+    SMCTransformation,
+    TransformationStep,
 )
 from .waste_free import WasteFreeResampleMove
 from .weighting import (
@@ -19,10 +30,17 @@ from .weighting import (
 )
 
 __all__ = [
+    "StepContext",
+    "LOG_PROPOSAL_OVERRIDE_KEY",
+    "SMC_TRANSFORMATION_KEY",
     "ContinueWhile",
-    "DimensionalityExpansion",
+    "ExpandDimensions",
+    "MetadataTransformation",
+    "SMCTransformation",
+    "TransformationStep",
     "EmceeMutation",
     "MiniPCNMutation",
+    "NestedSMCStep",
     "AdaptGaussianProposal",
     "MultinomialResampling",
     "StratifiedResampling",

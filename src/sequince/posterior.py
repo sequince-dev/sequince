@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -8,6 +9,7 @@ from sequince.transforms import ParticleTransform, get_prebuilt_transform
 from ._array_api import asarray, full, namespace
 from ._typing import Array
 from .state import ParticleState
+from .steps.context import StepContext
 from .utils import _call_with_optional_context
 
 if TYPE_CHECKING:
@@ -15,7 +17,7 @@ if TYPE_CHECKING:
 
     from ._typing import MutationStrategy
     from .result import SMCResult
-    from .steps.base import StepContext
+    from .steps.context import StepContext
 
 ArrayLikeFn = Callable[..., Array | float]
 
@@ -61,19 +63,31 @@ class TemperedPosterior:
     log_likelihood: ArrayLikeFn
     log_proposal: ArrayLikeFn | None = None
 
+    def resolve_log_proposal(
+        self,
+        log_proposal_override: ArrayLikeFn | None = None,
+    ) -> ArrayLikeFn | None:
+        """Return the effective proposal callable for the current evaluation."""
+        if log_proposal_override is not None:
+            return log_proposal_override
+        return self.log_proposal
+
     def log_increment(
         self,
         particles: Array,
         context: "StepContext",
+        *,
+        log_proposal_override: ArrayLikeFn | None = None,
     ) -> float | Any:
         """Return the log-weight increment required by the tempering step."""
         log_like = _evaluate(self.log_likelihood, particles, context)
-        if self.log_proposal is None:
+        log_proposal = self.resolve_log_proposal(log_proposal_override)
+        if log_proposal is None:
             if particles.ndim == 1:
                 return float(log_like[0])
             return log_like
         log_prior = _evaluate(self.log_prior, particles, context)
-        log_prop = _evaluate(self.log_proposal, particles, context)
+        log_prop = _evaluate(log_proposal, particles, context)
         bridge = log_prior + log_like - log_prop
         if particles.ndim == 1:
             return float(bridge[0])
@@ -83,19 +97,63 @@ class TemperedPosterior:
         self,
         particles: Array,
         context: "StepContext",
+        *,
+        log_proposal_override: ArrayLikeFn | None = None,
     ) -> float | Any:
         """Return the tempered log posterior evaluated at the current β."""
-        beta = float(context.shared.get("temperature", 0.0))
+        beta = float(context.metadata.get("temperature", 0.0))
         log_prior = _evaluate(self.log_prior, particles, context)
         log_like = _evaluate(self.log_likelihood, particles, context)
-        if self.log_proposal is None:
+        log_proposal = self.resolve_log_proposal(log_proposal_override)
+        if log_proposal is None:
             posterior = log_prior + beta * log_like
         else:
-            log_prop = _evaluate(self.log_proposal, particles, context)
+            log_prop = _evaluate(log_proposal, particles, context)
             posterior = (1.0 - beta) * log_prop + beta * (log_prior + log_like)
         if particles.ndim == 1:
             return float(posterior[0])
         return posterior
+
+    def freeze_log_prob(
+        self,
+        context: StepContext,
+        *,
+        log_proposal_override: ArrayLikeFn | None = None,
+    ):
+        frozen_context = StepContext(
+            t=context.t,
+            observation=context.observation,
+            shared=copy.deepcopy(dict(context.shared)),
+            metadata=copy.deepcopy(dict(context.metadata)),
+        )
+        log_prior = self.log_prior
+        log_likelihood = self.log_likelihood
+        log_proposal = self.resolve_log_proposal(log_proposal_override)
+
+        def _frozen_log_prob(particles):
+            beta = float(frozen_context.metadata.get("temperature", 0.0))
+            frozen_log_prior = _evaluate(log_prior, particles, frozen_context)
+            frozen_log_like = _evaluate(
+                log_likelihood,
+                particles,
+                frozen_context,
+            )
+            if log_proposal is None:
+                posterior = frozen_log_prior + beta * frozen_log_like
+            else:
+                frozen_log_prop = _evaluate(
+                    log_proposal,
+                    particles,
+                    frozen_context,
+                )
+                posterior = (1.0 - beta) * frozen_log_prop + beta * (
+                    frozen_log_prior + frozen_log_like
+                )
+            if particles.ndim == 1:
+                return float(posterior[0])
+            return posterior
+
+        return _frozen_log_prob
 
 
 def draw_additional_samples(

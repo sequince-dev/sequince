@@ -11,7 +11,8 @@ from numpy.random import Generator as NumPyGenerator
 from ._array_api import asarray, namespace, to_numpy
 from ._typing import Array
 from .state import ParticleState
-from .utils import _ensure_rng
+from .steps.nested import NESTED_SMC_OUTPUT_KEY
+from .utils import resolve_rng
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -28,6 +29,15 @@ def _as_2d(array: Any) -> Any:
     return arr
 
 
+def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
+    if ax is not None:
+        return ax
+    import matplotlib.pyplot as plt  # Imported lazily to avoid hard dependency at import time.
+
+    _, ax = plt.subplots(**subplot_kwargs)
+    return ax
+
+
 @dataclass(frozen=True)
 class SMCResult:
     """Lightweight container exposing diagnostics for a completed SMC run."""
@@ -39,20 +49,23 @@ class SMCResult:
         if not self.states:
             raise ValueError("SMCResults requires at least one ParticleState.")
 
-    @staticmethod
-    def _prepare_axis(ax: Any, **subplot_kwargs) -> Any:
-        if ax is not None:
-            return ax
-        import matplotlib.pyplot as plt  # Imported lazily to avoid hard dependency at import time.
-
-        _, ax = plt.subplots(**subplot_kwargs)
-        return ax
-
     def __len__(self) -> int:
         return len(self.states)
 
     def __getitem__(self, index: int) -> ParticleState:
         return self.states[index]
+
+    def get_nested_results(
+        self,
+        key: str = NESTED_SMC_OUTPUT_KEY,
+    ) -> NestedSMCResult | None:
+        """Return a NestedSMCResult if the specified key is present in the
+        context outputs.
+        """
+        nested_results = self.context.outputs.get(key)
+        if nested_results is not None:
+            return NestedSMCResult(results=nested_results)
+        return None
 
     @property
     def final_state(self) -> ParticleState:
@@ -128,7 +141,7 @@ class SMCResult:
             return _as_2d(self.final_state.particles)
         if n_samples <= 0:
             raise ValueError("n_samples must be positive.")
-        rng_obj: ArrayRNG = _ensure_rng(rng)
+        rng_obj: ArrayRNG = resolve_rng(rng)
         final_state = self.final_state
         particles = _as_2d(final_state.particles)
         xp = namespace(particles, final_state.weights)
@@ -207,7 +220,7 @@ class SMCResult:
         """Plot the log evidence trajectory."""
         x = to_numpy(range(len(self)))
         y = to_numpy(self.log_evidence_history())
-        axis = self._prepare_axis(ax)
+        axis = _prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
         if label_axes:
             axis.set_xlabel("Iteration")
@@ -233,7 +246,7 @@ class SMCResult:
             y = to_numpy(self.effective_sample_sizes())
             ylabel = "ESS"
             title = "Effective sample size"
-        axis = self._prepare_axis(ax)
+        axis = _prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
         if label_axes:
             axis.set_xlabel("Iteration")
@@ -253,7 +266,7 @@ class SMCResult:
         """Plot the evolution of a metadata entry stored in each state."""
         x = to_numpy(range(len(self)))
         y = to_numpy(self.metadata_history(key, default=default))
-        axis = self._prepare_axis(ax)
+        axis = _prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
         if label_axes:
             axis.set_xlabel("Iteration")
@@ -401,7 +414,7 @@ class SMCResult:
 
         assert len(parameter_inds) == len(parameter_labels)
 
-        axis = self._prepare_axis(
+        axis = _prepare_axis(
             ax,
             nrows=len(parameter_inds),
             figsize=(5, 3 * len(parameter_inds)),
@@ -437,3 +450,114 @@ class SMCResult:
             plt.close()
         else:
             return ax.get_figure()
+
+
+@dataclass(frozen=True)
+class NestedSMCResult:
+    """Aggregate results from a SMC run with a nested SMC step."""
+
+    results: Sequence[SMCResult]
+
+    def __post_init__(self) -> None:
+        if not self.results:
+            raise ValueError(
+                "NestedSMCResult requires at least one nested step result."
+            )
+
+    def __len__(self) -> int:
+        return len(self.results)
+
+    def __getitem__(self, index: int) -> SMCResult:
+        return self.results[index]
+
+    @property
+    def final_result(self) -> SMCResult:
+        """Return the final meta-step result."""
+        return self.results[-1]
+
+    @property
+    def final_state(self) -> ParticleState:
+        """Return the final particle state from the last meta step."""
+        return self.final_result.final_state
+
+    @property
+    def all_states(self) -> list[ParticleState]:
+        """Flatten particle states across all meta steps in execution order."""
+        return [state for result in self.results for state in result.states]
+
+    def log_evidence_history(self) -> Array:
+        """Return the log evidence trajectory across all meta steps."""
+        reference = self.final_state.log_weights
+        xp = namespace(reference)
+        values = [float(state.log_evidence) for state in self.all_states]
+        return asarray(values, xp=xp, like=reference)
+
+    def plot_log_evidence(
+        self,
+        *,
+        ax: Any = None,
+        label_axes: bool = True,
+        cmap: str = "viridis",
+        **plot_kwargs: Any,
+    ) -> Any:
+        """Plot the log evidence trajectory across all meta steps."""
+        import matplotlib.pyplot as plt
+
+        axis = _prepare_axis(ax)
+        x0 = 0.0
+        colors = plt.get_cmap(cmap)(np.linspace(0, 1, len(self.results)))
+        for result, color in zip(self.results, colors):
+            x = np.arange(x0, x0 + len(result))
+            y = to_numpy(result.log_evidence_history())
+            axis.plot(x, y, color=color, **plot_kwargs)
+            x0 += len(result)
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel("Log evidence")
+            axis.set_title("Log evidence trajectory across meta steps")
+        return axis
+
+    def plot_metadata_history(
+        self,
+        key: str,
+        *,
+        ax: Any = None,
+        default: Any = math.nan,
+        label_axes: bool = True,
+        cmap: str = "viridis",
+        **plot_kwargs: Any,
+    ) -> Any:
+        """Plot metadata history across all meta steps."""
+        import matplotlib.pyplot as plt
+
+        axis = _prepare_axis(ax)
+        x0 = 0.0
+
+        colors = plt.get_cmap(cmap)(np.linspace(0, 1, len(self.results)))
+        for result, color in zip(self.results, colors):
+            x = np.arange(x0, x0 + len(result))
+            y = to_numpy(result.metadata_history(key, default=default))
+            axis.plot(x, y, color=color, **plot_kwargs)
+            x0 += len(result)
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel(key)
+            axis.set_title(f"Metadata '{key}' over iterations")
+        return axis
+
+    def summary(self) -> dict[str, Any]:
+        """Return a concise dictionary of high-level diagnostics."""
+        summary_dict: dict[str, Any] = {
+            "meta_steps": len(self.results),
+            "total_iterations": len(self.all_states),
+            "final_log_evidence": float(self.final_state.log_evidence),
+        }
+        try:
+            ess = float(self.final_state.effective_sample_size())
+            summary_dict["final_ess"] = ess
+            summary_dict["final_ess_ratio"] = float(
+                ess / self.final_state.particles.shape[0]
+            )
+        except Exception:
+            pass
+        return summary_dict

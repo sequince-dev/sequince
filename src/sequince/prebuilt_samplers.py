@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
-from ._typing import MutationStrategy
+from ._typing import MetaData, MutationStrategy
 from .posterior import TemperedPosterior
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
@@ -45,7 +45,7 @@ def make_standard_bayesian_smc(
         Callable[[ParticleState, StepContext, SMCResult], None]
     ]
     | None = None,
-) -> Tuple[SequentialMonteCarlo, TemperedPosterior, Dict[str, Any]]:
+) -> Tuple[SequentialMonteCarlo, TemperedPosterior, MetaData]:
     """Return a SequentialMonteCarlo instance configured with standard SMC steps.
 
     The returned sampler applies adaptive tempering, ESS-triggered resampling,
@@ -156,7 +156,7 @@ def make_standard_bayesian_smc(
     if logging_frequency > 0:
 
         def logging_fn(state: ParticleState, context: StepContext) -> str:
-            current_temp = context.shared.get("temperature", 0.0)
+            current_temp = context.metadata.get("temperature", 0.0)
             return (
                 f"SMC iteration {context.t}: "
                 f"Temperature={current_temp:.4f}, "
@@ -172,10 +172,8 @@ def make_standard_bayesian_smc(
         steps=steps, callbacks=callbacks, auto_normalize=auto_normalize
     )
 
-    shared_context: Dict[str, Any] = {
-        "temperature": 0.0,
-        "temperature_delta": 0.0,
-        "max_temperature": max_temperature,
-    }
+    meta_data = dict(
+        max_temperature=max_temperature,
+    )
 
-    return sampler, posterior, shared_context
+    return sampler, posterior, meta_data

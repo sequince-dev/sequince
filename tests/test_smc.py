@@ -106,15 +106,13 @@ def test_smc_with_adaptive_tempering_stops_at_max_temperature(
     )
 
     initial_state = particle_state.with_updates(metadata={"temperature": 0.0})
-    shared_context = {"temperature": 0.0}
+    metadata = {"temperature": 0.0}
 
     smc = SequentialMonteCarlo(steps=[adaptive])
-    states = smc.run(
-        initial_state, num_steps=None, rng=rng, shared_context=shared_context
-    )
+    states = smc.run(initial_state, num_steps=None, rng=rng, metadata=metadata)
 
     assert states[-1].metadata["temperature"] == pytest.approx(0.5, abs=1e-6)
-    assert shared_context["temperature"] == pytest.approx(
+    assert metadata["temperature"] == pytest.approx(
         states[-1].metadata["temperature"]
     )
 

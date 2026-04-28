@@ -41,13 +41,51 @@ class ContinueWhile(SMCStep):
         rng: "ArrayRNG",
     ) -> "ParticleState":
         if self._predicate(state, context):
-            context.stop_requested = False
+            context.metadata["stop_requested"] = False
             logger.debug(
                 "ContinueWhile cleared stop flag at iteration %d.", context.t
             )
         else:
             logger.debug(
                 "ContinueWhile left stop flag set at iteration %d.", context.t
+            )
+        return state
+
+
+class StopIf(SMCStep):
+    """Request the SMC loop to stop when a predicate holds.
+
+    This step sets a stop request flag in the context when the supplied predicate
+    evaluates to ``True`` for the current ``ParticleState`` and ``StepContext``.
+    When the predicate returns ``False`` the stop flag remains untouched, allowing
+    the run to continue.
+
+    Parameters
+    ----------
+    predicate:
+        A callable receiving the current ``ParticleState`` and ``StepContext``
+        and returning a boolean indicating whether to request stopping the SMC
+        loop.
+    """
+
+    def __init__(
+        self,
+        predicate: Callable[["ParticleState", StepContext], bool],
+    ):
+        self._predicate = predicate
+
+    def apply(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "ArrayRNG",
+    ) -> "ParticleState":
+        if self._predicate(state, context):
+            context.metadata["stop_requested"] = True
+            logger.debug("StopIf set stop flag at iteration %d.", context.t)
+        else:
+            logger.debug(
+                "StopIf left stop flag cleared at iteration %d.", context.t
             )
         return state
 

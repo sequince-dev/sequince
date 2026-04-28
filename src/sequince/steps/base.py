@@ -1,28 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, MutableMapping
+from typing import TYPE_CHECKING
 
-from ..utils import _ensure_rng
+from ..utils import resolve_rng
+from .context import StepContext
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
 
     from ..state import ParticleState
-
-
-@dataclass
-class StepContext:
-    """Runtime context passed to each SMC step."""
-
-    t: int
-    observation: Any = None
-    shared: MutableMapping[str, Any] = field(default_factory=dict)
-    stop_requested: bool = False
-
-    def request_stop(self) -> None:
-        """Signal that the SMC runner should halt after this iteration."""
-        self.stop_requested = True
 
 
 class SMCStep:
@@ -34,7 +20,7 @@ class SMCStep:
         context: StepContext,
         rng: "ArrayRNG" | int | None = None,
     ) -> "ParticleState":
-        return self.apply(state, context, _ensure_rng(rng))
+        return self.apply(state, context, resolve_rng(rng))
 
     def apply(
         self,

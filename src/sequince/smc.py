@@ -7,6 +7,7 @@ from typing import (
     Callable,
     Iterable,
     List,
+    Mapping,
     MutableMapping,
     Sequence,
 )
@@ -14,7 +15,7 @@ from typing import (
 from .result import SMCResult
 from .state import ParticleState
 from .steps.base import StepContext
-from .utils import _ensure_rng
+from .utils import resolve_rng
 
 if TYPE_CHECKING:
     import numpy as np
@@ -35,6 +36,11 @@ class SequentialMonteCarlo:
         A sequence of callables implementing SMC steps.  Each callable should accept
         three arguments: the current ``ParticleState``, the current ``StepContext``,
         and an ``orng.ArrayRNG`` instance, and return a new ``ParticleState``.
+    callbacks:
+        Optional sequence of callables that will be invoked at the end of each iteration
+        with the current state, context, and an ``SMCResult`` containing all states
+        produced so far.  Callbacks can be used for logging, diagnostics, or custom
+        stopping criteria that require access to the full history of states.
     auto_normalize:
         If ``True`` (default) automatically normalize the particle weights at the end
         of each iteration.
@@ -65,10 +71,41 @@ class SequentialMonteCarlo:
         observations: Iterable[Any] | None = None,
         num_steps: int | None = None,
         rng: "ArrayRNG" | np.random.Generator | int | None = None,
-        shared_context: MutableMapping[str, Any] | None = None,
+        shared_context: Mapping[str, Any] | None = None,
+        metadata: MutableMapping[str, Any] | None = None,
+        outputs: MutableMapping[str, Any] | None = None,
     ) -> SMCResult:
-        rng = _ensure_rng(rng)
+        """Run the SMC algorithm.
+
+        Parameters
+        ----------
+        initial_state:
+            Initial particle state to start the SMC run.
+        observations:
+            Optional iterable of observations to provide to each iteration via
+            the context. If not provided, the context observation will be
+            ``None`` for all iterations.
+        num_steps:
+            Optional maximum number of iterations to run. If not provided, the
+            SMC loop will continue until the observations are exhausted
+            (if provided) or indefinitely if not.
+        rng:
+            Optional random number generator or seed for reproducibility. If
+            not provided, a new RNG will be created.
+        shared_context:
+            Optional dictionary of shared context values that will be passed to
+            each step via the context. This can be used to provide global
+            information that steps may need access to.
+        metadata:
+            Optional mutable dictionary for storing metadata that can be used
+            for communication between steps and callbacks.
+        outputs:
+            Optional mutable dictionary for storing outputs from steps.
+        """
+        rng = resolve_rng(rng)
         shared_context = shared_context or {}
+        metadata = metadata or {}
+        outputs = outputs or {}
 
         logger.info(
             "Starting SMC run with %d steps (auto_normalize=%s)",
@@ -109,12 +146,23 @@ class SequentialMonteCarlo:
                 logger.debug("Iterations remaining: %d", steps_remaining)
 
             context = StepContext(
-                t=t, observation=observation, shared=shared_context
+                t=t,
+                observation=observation,
+                shared=shared_context,
+                metadata=metadata,
+                outputs=outputs,
             )
             for step in self._steps:
                 step_name = getattr(step, "__name__", step.__class__.__name__)
                 logger.debug("Iteration %d: applying step %s.", t, step_name)
                 state = step(state, context, rng)
+                if context.metadata["stop_requested"]:
+                    logger.info(
+                        "Stop requested by step %s at iteration %d; terminating SMC run.",
+                        step_name,
+                        t,
+                    )
+                    break
             if self._auto_normalize:
                 pre_log_evidence = state.log_evidence
                 state, _ = state.normalize()
@@ -139,7 +187,7 @@ class SequentialMonteCarlo:
                     SMCResult(states=produced_states, context=context),
                 )
 
-            if context.stop_requested:
+            if context.metadata["stop_requested"]:
                 logger.info(
                     "Stop requested after iteration %d; terminating SMC run.",
                     t,

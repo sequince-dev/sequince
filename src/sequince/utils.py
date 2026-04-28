@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 RNGLike: TypeAlias = ArrayRNG | np.random.Generator | int | None
 
 
-def _ensure_rng(
+def resolve_rng(
     rng: RNGLike = None,
     *,
     backend: str | None = None,

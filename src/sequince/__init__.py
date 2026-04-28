@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ParticleState",
     "SequentialMonteCarlo",
+    "MetaSequentialMonteCarlo",
     "SMCResult",
     "TemperedPosterior",
     "make_standard_bayesian_smc",

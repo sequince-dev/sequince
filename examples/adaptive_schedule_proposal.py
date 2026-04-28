@@ -6,9 +6,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
+from sequince.logging_utils import configure_logging
 from sequince.steps import (
     AdaptiveTemperedWeighting,
+    LoggingStep,
     MiniPCNMutation,
+    StepContext,
     SystematicResampling,
 )
 
@@ -44,8 +47,19 @@ def log_proposal(particles: np.ndarray, context) -> np.ndarray:
     ) - 0.5 * dims * np.log(2.0 * np.pi * proposal_sigma**2)
 
 
+def logging_fn(state: ParticleState, context: StepContext) -> str:
+    current_temp = context.metadata.get("temperature", 0.0)
+    return (
+        f"SMC iteration {context.t}: "
+        f"Temperature={current_temp:.4f}, "
+        f"Log-evidence={state.log_evidence:.3f}"
+    )
+
+
 def main() -> None:
     rng = np.random.default_rng(321)
+
+    configure_logging()
 
     dims = 2
     mu = np.zeros(dims)
@@ -77,6 +91,7 @@ def main() -> None:
             AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
             SystematicResampling(always_resample=True),
             MiniPCNMutation(posterior, n_steps=8),
+            LoggingStep(str_fn=logging_fn, frequency=1),
         ],
     )
 
@@ -90,7 +105,6 @@ def main() -> None:
             "prior_upper": prior_upper,
             "proposal_mean": proposal_mean,
             "proposal_sigma": proposal_sigma,
-            "temperature": 0.0,
         },
     )
 

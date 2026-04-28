@@ -62,8 +62,15 @@ def _resolve_increment_fn(
         posterior = increment  # type: ignore[assignment]
 
         def _wrapped(particles: Array, context: StepContext) -> Array | float:
+            log_proposal_override = context.metadata.get(
+                "log_proposal_override"
+            )
             # type: ignore[attr-defined]
-            return posterior.log_increment(particles, context)  # type: ignore[union-attr]
+            return posterior.log_increment(  # type: ignore[union-attr]
+                particles,
+                context,
+                log_proposal_override=log_proposal_override,
+            )
 
         return _wrapped
     if callable(increment):
@@ -119,7 +126,45 @@ class LogLikelihoodWeighting(SMCStep):
         return updated_state
 
 
-class TemperedWeighting(SMCStep):
+class BaseTemperedStep(SMCStep):
+    """Base class for tempered weighting steps.
+
+    This provides common functionality for tempering steps that apply log-weight
+    increments scaled by a temperature schedule (e.g. ``TemperedWeighting`` and
+    ``AdaptiveTemperedWeighting``). It does not implement the logic for determining
+    the temperature schedule itself, which is left to subclasses.
+    """
+
+    def __init__(
+        self,
+        log_increment_fn: IncrementFn | "TemperedPosterior",
+        *,
+        normalize_after: bool = True,
+    ):
+        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
+        self._normalize_after = normalize_after
+
+    def initialize_metadata(
+        self, state: ParticleState, context: StepContext
+    ) -> ParticleState:
+        """Initialize metadata related to tempering."""
+        if "temperature" not in context.metadata:
+            logger.debug("Initializing tempering metadata in context to 0.0.")
+            context.metadata["temperature"] = 0.0
+            state_metadata = dict(state.metadata)
+            state_metadata["temperature"] = 0.0
+            state = state.with_updates(metadata=state_metadata)
+        if "temperature_delta" not in context.metadata:
+            context.metadata["temperature_delta"] = 0.0
+        return state
+
+    def apply(self, state, context, rng):
+        raise NotImplementedError(
+            "BaseTemperedStep subclasses must implement apply()."
+        )
+
+
+class TemperedWeighting(BaseTemperedStep):
     """Apply tempering by scaling log-weight increments with a temperature schedule.
 
     Both the increment callable and the temperature schedule accept the
@@ -134,9 +179,8 @@ class TemperedWeighting(SMCStep):
         normalize_after: bool = True,
         clip_temperature: tuple[float, float] | None = None,
     ):
-        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
+        super().__init__(log_increment_fn, normalize_after=normalize_after)
         self._schedule = temperature_schedule
-        self._normalize_after = normalize_after
         self._clip = clip_temperature
 
     def apply(
@@ -145,6 +189,7 @@ class TemperedWeighting(SMCStep):
         context: StepContext,
         rng: "ArrayRNG",
     ) -> ParticleState:
+        state = self.initialize_metadata(state, context)
         temperature = float(
             _call_with_optional_context(
                 self._schedule,
@@ -184,7 +229,7 @@ class TemperedWeighting(SMCStep):
         return updated_state
 
 
-class FixedTemperedWeighting(SMCStep):
+class FixedTemperedWeighting(BaseTemperedStep):
     """Apply tempering with a fixed temperature increment."""
 
     def __init__(
@@ -196,9 +241,8 @@ class FixedTemperedWeighting(SMCStep):
     ):
         if temperature_increment < 0.0:
             raise ValueError("temperature_increment must be non-negative.")
-        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
+        super().__init__(log_increment_fn, normalize_after=normalize_after)
         self._temperature_increment = temperature_increment
-        self._normalize_after = normalize_after
 
     def apply(
         self,
@@ -206,6 +250,7 @@ class FixedTemperedWeighting(SMCStep):
         context: StepContext,
         rng: "ArrayRNG",
     ) -> ParticleState:
+        state = self.initialize_metadata(state, context)
         log_increments = _call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
@@ -226,8 +271,8 @@ class FixedTemperedWeighting(SMCStep):
         updated_state = state.with_updates(
             log_weights=state.log_weights + increments, metadata=metadata
         )
-        context.shared["temperature"] = metadata["temperature"]
-        context.shared["temperature_delta"] = self._temperature_increment
+        context.metadata["temperature"] = metadata["temperature"]
+        context.metadata["temperature_delta"] = self._temperature_increment
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
         logger.debug(
@@ -238,7 +283,7 @@ class FixedTemperedWeighting(SMCStep):
         return updated_state
 
 
-class AdaptiveTemperedWeighting(SMCStep):
+class AdaptiveTemperedWeighting(BaseTemperedStep):
     """Adaptively choose the next temperature using an ESS target.
 
     The temperature increment is chosen such that the effective sample size
@@ -280,11 +325,11 @@ class AdaptiveTemperedWeighting(SMCStep):
         if max_temperature <= 0.0:
             raise ValueError("max_temperature must be positive.")
 
-        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
+        super().__init__(log_increment_fn, normalize_after=normalize_after)
+
         self._target_ess_ratio = target_ess_ratio
         self._max_temperature = max_temperature
         self._min_delta = min_delta
-        self._normalize_after = normalize_after
         self._max_bisection_iter = max_bisection_iter
 
     def apply(
@@ -293,11 +338,16 @@ class AdaptiveTemperedWeighting(SMCStep):
         context: StepContext,
         rng: "ArrayRNG",
     ) -> ParticleState:
-        current_temp = state.metadata.get("temperature", 0.0)
+        state = self.initialize_metadata(state, context)
+        current_temp = context.metadata.get("temperature", 0.0)
         remaining = self._max_temperature - current_temp
         if remaining <= 0.0:
-            context.shared["temperature"] = current_temp
-            context.shared["temperature_delta"] = 0.0
+            context.metadata["temperature"] = current_temp
+            context.metadata["temperature_delta"] = 0.0
+            logger.debug(
+                "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop.",
+                self._max_temperature,
+            )
             context.request_stop()
             return state
 
@@ -319,7 +369,6 @@ class AdaptiveTemperedWeighting(SMCStep):
         new_log_weights = state.log_weights + delta * increments
         metadata = dict(state.metadata)
         metadata["temperature"] = current_temp + delta
-        metadata["temperature_delta"] = delta
 
         updated_state = state.with_updates(
             log_weights=new_log_weights, metadata=metadata
@@ -327,8 +376,8 @@ class AdaptiveTemperedWeighting(SMCStep):
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
 
-        context.shared["temperature"] = metadata["temperature"]
-        context.shared["temperature_delta"] = delta
+        context.metadata["temperature"] = metadata["temperature"]
+        context.metadata["temperature_delta"] = delta
         new_ess_ratio = _ess_ratio_from_log_weights(new_log_weights)
         logger.debug(
             "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, ESS ratio=%.4f.",
