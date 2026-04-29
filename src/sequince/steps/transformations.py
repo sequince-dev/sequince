@@ -65,6 +65,36 @@ class SMCTransformation:
         arr = asarray(particles, xp=xp)
         return xp.zeros(arr.shape[0], dtype=arr.dtype)
 
+    def make_log_proposal(
+        self,
+        base_log_proposal: Callable[..., "Array | float"],
+        context: StepContext,
+    ) -> Callable[..., "Array | float"]:
+        """Return a log proposal function corresponding to the new proposal
+        distribution after applying this transformation.
+
+        Parameters
+        ----------
+        base_log_proposal
+            The log proposal function before applying the transformation.
+        context
+            The step context, which may contain metadata needed to define the
+            new log proposal.
+        """
+
+        def log_proposal(
+            particles: "Array", inner_context: StepContext
+        ) -> "Array | float":
+            inverse_particles = self.inverse(particles, inner_context)
+            base_logp = call_with_optional_context(
+                base_log_proposal, (inverse_particles,), inner_context
+            )
+            log_aux = self.log_auxiliary_density(particles, inner_context)
+            log_jacobian = self.log_jacobian(particles, inner_context)
+            return base_logp + log_aux - log_jacobian
+
+        return log_proposal
+
 
 @dataclass
 class MetadataTransformation(SMCTransformation):
@@ -121,32 +151,11 @@ class TransformationStep(SMCStep):
                 self._posterior.log_proposal,
             )
             if base_log_proposal is not None:
-                transformation = self._transformation
-
-                def _transformed_log_proposal(
-                    particles,
-                    inner_context,
-                ):
-                    old_particles = transformation.inverse(
-                        particles, inner_context
+                _transformed_log_proposal = (
+                    self._transformation.make_log_proposal(
+                        base_log_proposal, context
                     )
-                    values = call_with_optional_context(
-                        transformation.log_auxiliary_density,
-                        (particles,),
-                        inner_context,
-                    )
-                    base_values = call_with_optional_context(
-                        base_log_proposal,
-                        (old_particles,),
-                        inner_context,
-                    )
-                    jacobian = call_with_optional_context(
-                        transformation.log_jacobian,
-                        (particles,),
-                        inner_context,
-                    )
-                    return base_values + values - jacobian
-
+                )
                 context.metadata[self._log_proposal_override_key] = (
                     _transformed_log_proposal
                 )
