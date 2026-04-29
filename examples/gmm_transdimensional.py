@@ -22,7 +22,7 @@ from sequince import (
     SequentialMonteCarlo,
     TemperedPosterior,
 )
-from sequince.logging_utils import configure_logging
+from sequince.log import configure_logging
 from sequince.result import NestedSMCResult
 from sequince.steps import (
     AdaptiveTemperedWeighting,

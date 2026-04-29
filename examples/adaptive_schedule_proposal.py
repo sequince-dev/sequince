@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from sequince import ParticleState, SequentialMonteCarlo, TemperedPosterior
-from sequince.logging_utils import configure_logging
+from sequince.log import configure_logging
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     LoggingStep,
@@ -51,8 +51,8 @@ def logging_fn(state: ParticleState, context: StepContext) -> str:
     current_temp = context.metadata.get("temperature", 0.0)
     return (
         f"SMC iteration {context.t}: "
-        f"Temperature={current_temp:.4f}, "
-        f"Log-evidence={state.log_evidence:.3f}"
+        f"Temperature={current_temp:.2g}, "
+        f"Log-evidence={state.log_evidence:.2g}"
     )
 
 
@@ -110,7 +110,7 @@ def main() -> None:
 
     final_state = results.final_state
     log_evidence = final_state.log_evidence
-    print(f"Estimated log evidence: {log_evidence:.3f}")
+    print(f"Estimated log evidence: {log_evidence:.3g}")
 
     posterior_mean = final_state.particles.mean(axis=0)
     posterior_cov = np.cov(final_state.particles, rowvar=False)
