@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from .._array_api import asarray, full, logsumexp, namespace, to_numpy
 from .._typing import Array
@@ -53,6 +53,33 @@ def _ess_ratio_from_log_weights(log_weights: Any) -> float:
         weights = full((n,), 1.0 / n, xp=xp, dtype=lw.dtype, like=lw)
     ess = 1.0 / float(to_numpy(xp.sum(xp.square(weights))))
     return ess / lw.shape[0]
+
+
+def _cess_ratio_from_log_weights_and_increments(
+    log_weights: Any,
+    log_increments: Any,
+) -> float:
+    """Return the conditional ESS ratio induced by log increments.
+
+    The quantity computed is
+
+        (sum_i W_i g_i)^2 / sum_i W_i (g_i)^2
+
+    where W_i are the normalized current weights and g_i are the proposed
+    incremental weights.
+
+    See e.g. Eq 13 in arXiv:1612.06468 for more details.
+    """
+    xp = namespace(log_weights, log_increments)
+    lw = asarray(log_weights, xp=xp)
+    li = asarray(log_increments, xp=xp, like=lw)
+
+    log_norm = logsumexp(lw, xp=xp)
+    normalized_lw = lw - log_norm
+
+    log_num = 2.0 * logsumexp(normalized_lw + li, xp=xp)
+    log_den = logsumexp(normalized_lw + 2.0 * li, xp=xp)
+    return float(to_numpy(xp.exp(log_num - log_den)))
 
 
 def _resolve_increment_fn(
@@ -284,11 +311,13 @@ class FixedTemperedWeighting(BaseTemperedStep):
 
 
 class AdaptiveTemperedWeighting(BaseTemperedStep):
-    """Adaptively choose the next temperature using an ESS target.
+    """Adaptively choose the next temperature using an ESS-like target.
 
     The temperature increment is chosen such that the effective sample size
-    (ESS) ratio after weighting reaches the specified target value
-    (``target_ess_ratio``), up to the maximum temperature (``max_temperature``).
+    (ESS) ratio after weighting, or the conditional ESS (CESS) ratio implied by
+    a proposed increment, reaches the specified target value
+    (``target_ess_ratio``), up to the maximum temperature
+    (``max_temperature``).
     If the maximum temperature is reached, the SMC run is requested to stop.
 
     Parameters
@@ -308,6 +337,11 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     max_bisection_iter:
         The maximum number of bisection iterations to perform when finding
         the temperature increment.
+    criterion:
+        Criterion used when selecting the temperature increment. ``"ess"``
+        matches the historical behavior and targets the ESS ratio after
+        weighting. ``"cess"`` targets the conditional ESS ratio induced by the
+        proposed incremental weights.
     """
 
     def __init__(
@@ -319,11 +353,14 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         min_delta: float = 1e-4,
         normalize_after: bool = True,
         max_bisection_iter: int = 30,
+        criterion: Literal["ess", "cess"] = "ess",
     ):
         if not (0.0 < target_ess_ratio <= 1.0):
             raise ValueError("target_ess_ratio must be in (0, 1].")
         if max_temperature <= 0.0:
             raise ValueError("max_temperature must be positive.")
+        if criterion not in {"ess", "cess"}:
+            raise ValueError("criterion must be either 'ess' or 'cess'.")
 
         super().__init__(log_increment_fn, normalize_after=normalize_after)
 
@@ -331,6 +368,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         self._max_temperature = max_temperature
         self._min_delta = min_delta
         self._max_bisection_iter = max_bisection_iter
+        self._criterion = criterion
 
     def apply(
         self,
@@ -405,13 +443,17 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         low = 0.0
         high = max_delta
 
-        base_ratio = _ess_ratio_from_log_weights(base_log_weights)
+        ratio_fn = (
+            self._ess_ratio_for_delta
+            if self._criterion == "ess"
+            else self._cess_ratio_for_delta
+        )
+
+        base_ratio = ratio_fn(base_log_weights, increments, 0.0)
         if base_ratio <= self._target_ess_ratio:
             return max(self._min_delta, min(high, self._min_delta))
 
-        hi_ratio = _ess_ratio_from_log_weights(
-            base_log_weights + high * increments
-        )
+        hi_ratio = ratio_fn(base_log_weights, increments, high)
         if hi_ratio >= self._target_ess_ratio:
             return high
 
@@ -419,9 +461,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             mid = 0.5 * (low + high)
             if high - low <= self._min_delta:
                 break
-            ratio = _ess_ratio_from_log_weights(
-                base_log_weights + mid * increments
-            )
+            ratio = ratio_fn(base_log_weights, increments, mid)
             if ratio >= self._target_ess_ratio:
                 low = mid
             else:
@@ -429,6 +469,27 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         delta = max(0.5 * (low + high), self._min_delta)
         return min(delta, max_delta)
+
+    @staticmethod
+    def _ess_ratio_for_delta(
+        base_log_weights: Array,
+        increments: Array,
+        delta: float,
+    ) -> float:
+        return _ess_ratio_from_log_weights(
+            base_log_weights + delta * increments
+        )
+
+    @staticmethod
+    def _cess_ratio_for_delta(
+        base_log_weights: Array,
+        increments: Array,
+        delta: float,
+    ) -> float:
+        return _cess_ratio_from_log_weights_and_increments(
+            base_log_weights,
+            delta * increments,
+        )
 
 
 def _max_abs(array: Array, *, xp) -> float:
