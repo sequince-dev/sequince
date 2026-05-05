@@ -31,9 +31,11 @@ def make_standard_bayesian_smc(
     target_ess_ratio: float = 0.7,
     max_temperature: float = 1.0,
     min_delta: float = 1e-8,
+    weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy = "systematic",
     resampling_ess_threshold: float | None = 0.5,
     always_resample: bool = False,
+    resampling_kwargs: Dict[str, Any] | None = None,
     mutation: MutationStrategy | SMCStep = "minipcn",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
@@ -76,6 +78,8 @@ def make_standard_bayesian_smc(
         ESS-triggered resampling (useful with ``always_resample=True``).
     always_resample:
         Force resampling at every iteration regardless of ESS.
+    resampling_kwargs:
+        Extra keyword arguments forwarded to the resampling step constructor.
     mutation:
         Mutation strategy to use. Accepts ``"emcee"`` (default),
         ``"minipcn"``, ``"none"``, or a pre-built ``SMCStep`` instance.
@@ -104,6 +108,7 @@ def make_standard_bayesian_smc(
         target_ess_ratio=target_ess_ratio,
         max_temperature=max_temperature,
         min_delta=min_delta,
+        **weighting_kwargs or {},
     )
 
     resampling_map = {
@@ -123,6 +128,7 @@ def make_standard_bayesian_smc(
     resampling_step = resampling_cls(
         ess_threshold=resampling_ess_threshold,
         always_resample=always_resample,
+        **resampling_kwargs or {},
     )
 
     if isinstance(particle_transform, str):
