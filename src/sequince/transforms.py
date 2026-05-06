@@ -84,11 +84,11 @@ class ParticleTransform:
 
     Methods
     -------
-    fit(particles)
+    fit(particles, context=None)
         Optionally adapt internal statistics using the provided particle cloud.
-    forward(particles)
+    forward(particles, context=None)
         Map particles into a transformed space and return log-Jacobian values.
-    inverse(values)
+    inverse(values, context=None)
         Undo the transform applied by :meth:`forward`.
     """
 
@@ -100,18 +100,20 @@ class ParticleTransform:
 
         return copy.deepcopy(self)
 
-    def fit(self, particles):  # pragma: no cover - default no-op
+    def fit(
+        self, particles, context=None
+    ):  # pragma: no cover - default no-op
         """Fit the transform to the supplied ``particles`` and return ``self``."""
         return self
 
-    def forward(self, particles):
+    def forward(self, particles, context=None):
         """Return the identity mapping plus zero log-determinants."""
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
         return arr, zeros
 
-    def inverse(self, values):
+    def inverse(self, values, context=None):
         """Return the identity mapping plus zero log-determinants."""
         xp = namespace(values)
         arr = asarray(values, xp=xp)
@@ -145,7 +147,7 @@ class AffineTransform(ParticleTransform):
     def __post_init__(self):
         self._column_index = _to_index(self.columns)
 
-    def fit(self, particles):
+    def fit(self, particles, context=None):
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         idx = self._column_index
@@ -157,7 +159,7 @@ class AffineTransform(ParticleTransform):
         self._scale = scale
         return self
 
-    def forward(self, particles):
+    def forward(self, particles, context=None):
         xp = namespace(particles, self._mean, self._scale)
         arr = asarray(particles, xp=xp)
         if self._column_index is None:
@@ -174,7 +176,7 @@ class AffineTransform(ParticleTransform):
         log_det_vec = _log_det_entries(log_det, arr, xp)
         return scaled, log_det_vec
 
-    def inverse(self, values):
+    def inverse(self, values, context=None):
         xp = namespace(values, self._mean, self._scale)
         arr = asarray(values, xp=xp)
         if self._column_index is None:
@@ -230,7 +232,7 @@ class BoundedToUnitHypercubeTransform(ParticleTransform):
         width = upper - lower
         return idx, lower, upper, width
 
-    def forward(self, particles):
+    def forward(self, particles, context=None):
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         idx, lower, _, width = self._bounds_arrays(xp, arr.dtype)
@@ -244,7 +246,7 @@ class BoundedToUnitHypercubeTransform(ParticleTransform):
         log_det_vec = _log_det_entries(log_det, arr, xp)
         return updated, log_det_vec
 
-    def inverse(self, values):
+    def inverse(self, values, context=None):
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         idx, lower, _, width = self._bounds_arrays(xp, arr.dtype)
@@ -278,8 +280,8 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         super().__init__(bounds)
         self._eps = eps
 
-    def forward(self, particles):
-        scaled, base_log_det = super().forward(particles)
+    def forward(self, particles, context=None):
+        scaled, base_log_det = super().forward(particles, context=context)
         idx = list(self._indices)
         if not idx:
             return scaled, base_log_det
@@ -294,16 +296,18 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         log_abs_det = base_log_det + xp.sum(jac, axis=-1)
         return updated, log_abs_det
 
-    def inverse(self, values):
+    def inverse(self, values, context=None):
         idx = list(self._indices)
         if not idx:
-            return super().inverse(values)
+            return super().inverse(values, context=context)
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         subset = arr[..., idx]
         u = 1.0 / (1.0 + xp.exp(-subset))
         cube_values = _replace_columns(arr, idx, u)
-        restored, base_log_det = super().inverse(cube_values)
+        restored, base_log_det = super().inverse(
+            cube_values, context=context
+        )
         xp = namespace(restored, base_log_det, u)
         base_log_det = xp.asarray(base_log_det, dtype=restored.dtype)
         jac = xp.sum(xp.log(u) + xp.log1p(-u), axis=-1)
@@ -332,7 +336,7 @@ class PeriodicBoundaryTransform(ParticleTransform):
                     f"Upper bound must exceed lower bound for index {idx}."
                 )
 
-    def forward(self, particles):
+    def forward(self, particles, context=None):
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         idx = list(self._indices)
@@ -353,8 +357,8 @@ class PeriodicBoundaryTransform(ParticleTransform):
         zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
         return arr, zeros
 
-    def inverse(self, values):
-        return self.forward(values)
+    def inverse(self, values, context=None):
+        return self.forward(values, context=context)
 
 
 class CompositeTransform(ParticleTransform):
@@ -378,18 +382,18 @@ class CompositeTransform(ParticleTransform):
     def clone(self):
         return CompositeTransform([t.clone() for t in self._transforms])
 
-    def fit(self, particles):
+    def fit(self, particles, context=None):
         data = particles
         for transform in self._transforms:
-            transform.fit(data)
-            data, _ = transform.forward(data)
+            transform.fit(data, context=context)
+            data, _ = transform.forward(data, context=context)
         return self
 
-    def forward(self, particles):
+    def forward(self, particles, context=None):
         data = particles
         total_log_det = None
         for transform in self._transforms:
-            data, log_det = transform.forward(data)
+            data, log_det = transform.forward(data, context=context)
             xp = namespace(data)
             if total_log_det is None:
                 total_log_det = xp.asarray(log_det, dtype=data.dtype)
@@ -402,11 +406,11 @@ class CompositeTransform(ParticleTransform):
             )
         return data, total_log_det
 
-    def inverse(self, values):
+    def inverse(self, values, context=None):
         data = values
         total_log_det = None
         for transform in reversed(self._transforms):
-            data, log_det = transform.inverse(data)
+            data, log_det = transform.inverse(data, context=context)
             xp = namespace(data)
             if total_log_det is None:
                 total_log_det = xp.asarray(
