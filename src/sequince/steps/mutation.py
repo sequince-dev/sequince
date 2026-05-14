@@ -79,30 +79,40 @@ class MutationStep(SMCStep):
             self._log_prob_fn = cast(LogProbFn, log_prob_fn)
         self._transform = transform
 
-    def _prepare_transform(self, particles: Array) -> ParticleTransform | None:
+    def _prepare_transform(
+        self, particles: Array, context: StepContext
+    ) -> ParticleTransform | None:
         if self._transform is None:
             return None
         xp = namespace(particles)
         transform = self._transform.clone()
-        transform.fit(asarray(particles, xp=xp))
+        transform.fit(asarray(particles, xp=xp), context=context)
         return transform
 
     @staticmethod
-    def _forward_transform(values: Array, transform: ParticleTransform | None):
+    def _forward_transform(
+        values: Array,
+        transform: ParticleTransform | None,
+        context: StepContext,
+    ):
         if transform is None:
             return values
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        latent, _ = transform.forward(arr)
+        latent, _ = transform.forward(arr, context=context)
         return latent
 
     @staticmethod
-    def _inverse_transform(values: Array, transform: ParticleTransform | None):
+    def _inverse_transform(
+        values: Array,
+        transform: ParticleTransform | None,
+        context: StepContext,
+    ):
         if transform is None:
             return values, None
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        return transform.inverse(arr)
+        return transform.inverse(arr, context=context)
 
     @staticmethod
     def _combine_with_log_det(result: Any, log_det: Array | None):
@@ -163,8 +173,10 @@ class EmceeMutation(MutationStep):
         import emcee
 
         xp = namespace(state.particles)
-        transform = self._prepare_transform(state.particles)
-        latent_particles = self._forward_transform(state.particles, transform)
+        transform = self._prepare_transform(state.particles, context)
+        latent_particles = self._forward_transform(
+            state.particles, transform, context
+        )
         particles = to_numpy(latent_particles)
         if particles.ndim == 1:
             initial_positions = particles[:, np.newaxis]
@@ -190,7 +202,7 @@ class EmceeMutation(MutationStep):
                     positions, xp=xp, like=latent_particles
                 )
                 original, log_det = self._inverse_transform(
-                    backend_positions, transform
+                    backend_positions, transform, context
                 )
                 result = _call_log_prob(self._log_prob_fn, original, context)
                 result = self._combine_with_log_det(result, log_det)
@@ -207,7 +219,7 @@ class EmceeMutation(MutationStep):
                     position, xp=xp, like=latent_particles
                 )
                 original, log_det = self._inverse_transform(
-                    backend_position, transform
+                    backend_position, transform, context
                 )
                 result = _call_log_prob(self._log_prob_fn, original, context)
                 result = self._combine_with_log_det(result, log_det)
@@ -237,7 +249,9 @@ class EmceeMutation(MutationStep):
             result_np = new_positions
 
         latent_result = asarray(result_np, xp=xp, like=latent_particles)
-        new_particles, _ = self._inverse_transform(latent_result, transform)
+        new_particles, _ = self._inverse_transform(
+            latent_result, transform, context
+        )
 
         metadata = dict(state.metadata)
         metadata["emcee_acceptance"] = float(
@@ -302,13 +316,15 @@ class MiniPCNMutation(MutationStep):
         from minipcn import Sampler
 
         xp = namespace(state.particles)
-        transform = self._prepare_transform(state.particles)
-        latent_particles = self._forward_transform(state.particles, transform)
+        transform = self._prepare_transform(state.particles, context)
+        latent_particles = self._forward_transform(
+            state.particles, transform, context
+        )
 
         def log_prob_fn(position):
             backend_position = asarray(position, xp=xp, like=latent_particles)
             original, log_det = self._inverse_transform(
-                backend_position, transform
+                backend_position, transform, context
             )
             result = _call_log_prob(self._log_prob_fn, original, context)
             return self._combine_with_log_det(result, log_det)
@@ -330,7 +346,9 @@ class MiniPCNMutation(MutationStep):
             verbose=self._verbose,
         )
         latent_last = asarray(chain[-1], xp=xp, like=latent_particles)
-        new_particles, _ = self._inverse_transform(latent_last, transform)
+        new_particles, _ = self._inverse_transform(
+            latent_last, transform, context
+        )
 
         metadata = dict(state.metadata)
         metadata["minipcn_acceptance"] = float(
