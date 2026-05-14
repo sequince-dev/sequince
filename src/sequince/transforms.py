@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
+import array_api_extra as xpx
+
 from ._array_api import asarray, namespace
 
 
@@ -50,11 +52,7 @@ def _replace_columns(array, columns, values):
     idx = columns
     if idx is None:
         return values
-    if hasattr(array, "at"):
-        return array.at[(..., idx)].set(values)
-    arr = xp.array(array, copy=True)
-    arr[..., idx] = values
-    return arr
+    return xpx.at(array, (..., idx)).set(values, copy=True, xp=xp)
 
 
 def _log_det_entries(value, arr, xp):
