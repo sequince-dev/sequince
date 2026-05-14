@@ -339,9 +339,8 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         the temperature increment.
     criterion:
         Criterion used when selecting the temperature increment. ``"ess"``
-        matches the historical behavior and targets the ESS ratio after
-        weighting. ``"cess"`` targets the conditional ESS ratio induced by the
-        proposed incremental weights.
+        targets the ESS ratio after weighting. ``"cess"`` targets the
+        conditional ESS ratio induced by the proposed incremental weights.
     """
 
     def __init__(
