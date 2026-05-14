@@ -32,7 +32,7 @@ def resolve_rng(
     )
 
 
-def _call_with_optional_context(
+def call_with_optional_context(
     fn: Callable[..., Any],
     base_args: tuple[Any, ...],
     context: StepContext,

@@ -47,12 +47,14 @@ class ResamplingStep(SMCStep):
         ess = state.effective_sample_size()
         n = state.log_weights.shape[0]
         ess_ratio = ess / n if n else 0.0
+        context.metadata["ess"] = ess
         if not self._should_resample(state):
             logger.debug(
                 "%s skipped resampling (ESS ratio=%.4f).",
                 self.__class__.__name__,
                 ess_ratio,
             )
+            context.metadata["resampled"] = False
             return state
         logger.debug(
             "%s performing resampling (ESS ratio=%.4f).",
@@ -61,6 +63,7 @@ class ResamplingStep(SMCStep):
         )
         weights = state.weights
         indices = self._choose_ancestors(weights, rng)
+        context.metadata["resampled"] = True
         return state.resample(indices)
 
     def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:

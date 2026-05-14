@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
 from ._typing import MetaData, MutationStrategy
@@ -31,9 +32,12 @@ def make_standard_bayesian_smc(
     target_ess_ratio: float = 0.7,
     max_temperature: float = 1.0,
     min_delta: float = 1e-8,
+    weighting_criterion: Literal["ess", "cess"] = "ess",
+    weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy = "systematic",
     resampling_ess_threshold: float | None = 0.5,
-    always_resample: bool = False,
+    always_resample: bool | None = None,
+    resampling_kwargs: Dict[str, Any] | None = None,
     mutation: MutationStrategy | SMCStep = "minipcn",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
@@ -68,6 +72,10 @@ def make_standard_bayesian_smc(
         Final tempering temperature; typically ``1.0`` for full posterior.
     min_delta:
         Minimum temperature increment allowed in adaptive tempering.
+    weighting_criterion:
+        Criterion for adaptive tempering; one of ``"ess"`` (default) or ``"cess"``.
+    weighting_kwargs:
+        Extra keyword arguments forwarded to the weighting step constructor.
     resampling:
         Resampling strategy to use; one of ``"systematic"``, ``"stratified"``,
         or ``"multinomial"``.
@@ -75,7 +83,11 @@ def make_standard_bayesian_smc(
         ESS ratio threshold triggering resampling. Set to ``None`` to disable
         ESS-triggered resampling (useful with ``always_resample=True``).
     always_resample:
-        Force resampling at every iteration regardless of ESS.
+        Force resampling at every iteration regardless of ESS. If set to
+        ``None``, defaults to ``True`` if ``weighting_criterion=="ess"`` and
+        ``False`` if ``weighting_criterion=="cess"``.
+    resampling_kwargs:
+        Extra keyword arguments forwarded to the resampling step constructor.
     mutation:
         Mutation strategy to use. Accepts ``"emcee"`` (default),
         ``"minipcn"``, ``"none"``, or a pre-built ``SMCStep`` instance.
@@ -99,11 +111,24 @@ def make_standard_bayesian_smc(
         log_proposal=log_proposal,
     )
 
+    if always_resample is None:
+        if weighting_criterion == "ess":
+            always_resample = True
+        elif weighting_criterion == "cess":
+            always_resample = False
+        else:
+            raise ValueError(
+                "always_resample default not defined for weighting_criterion="
+                f"'{weighting_criterion}'. Please set always_resample."
+            )
+
     weighting_step = AdaptiveTemperedWeighting(
         posterior,
         target_ess_ratio=target_ess_ratio,
         max_temperature=max_temperature,
         min_delta=min_delta,
+        criterion=weighting_criterion,
+        **weighting_kwargs or {},
     )
 
     resampling_map = {
@@ -123,6 +148,7 @@ def make_standard_bayesian_smc(
     resampling_step = resampling_cls(
         ess_threshold=resampling_ess_threshold,
         always_resample=always_resample,
+        **resampling_kwargs or {},
     )
 
     if isinstance(particle_transform, str):
@@ -161,6 +187,7 @@ def make_standard_bayesian_smc(
                 f"SMC iteration {context.t}: "
                 f"Temperature={current_temp:.3g}, "
                 f"Log Evidence={state.log_evidence:.3g}, "
+                f"ESS={context.metadata.get('ess', math.nan):.1f}"
             )
 
         logging_step = LoggingStep(

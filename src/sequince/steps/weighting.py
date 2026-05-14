@@ -1,27 +1,22 @@
 from __future__ import annotations
 
 import logging
-import math
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
-from .._array_api import asarray, full, logsumexp, namespace, to_numpy
+from .._array_api import asarray, namespace, to_numpy
 from .._typing import Array
-from ..utils import _call_with_optional_context
+from ..stats import (
+    cess_ratio_from_log_weights_and_increments,
+    ess_ratio_from_log_weights,
+)
+from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
-    try:
-        from array_api_compat.typing import Array
-    except Exception:  # pragma: no cover
-        from typing import Any as Array
     from orng import ArrayRNG
 
     from ..posterior import TemperedPosterior
     from ..state import ParticleState
-else:  # pragma: no cover
-    from typing import Any as Array
-
-    from orng import ArrayRNG
 
 
 IncrementFn = Callable[..., Array | float]
@@ -30,29 +25,22 @@ TemperatureSchedule = Callable[..., float]
 logger = logging.getLogger(__name__)
 
 
-def _as_1d_array(value: Any, *, xp, like: Array | None = None) -> Array:
-    """Convert a value to a 1d array in the provided namespace."""
+def _weights_as_1d_array(
+    value: Any, *, xp, like: Array | None = None
+) -> Array:
+    """Convert weights to a 1d array in the provided namespace.
+
+    Raises
+    ------
+    ValueError
+        If the input cannot be converted to a 1d array.
+    """
     arr = asarray(value, xp=xp, like=like)
     if arr.ndim == 0:
         return xp.reshape(arr, (1,))
     if arr.ndim != 1:
         raise ValueError("Weight updates must be one-dimensional.")
     return arr
-
-
-def _ess_ratio_from_log_weights(log_weights: Any) -> float:
-    """Return ESS ratio (ESS / n) given log weights."""
-    xp = namespace(log_weights)
-    lw = asarray(log_weights, xp=xp)
-    log_norm = logsumexp(lw, xp=xp)
-    log_norm_scalar = float(log_norm)
-    if math.isfinite(log_norm_scalar):
-        weights = xp.exp(lw - log_norm_scalar)
-    else:
-        n = lw.shape[0]
-        weights = full((n,), 1.0 / n, xp=xp, dtype=lw.dtype, like=lw)
-    ess = 1.0 / float(to_numpy(xp.sum(xp.square(weights))))
-    return ess / lw.shape[0]
 
 
 def _resolve_increment_fn(
@@ -102,12 +90,14 @@ class LogLikelihoodWeighting(SMCStep):
         rng: "ArrayRNG",
     ) -> ParticleState:
         xp = namespace(state.log_weights)
-        log_like = _call_with_optional_context(
+        log_like = call_with_optional_context(
             self._log_likelihood_fn,
             (state.particles,),
             context,
         )
-        increments = _as_1d_array(log_like, xp=xp, like=state.log_weights)
+        increments = _weights_as_1d_array(
+            log_like, xp=xp, like=state.log_weights
+        )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
                 "Log-likelihood function must return one value per particle."
@@ -191,7 +181,7 @@ class TemperedWeighting(BaseTemperedStep):
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
         temperature = float(
-            _call_with_optional_context(
+            call_with_optional_context(
                 self._schedule,
                 (context.t,),
                 context,
@@ -201,14 +191,14 @@ class TemperedWeighting(BaseTemperedStep):
             lo, hi = self._clip
             temperature = float(max(lo, min(hi, temperature)))
 
-        log_increments = _call_with_optional_context(
+        log_increments = call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
         xp = namespace(state.log_weights)
         increments = (
-            _as_1d_array(log_increments, xp=xp, like=state.log_weights)
+            _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
             * temperature
         )
         if increments.shape[0] != state.log_weights.shape[0]:
@@ -251,14 +241,14 @@ class FixedTemperedWeighting(BaseTemperedStep):
         rng: "ArrayRNG",
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
-        log_increments = _call_with_optional_context(
+        log_increments = call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
         xp = namespace(state.log_weights)
         increments = (
-            _as_1d_array(log_increments, xp=xp, like=state.log_weights)
+            _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
             * self._temperature_increment
         )
         if increments.shape[0] != state.log_weights.shape[0]:
@@ -284,11 +274,13 @@ class FixedTemperedWeighting(BaseTemperedStep):
 
 
 class AdaptiveTemperedWeighting(BaseTemperedStep):
-    """Adaptively choose the next temperature using an ESS target.
+    """Adaptively choose the next temperature using an ESS-like target.
 
     The temperature increment is chosen such that the effective sample size
-    (ESS) ratio after weighting reaches the specified target value
-    (``target_ess_ratio``), up to the maximum temperature (``max_temperature``).
+    (ESS) ratio after weighting, or the conditional ESS (CESS) ratio implied by
+    a proposed increment, reaches the specified target value
+    (``target_ess_ratio``), up to the maximum temperature
+    (``max_temperature``).
     If the maximum temperature is reached, the SMC run is requested to stop.
 
     Parameters
@@ -308,6 +300,10 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     max_bisection_iter:
         The maximum number of bisection iterations to perform when finding
         the temperature increment.
+    criterion:
+        Criterion used when selecting the temperature increment. ``"ess"``
+        targets the ESS ratio after weighting. ``"cess"`` targets the
+        conditional ESS ratio induced by the proposed incremental weights.
     """
 
     def __init__(
@@ -319,11 +315,14 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         min_delta: float = 1e-4,
         normalize_after: bool = True,
         max_bisection_iter: int = 30,
+        criterion: Literal["ess", "cess"] = "ess",
     ):
         if not (0.0 < target_ess_ratio <= 1.0):
             raise ValueError("target_ess_ratio must be in (0, 1].")
         if max_temperature <= 0.0:
             raise ValueError("max_temperature must be positive.")
+        if criterion not in {"ess", "cess"}:
+            raise ValueError("criterion must be either 'ess' or 'cess'.")
 
         super().__init__(log_increment_fn, normalize_after=normalize_after)
 
@@ -331,6 +330,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         self._max_temperature = max_temperature
         self._min_delta = min_delta
         self._max_bisection_iter = max_bisection_iter
+        self._criterion = criterion
 
     def apply(
         self,
@@ -352,12 +352,12 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             return state
 
         xp = namespace(state.log_weights)
-        log_increments = _call_with_optional_context(
+        log_increments = call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
-        increments = _as_1d_array(
+        increments = _weights_as_1d_array(
             log_increments, xp=xp, like=state.log_weights
         )
 
@@ -378,7 +378,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         context.metadata["temperature"] = metadata["temperature"]
         context.metadata["temperature_delta"] = delta
-        new_ess_ratio = _ess_ratio_from_log_weights(new_log_weights)
+        new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
         logger.debug(
             "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, ESS ratio=%.4f.",
             delta,
@@ -405,13 +405,17 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         low = 0.0
         high = max_delta
 
-        base_ratio = _ess_ratio_from_log_weights(base_log_weights)
+        ratio_fn = (
+            self._ess_ratio_for_delta
+            if self._criterion == "ess"
+            else self._cess_ratio_for_delta
+        )
+
+        base_ratio = ratio_fn(base_log_weights, increments, 0.0)
         if base_ratio <= self._target_ess_ratio:
             return max(self._min_delta, min(high, self._min_delta))
 
-        hi_ratio = _ess_ratio_from_log_weights(
-            base_log_weights + high * increments
-        )
+        hi_ratio = ratio_fn(base_log_weights, increments, high)
         if hi_ratio >= self._target_ess_ratio:
             return high
 
@@ -419,9 +423,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             mid = 0.5 * (low + high)
             if high - low <= self._min_delta:
                 break
-            ratio = _ess_ratio_from_log_weights(
-                base_log_weights + mid * increments
-            )
+            ratio = ratio_fn(base_log_weights, increments, mid)
             if ratio >= self._target_ess_ratio:
                 low = mid
             else:
@@ -429,6 +431,27 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         delta = max(0.5 * (low + high), self._min_delta)
         return min(delta, max_delta)
+
+    @staticmethod
+    def _ess_ratio_for_delta(
+        base_log_weights: Array,
+        increments: Array,
+        delta: float,
+    ) -> float:
+        return ess_ratio_from_log_weights(
+            base_log_weights + delta * increments
+        )
+
+    @staticmethod
+    def _cess_ratio_for_delta(
+        base_log_weights: Array,
+        increments: Array,
+        delta: float,
+    ) -> float:
+        return cess_ratio_from_log_weights_and_increments(
+            base_log_weights,
+            delta * increments,
+        )
 
 
 def _max_abs(array: Array, *, xp) -> float:
