@@ -32,7 +32,7 @@ def make_standard_bayesian_smc(
     target_ess_ratio: float = 0.7,
     max_temperature: float = 1.0,
     min_delta: float = 1e-8,
-    weighting_criterion: str = "ess",
+    weighting_criterion: Literal["ess", "cess"] = "ess",
     weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy = "systematic",
     resampling_ess_threshold: float | None = 0.5,
@@ -110,7 +110,7 @@ def make_standard_bayesian_smc(
         log_likelihood=log_likelihood,
         log_proposal=log_proposal,
     )
-    
+
     if always_resample is None:
         if weighting_criterion == "ess":
             always_resample = True
@@ -187,7 +187,7 @@ def make_standard_bayesian_smc(
                 f"SMC iteration {context.t}: "
                 f"Temperature={current_temp:.3g}, "
                 f"Log Evidence={state.log_evidence:.3g}, "
-                f"ESS={context.metadata.get("ess", math.nan):.1f}"
+                f"ESS={context.metadata.get('ess', math.nan):.1f}"
             )
 
         logging_step = LoggingStep(

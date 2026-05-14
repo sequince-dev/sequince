@@ -10,7 +10,7 @@ from ._array_api import asarray, full, namespace
 from ._typing import Array
 from .state import ParticleState
 from .steps.context import StepContext
-from .utils import _call_with_optional_context
+from .utils import call_with_optional_context
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -28,7 +28,7 @@ def _evaluate(
     context: "StepContext",
 ) -> Array:
     """Call function with optional context and return a 1d float array."""
-    values = _call_with_optional_context(fn, (particles,), context)
+    values = call_with_optional_context(fn, (particles,), context)
     xp = namespace(particles, values)
     array = asarray(values, xp=xp, like=particles)
     if array.ndim == 0:

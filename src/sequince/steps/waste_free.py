@@ -9,7 +9,7 @@ import numpy as np
 from .._array_api import to_numpy
 from .._typing import Array
 from ..proposals import ProposalKernel
-from ..utils import _call_with_optional_context
+from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
@@ -257,7 +257,7 @@ class WasteFreeResampleMove(SMCStep):
         particles: Array,
         context: StepContext,
     ) -> Array:
-        values = _call_with_optional_context(
+        values = call_with_optional_context(
             self._log_prob_fn,
             (particles,),
             context,

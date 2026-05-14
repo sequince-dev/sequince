@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from .._array_api import asarray, namespace
-from ..utils import _call_with_optional_context
+from ..utils import call_with_optional_context
 from .base import SMCStep
 from .context import (
     LOG_PROPOSAL_OVERRIDE_KEY,
@@ -130,17 +130,17 @@ class TransformationStep(SMCStep):
                     old_particles = transformation.inverse(
                         particles, inner_context
                     )
-                    values = _call_with_optional_context(
+                    values = call_with_optional_context(
                         transformation.log_auxiliary_density,
                         (particles,),
                         inner_context,
                     )
-                    base_values = _call_with_optional_context(
+                    base_values = call_with_optional_context(
                         base_log_proposal,
                         (old_particles,),
                         inner_context,
                     )
-                    jacobian = _call_with_optional_context(
+                    jacobian = call_with_optional_context(
                         transformation.log_jacobian,
                         (particles,),
                         inner_context,

@@ -1,27 +1,22 @@
 from __future__ import annotations
 
 import logging
-import math
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
-from .._array_api import asarray, full, logsumexp, namespace, to_numpy
+from .._array_api import asarray, namespace, to_numpy
 from .._typing import Array
-from ..utils import _call_with_optional_context
+from ..stats import (
+    cess_ratio_from_log_weights_and_increments,
+    ess_ratio_from_log_weights,
+)
+from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
-    try:
-        from array_api_compat.typing import Array
-    except Exception:  # pragma: no cover
-        from typing import Any as Array
     from orng import ArrayRNG
 
     from ..posterior import TemperedPosterior
     from ..state import ParticleState
-else:  # pragma: no cover
-    from typing import Any as Array
-
-    from orng import ArrayRNG
 
 
 IncrementFn = Callable[..., Array | float]
@@ -30,56 +25,22 @@ TemperatureSchedule = Callable[..., float]
 logger = logging.getLogger(__name__)
 
 
-def _as_1d_array(value: Any, *, xp, like: Array | None = None) -> Array:
-    """Convert a value to a 1d array in the provided namespace."""
+def _weights_as_1d_array(
+    value: Any, *, xp, like: Array | None = None
+) -> Array:
+    """Convert weights to a 1d array in the provided namespace.
+
+    Raises
+    ------
+    ValueError
+        If the input cannot be converted to a 1d array.
+    """
     arr = asarray(value, xp=xp, like=like)
     if arr.ndim == 0:
         return xp.reshape(arr, (1,))
     if arr.ndim != 1:
         raise ValueError("Weight updates must be one-dimensional.")
     return arr
-
-
-def _ess_ratio_from_log_weights(log_weights: Any) -> float:
-    """Return ESS ratio (ESS / n) given log weights."""
-    xp = namespace(log_weights)
-    lw = asarray(log_weights, xp=xp)
-    log_norm = logsumexp(lw, xp=xp)
-    log_norm_scalar = float(log_norm)
-    if math.isfinite(log_norm_scalar):
-        weights = xp.exp(lw - log_norm_scalar)
-    else:
-        n = lw.shape[0]
-        weights = full((n,), 1.0 / n, xp=xp, dtype=lw.dtype, like=lw)
-    ess = 1.0 / float(to_numpy(xp.sum(xp.square(weights))))
-    return ess / lw.shape[0]
-
-
-def _cess_ratio_from_log_weights_and_increments(
-    log_weights: Any,
-    log_increments: Any,
-) -> float:
-    """Return the conditional ESS ratio induced by log increments.
-
-    The quantity computed is
-
-        (sum_i W_i g_i)^2 / sum_i W_i (g_i)^2
-
-    where W_i are the normalized current weights and g_i are the proposed
-    incremental weights.
-
-    See e.g. Eq 13 in arXiv:1612.06468 for more details.
-    """
-    xp = namespace(log_weights, log_increments)
-    lw = asarray(log_weights, xp=xp)
-    li = asarray(log_increments, xp=xp, like=lw)
-
-    log_norm = logsumexp(lw, xp=xp)
-    normalized_lw = lw - log_norm
-
-    log_num = 2.0 * logsumexp(normalized_lw + li, xp=xp)
-    log_den = logsumexp(normalized_lw + 2.0 * li, xp=xp)
-    return float(to_numpy(xp.exp(log_num - log_den)))
 
 
 def _resolve_increment_fn(
@@ -129,12 +90,14 @@ class LogLikelihoodWeighting(SMCStep):
         rng: "ArrayRNG",
     ) -> ParticleState:
         xp = namespace(state.log_weights)
-        log_like = _call_with_optional_context(
+        log_like = call_with_optional_context(
             self._log_likelihood_fn,
             (state.particles,),
             context,
         )
-        increments = _as_1d_array(log_like, xp=xp, like=state.log_weights)
+        increments = _weights_as_1d_array(
+            log_like, xp=xp, like=state.log_weights
+        )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
                 "Log-likelihood function must return one value per particle."
@@ -218,7 +181,7 @@ class TemperedWeighting(BaseTemperedStep):
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
         temperature = float(
-            _call_with_optional_context(
+            call_with_optional_context(
                 self._schedule,
                 (context.t,),
                 context,
@@ -228,14 +191,14 @@ class TemperedWeighting(BaseTemperedStep):
             lo, hi = self._clip
             temperature = float(max(lo, min(hi, temperature)))
 
-        log_increments = _call_with_optional_context(
+        log_increments = call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
         xp = namespace(state.log_weights)
         increments = (
-            _as_1d_array(log_increments, xp=xp, like=state.log_weights)
+            _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
             * temperature
         )
         if increments.shape[0] != state.log_weights.shape[0]:
@@ -278,14 +241,14 @@ class FixedTemperedWeighting(BaseTemperedStep):
         rng: "ArrayRNG",
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
-        log_increments = _call_with_optional_context(
+        log_increments = call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
         xp = namespace(state.log_weights)
         increments = (
-            _as_1d_array(log_increments, xp=xp, like=state.log_weights)
+            _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
             * self._temperature_increment
         )
         if increments.shape[0] != state.log_weights.shape[0]:
@@ -389,12 +352,12 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             return state
 
         xp = namespace(state.log_weights)
-        log_increments = _call_with_optional_context(
+        log_increments = call_with_optional_context(
             self._log_increment_fn,
             (state.particles,),
             context,
         )
-        increments = _as_1d_array(
+        increments = _weights_as_1d_array(
             log_increments, xp=xp, like=state.log_weights
         )
 
@@ -415,7 +378,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         context.metadata["temperature"] = metadata["temperature"]
         context.metadata["temperature_delta"] = delta
-        new_ess_ratio = _ess_ratio_from_log_weights(new_log_weights)
+        new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
         logger.debug(
             "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, ESS ratio=%.4f.",
             delta,
@@ -475,7 +438,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         increments: Array,
         delta: float,
     ) -> float:
-        return _ess_ratio_from_log_weights(
+        return ess_ratio_from_log_weights(
             base_log_weights + delta * increments
         )
 
@@ -485,7 +448,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         increments: Array,
         delta: float,
     ) -> float:
-        return _cess_ratio_from_log_weights_and_increments(
+        return cess_ratio_from_log_weights_and_increments(
             base_log_weights,
             delta * increments,
         )
