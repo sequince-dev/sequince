@@ -17,12 +17,12 @@ def resolve_rng(
     rng: RNGLike = None,
     *,
     backend: str | None = None,
-) -> ArrayRNG:
+) -> ArrayRNG | np.random.Generator:
     """Return the provided RNG or create an ``ArrayRNG`` for the requested backend."""
     if isinstance(rng, ArrayRNG):
         return rng
     if isinstance(rng, np.random.Generator):
-        return ArrayRNG(backend="numpy", generator=rng)
+        return rng
     if isinstance(rng, int):
         return ArrayRNG(backend=backend or "numpy", seed=rng)
     if rng is None:
