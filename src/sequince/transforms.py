@@ -100,9 +100,7 @@ class ParticleTransform:
 
         return copy.deepcopy(self)
 
-    def fit(
-        self, particles, context=None
-    ):  # pragma: no cover - default no-op
+    def fit(self, particles, context=None):
         """Fit the transform to the supplied ``particles`` and return ``self``."""
         return self
 
@@ -305,9 +303,7 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         subset = arr[..., idx]
         u = 1.0 / (1.0 + xp.exp(-subset))
         cube_values = _replace_columns(arr, idx, u)
-        restored, base_log_det = super().inverse(
-            cube_values, context=context
-        )
+        restored, base_log_det = super().inverse(cube_values, context=context)
         xp = namespace(restored, base_log_det, u)
         base_log_det = xp.asarray(base_log_det, dtype=restored.dtype)
         jac = xp.sum(xp.log(u) + xp.log1p(-u), axis=-1)
