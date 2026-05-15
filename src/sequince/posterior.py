@@ -170,7 +170,7 @@ def draw_additional_samples(
     mutation_kwargs: dict[str, Any] | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
     particle_transform_kwargs: dict[str, Any] | None = None,
-) -> ParticleState:
+) -> tuple[ParticleState, SMCResult]:
     """Draw additional samples from the current particles to fill up to n_particles.
 
     Parameters
@@ -223,14 +223,17 @@ def draw_additional_samples(
     # Resample particles to reach the desired number
     current_n_particles = state.particles.shape[0]
     if current_n_particles >= n_particles:
-        return state
+        return state, result
 
     # Resample particles to reach the desired number
     resampled_particles = rng.choice(
         state.particles, size=n_particles, replace=True
     )
     resampled_state = ParticleState(
-        particles=resampled_particles, log_weights=state.log_weights
+        particles=resampled_particles,
+        log_weights=state.log_weights,
+        log_evidence=state.log_evidence,
+        metadata=copy.deepcopy(state.metadata),
     )
 
     if isinstance(particle_transform, str):
@@ -257,12 +260,13 @@ def draw_additional_samples(
         transform=particle_transform,
     )
     if mutation_step is None:
-        return resampled_state
+        updated_result = result.append_state(resampled_state)
+        return resampled_state, updated_result
 
     state = mutation_step.apply(
         resampled_state,
         context,
         rng,
     )
-    state.log_evidence = 0.0
-    return state
+    updated_result = result.append_state(state)
+    return state, updated_result
