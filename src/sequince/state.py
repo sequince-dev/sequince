@@ -23,9 +23,22 @@ class ParticleState:
     """Container for particle locations, log weights, and auxiliary information."""
 
     particles: Array
-    log_weights: Array
+    log_weights: Array | float | int | None = None
     log_evidence: float = 0.0
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.log_weights, None | float | int):
+            xp = namespace(self.particles)
+            n = self.particles.shape[0]
+            value = (
+                float(self.log_weights)
+                if self.log_weights is not None
+                else -math.log(n)
+            )
+            self.log_weights = full(
+                (n,), value, xp=xp, dtype=float, like=self.particles
+            )
 
     def copy(self) -> "ParticleState":
         """Return a copy of the state preserving the array backend."""
