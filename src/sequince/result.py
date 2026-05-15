@@ -20,15 +20,6 @@ if TYPE_CHECKING:
     from .steps.base import StepContext
 
 
-def _as_2d(array: Any) -> Any:
-    """Ensure particle arrays are 2-D with rows corresponding to samples."""
-    xp = namespace(array)
-    arr = asarray(array, xp=xp)
-    if arr.ndim == 1:
-        arr = xp.reshape(arr, (arr.shape[0], 1))
-    return arr
-
-
 def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
     if ax is not None:
         return ax
@@ -137,14 +128,14 @@ class SMCResult:
         with_replacement: bool = True,
     ) -> Array:
         """Draw samples from the weighted posterior represented by the final state."""
+        xp = namespace(self.final_state.particles, self.final_state.weights)
         if n_samples is None:
-            return _as_2d(self.final_state.particles)
+            return xp.atleast_2d(self.final_state.particles)
         if n_samples <= 0:
             raise ValueError("n_samples must be positive.")
         rng_obj: ArrayRNG = resolve_rng(rng)
         final_state = self.final_state
-        particles = _as_2d(final_state.particles)
-        xp = namespace(particles, final_state.weights)
+        particles = xp.atleast_2d(final_state.particles)
         weights = asarray(final_state.weights, xp=xp)
         indices = asarray(
             rng_obj.choice(
@@ -165,8 +156,8 @@ class SMCResult:
     ) -> Array:
         """Return the weighted mean of the specified state (defaults to final)."""
         state = self.states[state_index]
-        particles = _as_2d(state.particles)
-        xp = namespace(particles)
+        xp = namespace(state.particles)
+        particles = xp.atleast_2d(state.particles)
         weights = asarray(state.weights, xp=xp)
         weights = xp.reshape(weights, (weights.shape[0], 1))
         return xp.sum(weights * particles, axis=0)
@@ -179,8 +170,8 @@ class SMCResult:
     ) -> Array:
         """Return the weighted covariance matrix for the specified state."""
         state = self.states[state_index]
-        particles = _as_2d(state.particles)
-        xp = namespace(particles)
+        xp = namespace(state.particles)
+        particles = xp.atleast_2d(state.particles)
         weights = asarray(state.weights, xp=xp)
         mean = asarray(
             self.weighted_mean(state_index=state_index),
@@ -204,7 +195,8 @@ class SMCResult:
     ) -> Array:
         """Evaluate a function under the weighted empirical distribution."""
         state = self.states[state_index]
-        particles = _as_2d(state.particles)
+        xp = namespace(state.particles)
+        particles = xp.atleast_2d(state.particles)
         xp = namespace(particles)
         values = asarray(fn(particles), xp=xp, like=particles)
         weights = asarray(state.weights, xp=xp)
@@ -309,7 +301,8 @@ class SMCResult:
         from corner import corner
 
         state = self.states[state_index]
-        particles = to_numpy(_as_2d(state.particles))
+        xp = namespace(state.particles)
+        particles = to_numpy(xp.atleast_2d(state.particles))
 
         default_kwargs = dict(
             bins=32,
@@ -402,7 +395,7 @@ class SMCResult:
             default_kwargs.update(plot_kwargs)
 
         all_particles = np.array(
-            [to_numpy(_as_2d(state.particles)) for state in self.states]
+            [np.atleast_2d(to_numpy(state.particles)) for state in self.states]
         )  # (n_iterations, n_particles, n_parameters)
         n_iterations = len(all_particles)
 

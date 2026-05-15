@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .._array_api import arange, asarray, namespace, to_numpy
+import array_api_extra as xpx
+
+from .._array_api import arange, asarray, namespace
 from .._typing import Array
 from .base import SMCStep, StepContext
 
@@ -101,7 +103,7 @@ class StratifiedResampling(ResamplingStep):
         jitter = asarray(rng.random((n,)), xp=xp, like=probs)
         positions = (offsets + jitter) / n
         cumulative = xp.cumulative_sum(probs)
-        return _searchsorted(cumulative, positions, xp=xp)
+        return xpx.searchsorted(cumulative, positions, side="right", xp=xp)
 
 
 class SystematicResampling(ResamplingStep):
@@ -115,13 +117,4 @@ class SystematicResampling(ResamplingStep):
         offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
         positions = (start + offsets) / n
         cumulative = xp.cumulative_sum(probs)
-        return _searchsorted(cumulative, positions, xp=xp)
-
-
-def _searchsorted(cumulative: Array, positions: Array, *, xp):
-    if hasattr(xp, "searchsorted"):
-        return xp.searchsorted(cumulative, positions, side="right")
-    indices = to_numpy(cumulative)
-    pos = to_numpy(positions)
-    result = indices.searchsorted(pos, side="right")
-    return asarray(result, xp=xp, like=cumulative)
+        return xpx.searchsorted(cumulative, positions, side="right", xp=xp)
