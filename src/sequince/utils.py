@@ -74,7 +74,10 @@ def call_with_optional_context(
 
 
 def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:
-    """Check if particles are within bounds.
+    """Check if particles are within the specified bounds.
+
+    Bounds are assumed to be rectilinear, with shape (2, n_dimensions).
+
 
     Parameters
     ----------
@@ -94,4 +97,8 @@ def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:
         xp = namespace(particles, bounds)
     if bounds.shape[0] != 2:
         raise ValueError("Bounds array must have shape (2, n_dimensions).")
+    if bounds.shape[1] != particles.shape[1]:
+        raise ValueError(
+            "Bounds array must have the same number of dimensions as particles."
+        )
     return xp.all((particles >= bounds[0]) & (particles <= bounds[1]), axis=-1)
