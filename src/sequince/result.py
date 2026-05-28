@@ -46,6 +46,13 @@ class SMCResult:
     def __getitem__(self, index: int) -> ParticleState:
         return self.states[index]
 
+    def append_state(self, state: ParticleState) -> SMCResult:
+        """Return a new result with one additional state appended."""
+        return SMCResult(
+            states=[*self.states, state],
+            context=self.context,
+        )
+
     def get_nested_results(
         self,
         key: str = NESTED_SMC_OUTPUT_KEY,

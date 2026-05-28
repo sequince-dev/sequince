@@ -27,6 +27,16 @@ def test_smc_results_indexing(
     assert dummy_results.final_state == particle_state
 
 
+def test_smc_results_append_state(
+    dummy_results: SMCResult, particle_state
+) -> None:
+    updated = dummy_results.append_state(particle_state)
+
+    assert len(updated) == len(dummy_results) + 1
+    assert updated.final_state == particle_state
+    assert len(dummy_results) == 10
+
+
 def test_smc_results_summary(dummy_results: SMCResult) -> None:
     dummy_results.summary()
 
