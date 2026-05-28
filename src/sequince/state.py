@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from numbers import Real
 from typing import Any, MutableMapping
 
 from ._array_api import (
@@ -18,27 +19,39 @@ from ._array_api import (
 from ._typing import Array
 
 
-@dataclass
+@dataclass(init=False)
 class ParticleState:
     """Container for particle locations, log weights, and auxiliary information."""
 
     particles: Array
-    log_weights: Array | float | int | None = None
+    log_weights: Array
     log_evidence: float = 0.0
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        if isinstance(self.log_weights, None | float | int):
+    def __init__(
+        self,
+        particles: Array,
+        log_weights: Array | Real | None = None,
+        log_evidence: float = 0.0,
+        metadata: MutableMapping[str, Any] | None = None,
+    ) -> None:
+        if len(particles) == 0:
+            raise ValueError("Particles array cannot be empty.")
+
+        self.particles = particles
+        self.log_evidence = log_evidence
+        self.metadata = dict(metadata or {})
+
+        if log_weights is None or isinstance(log_weights, Real):
             xp = namespace(self.particles)
             n = self.particles.shape[0]
             value = (
-                float(self.log_weights)
-                if self.log_weights is not None
-                else -math.log(n)
+                float(log_weights) if log_weights is not None else -math.log(n)
             )
-            self.log_weights = full(
+            log_weights = full(
                 (n,), value, xp=xp, dtype=float, like=self.particles
             )
+        self.log_weights = log_weights
 
     def copy(self) -> "ParticleState":
         """Return a copy of the state preserving the array backend."""
