@@ -44,6 +44,23 @@ class RecordObservationStep(SMCStep):
         return state.with_updates(metadata=metadata)
 
 
+class RecordStep(SMCStep):
+    def __init__(self, name: str):
+        self._name = name
+
+    def apply(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "ArrayRNG",
+    ) -> ParticleState:
+        metadata = dict(state.metadata)
+        history = list(metadata.get("executed_steps", []))
+        history.append(self._name)
+        metadata["executed_steps"] = history
+        return state.with_updates(metadata=metadata)
+
+
 class RecordingCallback:
     def __init__(self) -> None:
         self.records: list[dict[str, object]] = []
@@ -91,6 +108,56 @@ def test_smc_processes_observations_in_order(
     assert states[-1].metadata["observations"] == observations
 
 
+def test_smc_deferred_stop_finishes_current_iteration(
+    particle_state: ParticleState, rng
+) -> None:
+    class DeferredStopStep(SMCStep):
+        def apply(
+            self,
+            state: ParticleState,
+            context: StepContext,
+            rng: "ArrayRNG",
+        ) -> ParticleState:
+            context.request_stop()
+            return state
+
+    smc = SequentialMonteCarlo(
+        steps=[
+            DeferredStopStep(),
+            RecordStep("after_stop"),
+        ]
+    )
+    result = smc.run(particle_state, num_steps=5, rng=rng)
+
+    assert len(result) == 1
+    assert result.final_state.metadata["executed_steps"] == ["after_stop"]
+
+
+def test_smc_immediate_stop_skips_remaining_steps(
+    particle_state: ParticleState, rng
+) -> None:
+    class ImmediateStopStep(SMCStep):
+        def apply(
+            self,
+            state: ParticleState,
+            context: StepContext,
+            rng: "ArrayRNG",
+        ) -> ParticleState:
+            context.request_stop_immediately()
+            return state
+
+    smc = SequentialMonteCarlo(
+        steps=[
+            ImmediateStopStep(),
+            RecordStep("should_not_run"),
+        ]
+    )
+    result = smc.run(particle_state, num_steps=5, rng=rng)
+
+    assert len(result) == 1
+    assert "executed_steps" not in result.final_state.metadata
+
+
 def test_smc_with_adaptive_tempering_stops_at_max_temperature(
     particle_state: ParticleState, rng
 ) -> None:
@@ -108,13 +175,19 @@ def test_smc_with_adaptive_tempering_stops_at_max_temperature(
     initial_state = particle_state.with_updates(metadata={"temperature": 0.0})
     metadata = {"temperature": 0.0}
 
-    smc = SequentialMonteCarlo(steps=[adaptive])
+    smc = SequentialMonteCarlo(
+        steps=[adaptive, RecordStep("resampling"), RecordStep("mutation")]
+    )
     states = smc.run(initial_state, num_steps=None, rng=rng, metadata=metadata)
 
     assert states[-1].metadata["temperature"] == pytest.approx(0.5, abs=1e-6)
     assert metadata["temperature"] == pytest.approx(
         states[-1].metadata["temperature"]
     )
+    assert states[-1].metadata["executed_steps"] == [
+        "resampling",
+        "mutation",
+    ]
 
 
 def test_smc_invokes_callbacks_with_incremental_results(
