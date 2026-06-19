@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import numpy as np
 
-from sequince.posterior import draw_additional_samples
+from sequince.posterior import TemperedPosterior, draw_additional_samples
 from sequince.result import SMCResult
 from sequince.state import ParticleState
 
@@ -24,6 +26,7 @@ def test_draw_additional_samples_respects_terminal_weights(
         rng=rng,
         n_particles=8,
         mutation="none",
+        posterior=MagicMock(spec=TemperedPosterior),
     )
 
     assert updated_state.particles.shape == (8, 1)
