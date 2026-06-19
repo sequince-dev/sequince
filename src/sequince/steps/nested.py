@@ -53,6 +53,7 @@ class NestedSMCStep(SMCStep):
         # TODO: is there a better way to do this? Avoid copying?
         metadata = copy.deepcopy(context.metadata)
         metadata.pop("stop_requested", None)
+        metadata.pop("stop_immediately", None)
         result = self.runner.run(
             input_state,
             rng=rng,

@@ -18,7 +18,7 @@ class ContinueWhile(SMCStep):
 
     This step clears any stop requests raised by earlier steps when the supplied
     predicate evaluates to ``True`` for the current ``ParticleState`` and
-    ``StepContext``.  When the predicate returns ``False`` the stop flag remains
+    ``StepContext``.  When the predicate returns ``False`` the stop flags remain
     untouched, allowing the run to terminate.
 
     Parameters
@@ -41,13 +41,13 @@ class ContinueWhile(SMCStep):
         rng: "ArrayRNG",
     ) -> "ParticleState":
         if self._predicate(state, context):
-            context.metadata["stop_requested"] = False
+            context.clear_stop_request()
             logger.debug(
-                "ContinueWhile cleared stop flag at iteration %d.", context.t
+                "ContinueWhile cleared stop flags at iteration %d.", context.t
             )
         else:
             logger.debug(
-                "ContinueWhile left stop flag set at iteration %d.", context.t
+                "ContinueWhile left stop flags set at iteration %d.", context.t
             )
         return state
 
@@ -66,13 +66,19 @@ class StopIf(SMCStep):
         A callable receiving the current ``ParticleState`` and ``StepContext``
         and returning a boolean indicating whether to request stopping the SMC
         loop.
+    immediate:
+        When ``True``, halt the current iteration immediately. When ``False``,
+        stop after the current iteration finishes.
     """
 
     def __init__(
         self,
         predicate: Callable[["ParticleState", StepContext], bool],
+        *,
+        immediate: bool = False,
     ):
         self._predicate = predicate
+        self._immediate = immediate
 
     def apply(
         self,
@@ -81,8 +87,15 @@ class StopIf(SMCStep):
         rng: "ArrayRNG",
     ) -> "ParticleState":
         if self._predicate(state, context):
-            context.metadata["stop_requested"] = True
-            logger.debug("StopIf set stop flag at iteration %d.", context.t)
+            if self._immediate:
+                context.request_stop_immediately()
+            else:
+                context.request_stop()
+            logger.debug(
+                "StopIf set stop flags at iteration %d (immediate=%s).",
+                context.t,
+                self._immediate,
+            )
         else:
             logger.debug(
                 "StopIf left stop flag cleared at iteration %d.", context.t

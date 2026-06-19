@@ -281,7 +281,8 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     a proposed increment, reaches the specified target value
     (``target_ess_ratio``), up to the maximum temperature
     (``max_temperature``).
-    If the maximum temperature is reached, the SMC run is requested to stop.
+    If the maximum temperature is reached while advancing the schedule, the SMC
+    run is requested to stop after the current iteration finishes.
 
     Parameters
     ----------
@@ -292,7 +293,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         the interval (0, 1].
     max_temperature:
         The maximum temperature to reach; once this temperature is reached,
-        the SMC run is requested to stop.
+        the SMC run is requested to stop after the current iteration.
     min_delta:
         The minimum temperature increment to apply at each step.
     normalize_after:
@@ -345,10 +346,10 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             context.metadata["temperature"] = current_temp
             context.metadata["temperature_delta"] = 0.0
             logger.debug(
-                "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop.",
+                "AdaptiveTemperedWeighting already at max temperature %.3f; requesting immediate stop.",
                 self._max_temperature,
             )
-            context.request_stop()
+            context.request_stop_immediately()
             return state
 
         xp = namespace(state.log_weights)
@@ -390,7 +391,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             or abs(metadata["temperature"] - self._max_temperature) <= 1e-9
         ):
             logger.debug(
-                "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop.",
+                "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop after iteration.",
                 self._max_temperature,
             )
             context.request_stop()

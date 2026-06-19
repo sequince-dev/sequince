@@ -156,9 +156,9 @@ class SequentialMonteCarlo:
                 step_name = getattr(step, "__name__", step.__class__.__name__)
                 logger.debug("Iteration %d: applying step %s.", t, step_name)
                 state = step(state, context, rng)
-                if context.metadata["stop_requested"]:
+                if context.metadata.get("stop_immediately", False):
                     logger.info(
-                        "Stop requested by step %s at iteration %d; terminating SMC run.",
+                        "Immediate stop requested by step %s at iteration %d; terminating iteration early.",
                         step_name,
                         t,
                     )
