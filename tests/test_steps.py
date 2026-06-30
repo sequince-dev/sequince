@@ -37,8 +37,18 @@ if TYPE_CHECKING:
 
 def test_step_context_request_stop(step_context: StepContext) -> None:
     assert step_context.metadata["stop_requested"] is False
+    assert step_context.metadata["stop_immediately"] is False
     step_context.request_stop()
     assert step_context.metadata["stop_requested"] is True
+    assert step_context.metadata["stop_immediately"] is False
+
+
+def test_step_context_request_stop_immediately(
+    step_context: StepContext,
+) -> None:
+    step_context.request_stop_immediately()
+    assert step_context.metadata["stop_requested"] is True
+    assert step_context.metadata["stop_immediately"] is True
 
 
 def test_log_likelihood_weighting_updates_log_weights(
@@ -132,6 +142,8 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
         state.metadata["temperature"]
     )
     assert "temperature_delta" in context.metadata
+    assert context.metadata["stop_requested"] is True
+    assert context.metadata["stop_immediately"] is False
 
 
 def test_adaptive_tempered_weighting_no_op_when_max_reached(
@@ -153,6 +165,7 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
     assert np.array_equal(result_state.particles, expected_state.particles)
     assert result_state.metadata == expected_state.metadata
     assert context.metadata["stop_requested"] is True
+    assert context.metadata["stop_immediately"] is True
     assert context.metadata["temperature"] == 1.0
     assert context.metadata["temperature_delta"] == 0.0
 
@@ -545,22 +558,24 @@ def test_continue_while_overrides_stop_request(
     step = ContinueWhile(predicate)
 
     context = context_factory(t=0)
-    context.request_stop()
+    context.request_stop_immediately()
     state = particle_state.with_updates(metadata={"temperature": 0.5})
 
     result = step(state, context, rng)
 
     assert result is state
     assert not context.metadata["stop_requested"]
+    assert not context.metadata["stop_immediately"]
 
     context_late = context_factory(t=1)
-    context_late.request_stop()
+    context_late.request_stop_immediately()
     late_state = particle_state.with_updates(metadata={"temperature": 1.0})
 
     final_result = step(late_state, context_late, rng)
 
     assert final_result is late_state
     assert context_late.metadata["stop_requested"] is True
+    assert context_late.metadata["stop_immediately"] is True
     assert predicate_calls == [(0.5, 0), (1.0, 1)]
 
 

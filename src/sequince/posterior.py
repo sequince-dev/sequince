@@ -225,13 +225,14 @@ def draw_additional_samples(
     if current_n_particles >= n_particles:
         return state, result
 
-    # Resample particles to reach the desired number
-    resampled_particles = rng.choice(
-        state.particles, size=n_particles, replace=True
+    # Resample particles to reach the desired number using the terminal weights.
+    weights = state.weights
+    indices = rng.choice(
+        current_n_particles, size=n_particles, replace=True, p=weights
     )
+    resampled_particles = state.particles[indices]
     resampled_state = ParticleState(
         particles=resampled_particles,
-        log_weights=state.log_weights,
         log_evidence=state.log_evidence,
         metadata=copy.deepcopy(state.metadata),
     )

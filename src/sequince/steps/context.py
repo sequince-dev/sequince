@@ -33,11 +33,24 @@ class StepContext:
     def __post_init__(self):
         if "stop_requested" not in self.metadata:
             self.metadata["stop_requested"] = False
+        if "stop_immediately" not in self.metadata:
+            self.metadata["stop_immediately"] = False
         self.shared = MappingProxyType(self.shared)
 
     def request_stop(self) -> None:
         """Signal that the SMC runner should halt after this iteration."""
         self.metadata["stop_requested"] = True
+        self.metadata["stop_immediately"] = False
+
+    def request_stop_immediately(self) -> None:
+        """Signal that the SMC runner should halt immediately."""
+        self.metadata["stop_requested"] = True
+        self.metadata["stop_immediately"] = True
+
+    def clear_stop_request(self) -> None:
+        """Clear any pending stop request."""
+        self.metadata["stop_requested"] = False
+        self.metadata["stop_immediately"] = False
 
     def record_output(self, key: str, value: Any) -> None:
         """Store an output value that can be accessed by callbacks."""
