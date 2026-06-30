@@ -121,6 +121,12 @@ def make_standard_bayesian_smc(
                 "always_resample default not defined for weighting_criterion="
                 f"'{weighting_criterion}'. Please set always_resample."
             )
+    elif always_resample is False and weighting_criterion == "ess":
+        raise ValueError(
+            "always_resample cannot be False when weighting_criterion='ess' "
+            "since ESS-based tempering relies on resampling to achieve the "
+            "target ESS ratio."
+        )
 
     weighting_step = AdaptiveTemperedWeighting(
         posterior,

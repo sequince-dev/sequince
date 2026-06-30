@@ -11,7 +11,7 @@ particle filtering, and related sequential methods.
 
 ## Installation
 
-`sequince` targets Python 3.10+ and can be installed directly from the main branch:
+`sequince` targets Python 3.11+ and can be installed directly from the main branch:
 
 ```bash
 pip install git+https://github.com/sequince-dev/sequince.git
@@ -39,11 +39,7 @@ smc, posterior, shared_context = make_standard_bayesian_smc(
 
 n = 2_048
 initial_particles = np.random.normal(size=(n, 2))
-initial_state = ParticleState(
-    particles=initial_particles,
-    log_weights=np.full(n, -np.log(n)),
-    metadata={"temperature": 0.0},
-)
+initial_state = ParticleState(particles=initial_particles)
 
 rng = np.random.default_rng()
 results = smc.run(initial_state, rng=rng, shared_context=shared_context)

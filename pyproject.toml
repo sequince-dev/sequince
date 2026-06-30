@@ -17,6 +17,7 @@ dependencies = [
     "array-api-compat>=1.5",
     "array-api-extra",
     "orng>=0.1.0a3",
+    "frozendict",
 ]
 dynamic = [
     "version"
