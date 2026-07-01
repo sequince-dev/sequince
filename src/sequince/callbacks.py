@@ -135,10 +135,14 @@ class IntermediateParticlesPlot(PlotCallback):
         self,
         outdir: str | None = None,
         base_filename: str = "particles",
+        parameter_inds: list[int] | None = None,
+        parameter_labels: list[str] | None = None,
         plot_kwargs: dict[str, Any] | None = None,
     ):
         filename = f"{base_filename}_0.png"
         self.base_filename = base_filename
+        self.parameter_labels = parameter_labels
+        self.parameter_inds = parameter_inds
         super().__init__(outdir, filename, plot_kwargs)
 
     def apply(
@@ -249,10 +253,14 @@ class MutationChainPlot(PlotCallback):
         self,
         outdir: str | None = None,
         base_filename: str = "chain",
+        parameter_inds: list[int] | None = None,
+        parameter_labels: list[str] | None = None,
         plot_kwargs: dict[str, Any] | None = None,
         metadata_key: str = "mutation_chain",
     ):
         self.base_filename = base_filename
+        self.parameter_labels = parameter_labels
+        self.parameter_inds = parameter_inds
         self.metadata_key = metadata_key
         filename = f"{base_filename}_0.png"
         super().__init__(outdir, filename, plot_kwargs)
@@ -273,6 +281,8 @@ class MutationChainPlot(PlotCallback):
             plot_chain(
                 chain,
                 filename=self.full_path,
+                parameter_labels=self.parameter_labels,
+                parameter_inds=self.parameter_inds,
                 **self.plot_kwargs,
             )
         else:
