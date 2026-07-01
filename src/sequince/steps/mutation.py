@@ -56,7 +56,7 @@ class MutationStep(SMCStep):
         log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
         *,
         transform: ParticleTransform | None = None,
-        store_chain: bool = False,
+        store_chains: bool = False,
     ):
         super().__init__()
         if hasattr(log_prob_fn, "log_prob"):
@@ -79,7 +79,7 @@ class MutationStep(SMCStep):
         else:
             self._log_prob_fn = cast(LogProbFn, log_prob_fn)
         self._transform = transform
-        self._store_chain = store_chain
+        self._store_chains = store_chains
         self._chain: Array | None = None
 
     def _prepare_transform(
@@ -145,7 +145,7 @@ class EmceeMutation(MutationStep):
         method.
     transform
         A `ParticleTransform` instance to apply to the particles before mutation.
-    store_chain
+    store_chains
         Whether to store the entire mutation chain in the metadata. Default is
         False.
     **kwargs
@@ -160,13 +160,13 @@ class EmceeMutation(MutationStep):
         move: emcee.moves.Move | None = None,
         run_kwargs: dict[str, Any] | None = None,
         transform: ParticleTransform | None = None,
-        store_chain: bool = False,
+        store_chains: bool = False,
         **kwargs,
     ):
         import emcee
 
         super().__init__(
-            log_prob_fn, transform=transform, store_chain=store_chain
+            log_prob_fn, transform=transform, store_chains=store_chains
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -270,9 +270,9 @@ class EmceeMutation(MutationStep):
         )
         metadata["emcee_steps"] = self._n_steps
         acceptance = metadata["emcee_acceptance"]
-        if self._store_chain:
-            chain = sampler.get_chain(flat=False, discard=0, thin=1)
-            metadata["mutation_chain"] = chain
+        if self._store_chains:
+            chains = sampler.get_chain(flat=False, discard=0, thin=1)
+            metadata["mutation_chains"] = chains
 
         logger.debug(
             "EmceeMutation completed: acceptance=%.3f after %d steps.",
@@ -301,7 +301,7 @@ class MiniPCNMutation(MutationStep):
         Whether to enable verbose output from the MiniPCN sampler.
     transform
         A `ParticleTransform` instance to apply to the particles before mutation.
-    store_chain
+    store_chains
         Whether to store the entire mutation chain in the metadata. Default is
         False.
     **kwargs
@@ -316,11 +316,11 @@ class MiniPCNMutation(MutationStep):
         step_fn: str = "tpcn",
         verbose: bool = False,
         transform: ParticleTransform | None = None,
-        store_chain: bool = False,
+        store_chains: bool = False,
         **kwargs,
     ):
         super().__init__(
-            log_prob_fn, transform=transform, store_chain=store_chain
+            log_prob_fn, transform=transform, store_chains=store_chains
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -381,8 +381,8 @@ class MiniPCNMutation(MutationStep):
         metadata["minipcn_step_fn"] = self._step_fn
         metadata["minipcn_steps"] = self._n_steps
 
-        if self._store_chain:
-            metadata["mutation_chain"] = chain
+        if self._store_chains:
+            metadata["mutation_chains"] = chain
 
         acceptance = metadata["minipcn_acceptance"]
         logger.debug(

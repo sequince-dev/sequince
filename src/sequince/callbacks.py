@@ -235,15 +235,15 @@ class StatePlot(PlotCallback):
 
 class MutationChainPlot(PlotCallback):
     """
-    Callback to plot the chain from the mutation step of the SMC algorithm.
+    Callback to plot the chains from the mutation step of the SMC algorithm.
 
     Parameters
     ----------
     outdir:
-        Directory to save the mutation chain plots.  If ``None`` (default) saves
+        Directory to save the mutation chains plots.  If ``None`` (default) saves
         to the current working directory.
     base_filename:
-        Base filename for the mutation chain plots.  The iteration number will
+        Base filename for the mutation chains plots.  The iteration number will
         be appended to the base filename.  Default is ``"chain"``.
     plot_kwargs:
         Additional keyword arguments to pass to the `plot_chain` function.
@@ -256,7 +256,7 @@ class MutationChainPlot(PlotCallback):
         parameter_inds: list[int] | None = None,
         parameter_labels: list[str] | None = None,
         plot_kwargs: dict[str, Any] | None = None,
-        metadata_key: str = "mutation_chain",
+        metadata_key: str = "mutation_chains",
     ):
         self.base_filename = base_filename
         self.parameter_labels = parameter_labels
@@ -271,19 +271,19 @@ class MutationChainPlot(PlotCallback):
         context: "StepContext",
         results: "SMCResult",
     ) -> None:
-        chain = state.metadata.get(self.metadata_key)
-        if chain is not None:
+        chains = state.metadata.get(self.metadata_key)
+        if chains is not None:
             filename = f"{self.base_filename}_{context.iteration}.png"
             self.full_path = self.outdir / filename
-            logger.debug(f"Plotting mutation chain to {self.full_path}")
-            from .plot import plot_chain
+            logger.debug(f"Plotting mutation chains to {self.full_path}")
+            from .plot import plot_chains
 
-            plot_chain(
-                chain,
+            plot_chains(
+                chains,
                 filename=self.full_path,
                 parameter_labels=self.parameter_labels,
                 parameter_inds=self.parameter_inds,
                 **self.plot_kwargs,
             )
         else:
-            logger.debug("No mutation chain found in state metadata.")
+            logger.debug("No mutation chains found in state metadata.")
