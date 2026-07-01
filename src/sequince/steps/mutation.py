@@ -56,6 +56,7 @@ class MutationStep(SMCStep):
         log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
         *,
         transform: ParticleTransform | None = None,
+        store_chain: bool = False,
     ):
         super().__init__()
         if hasattr(log_prob_fn, "log_prob"):
@@ -78,6 +79,8 @@ class MutationStep(SMCStep):
         else:
             self._log_prob_fn = cast(LogProbFn, log_prob_fn)
         self._transform = transform
+        self._store_chain = store_chain
+        self._chain: Array | None = None
 
     def _prepare_transform(
         self, particles: Array, context: StepContext
@@ -140,6 +143,11 @@ class EmceeMutation(MutationStep):
     run_kwargs
         Additional keyword arguments to pass to the ``emcee.EnsembleSampler.run_mcmc``
         method.
+    transform
+        A `ParticleTransform` instance to apply to the particles before mutation.
+    store_chain
+        Whether to store the entire mutation chain in the metadata. Default is
+        False.
     **kwargs
         Additional keyword arguments to pass to the ``emcee.EnsembleSampler``
     """
@@ -152,11 +160,14 @@ class EmceeMutation(MutationStep):
         move: emcee.moves.Move | None = None,
         run_kwargs: dict[str, Any] | None = None,
         transform: ParticleTransform | None = None,
+        store_chain: bool = False,
         **kwargs,
     ):
         import emcee
 
-        super().__init__(log_prob_fn, transform=transform)
+        super().__init__(
+            log_prob_fn, transform=transform, store_chain=store_chain
+        )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
         self._n_steps = n_steps
@@ -259,6 +270,10 @@ class EmceeMutation(MutationStep):
         )
         metadata["emcee_steps"] = self._n_steps
         acceptance = metadata["emcee_acceptance"]
+        if self._store_chain:
+            chain = sampler.get_chain(flat=False, discard=0, thin=1)
+            metadata["mutation_chain"] = chain
+
         logger.debug(
             "EmceeMutation completed: acceptance=%.3f after %d steps.",
             acceptance,
@@ -284,6 +299,11 @@ class MiniPCNMutation(MutationStep):
         Step function to use. See `minipcn` documentation for available options.
     verbose
         Whether to enable verbose output from the MiniPCN sampler.
+    transform
+        A `ParticleTransform` instance to apply to the particles before mutation.
+    store_chain
+        Whether to store the entire mutation chain in the metadata. Default is
+        False.
     **kwargs
         Additional keyword arguments to pass to the `minipcn.Sampler` constructor.
     """
@@ -296,9 +316,12 @@ class MiniPCNMutation(MutationStep):
         step_fn: str = "tpcn",
         verbose: bool = False,
         transform: ParticleTransform | None = None,
+        store_chain: bool = False,
         **kwargs,
     ):
-        super().__init__(log_prob_fn, transform=transform)
+        super().__init__(
+            log_prob_fn, transform=transform, store_chain=store_chain
+        )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
         self._n_steps = n_steps
@@ -334,7 +357,6 @@ class MiniPCNMutation(MutationStep):
         sampler = Sampler(
             log_prob_fn=log_prob_fn,
             step_fn=self._step_fn,
-            rng=rng,
             dims=dims,
             xp=xp,
             **self._kwargs,
@@ -344,7 +366,9 @@ class MiniPCNMutation(MutationStep):
             latent_particles,
             n_steps=self._n_steps,
             verbose=self._verbose,
+            rng=rng,
         )
+
         latent_last = asarray(chain[-1], xp=xp, like=latent_particles)
         new_particles, _ = self._inverse_transform(
             latent_last, transform, context
@@ -356,6 +380,10 @@ class MiniPCNMutation(MutationStep):
         )
         metadata["minipcn_step_fn"] = self._step_fn
         metadata["minipcn_steps"] = self._n_steps
+
+        if self._store_chain:
+            metadata["mutation_chain"] = chain
+
         acceptance = metadata["minipcn_acceptance"]
         logger.debug(
             "MiniPCNMutation completed: acceptance=%.3f after %d steps.",
