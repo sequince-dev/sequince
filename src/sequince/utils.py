@@ -97,7 +97,7 @@ def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:
         xp = namespace(particles, bounds)
     if bounds.shape[0] != 2:
         raise ValueError("Bounds array must have shape (2, n_dimensions).")
-    if bounds.shape[1] != particles.shape[1]:
+    if bounds.shape[1] != particles.shape[-1]:
         raise ValueError(
             "Bounds array must have the same number of dimensions as particles."
         )
