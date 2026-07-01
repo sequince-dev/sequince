@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from sequince.plot import plot_chain, plot_corner
+from sequince.plot import plot_chains, plot_corner
 
 
 @pytest.fixture
@@ -35,15 +35,15 @@ def corner_patch(monkeypatch):
     return calls
 
 
-def test_plot_chain_raises_for_non_3d_input() -> None:
-    with pytest.raises(ValueError, match="Chain must be a 3D array"):
-        plot_chain(np.zeros((4, 2)))
+def test_plot_chains_raises_for_non_3d_input() -> None:
+    with pytest.raises(ValueError, match="Chains must be a 3D array"):
+        plot_chains(np.zeros((4, 2)))
 
 
-def test_plot_chain_returns_figure_for_selected_parameter(
+def test_plot_chains_returns_figure_for_selected_parameter(
     chain: np.ndarray,
 ) -> None:
-    fig = plot_chain(
+    fig = plot_chains(
         chain,
         n_chains=2,
         parameter_inds=[1],
@@ -64,10 +64,10 @@ def test_plot_chain_returns_figure_for_selected_parameter(
     plt.close(fig)
 
 
-def test_plot_chain_saves_figure(chain: np.ndarray, tmp_path) -> None:
+def test_plot_chains_saves_figure(chain: np.ndarray, tmp_path) -> None:
     filename = tmp_path / "chain.png"
 
-    result = plot_chain(chain, filename=filename)
+    result = plot_chains(chain, filename=filename)
 
     assert result is None
     assert filename.exists()

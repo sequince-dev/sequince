@@ -12,20 +12,20 @@ from ._array_api import namespace, to_numpy
 from ._typing import Array
 
 
-def plot_chain(
-    chain: Array,
+def plot_chains(
+    chains: Array,
     n_chains: int | None = None,
     filename: str | Path | None = None,
     parameter_labels: Sequence[str] | None = None,
     parameter_inds: Sequence[int] | None = None,
     **kwargs,
 ):
-    """Plot an MCMC chain.
+    """Plot MCMC chains.
 
     Parameters
     ----------
-    chain : Array
-        The MCMC chain to plot, of shape (n_steps, n_chains, n_params).
+    chains : Array
+        The MCMC chains to plot, of shape (n_steps, n_chains, n_params).
     n_chains : int, optional
         The number of chains to plot. If None, all chains are plotted.
     filename : str | Path, optional
@@ -34,18 +34,18 @@ def plot_chain(
         Additional keyword arguments to pass to the plot function.
     """
 
-    if chain.ndim != 3:
+    if chains.ndim != 3:
         raise ValueError(
-            "Chain must be a 3D array of shape (n_steps, n_chains, n_params)"
+            "Chains must be a 3D array of shape (n_steps, n_chains, n_params)"
         )
 
     if parameter_inds is not None:
-        chain = chain[:, :, parameter_inds]
+        chains = chains[:, :, parameter_inds]
 
-    n_params = chain.shape[2]
+    n_params = chains.shape[2]
 
     if n_chains is None:
-        n_chains = chain.shape[1]
+        n_chains = chains.shape[1]
 
     fig, axs = plt.subplots(
         n_params, 1, figsize=(8, 2 * n_params), sharex=True
@@ -59,14 +59,14 @@ def plot_chain(
     if parameter_labels is None:
         parameter_labels = [f"$x_{i}$" for i in range(n_params)]
 
-    its = np.arange(chain.shape[0])
+    its = np.arange(chains.shape[0])
 
     for i in range(n_params):
         for j in range(n_chains):
-            axs[i].plot(its, chain[:, j, i], **kwargs)
+            axs[i].plot(its, chains[:, j, i], **kwargs)
         axs[i].set_ylabel(parameter_labels[i])
     axs[-1].set_xlabel("Mutation iteration")
-    axs[-1].set_xlim(0, chain.shape[0] - 1)
+    axs[-1].set_xlim(0, chains.shape[0] - 1)
 
     if filename is not None:
         plt.savefig(filename)
