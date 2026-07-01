@@ -304,40 +304,16 @@ class SMCResult:
         fig
             The corner plot figure, if `filename` is not provided.
         """
-        import matplotlib.pyplot as plt
-        from corner import corner
+        from .plot import plot_corner
 
         state = self.states[state_index]
-        xp = namespace(state.particles)
-        particles = to_numpy(xp.atleast_2d(state.particles))
-
-        default_kwargs = dict(
-            bins=32,
-            smooth=0.9,
-            color="#EFBF35",
-            truth_color="#6B8E23",
-            quantiles=[0.16, 0.5, 0.84],
-            levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-9 / 2.0)),
-            plot_density=True,
-            plot_datapoints=True,
-            fill_contours=True,
-            show_titles=True,
-            hist_kwargs=dict(density=True, linewidth=2),
+        return plot_corner(
+            state.particles,
             weights=state.weights if include_weights else None,
+            parameter_inds=parameter_inds,
+            filename=filename,
+            **corner_kwargs,
         )
-
-        if parameter_inds is not None:
-            particles = particles[:, parameter_inds]
-
-        if corner_kwargs:
-            default_kwargs.update(corner_kwargs)
-
-        fig = corner(particles, **default_kwargs)
-        if filename is not None:
-            fig.savefig(filename)
-            plt.close(fig)
-        else:
-            return fig
 
     def plot_trace(
         self,

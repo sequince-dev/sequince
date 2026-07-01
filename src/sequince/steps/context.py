@@ -31,6 +31,11 @@ class StepContext:
     outputs: Outputs = field(default_factory=dict)
     """Dictionary for storing outputs from steps."""
 
+    @property
+    def iteration(self) -> int:
+        """Alias for ``t``."""
+        return self.t
+
     def __post_init__(self):
         if "stop_requested" not in self.metadata:
             self.metadata["stop_requested"] = False
