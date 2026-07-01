@@ -15,7 +15,7 @@ from ._typing import Array
 def plot_chain(
     chain: Array,
     n_chains: int | None = None,
-    filename: str | None = None,
+    filename: str | Path | None = None,
     **kwargs,
 ):
     """Plot an MCMC chain.
@@ -26,7 +26,7 @@ def plot_chain(
         The MCMC chain to plot, of shape (n_steps, n_chains, n_params).
     n_chains : int, optional
         The number of chains to plot. If None, all chains are plotted.
-    filename : str, optional
+    filename : str | Path, optional
         If provided, the plot will be saved to this filename. If None, the plot will be returned as a matplotlib figure.
     **kwargs : additional keyword arguments
         Additional keyword arguments to pass to the plot function.

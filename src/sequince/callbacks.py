@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -7,6 +8,9 @@ if TYPE_CHECKING:
     from .result import SMCResult
     from .state import ParticleState
     from .steps.base import StepContext
+
+
+logger = logging.getLogger(__name__)
 
 
 class SMCCallback:
@@ -110,6 +114,51 @@ class TracePlot(PlotCallback):
         )
 
 
+class IntermediateParticlesPlot(PlotCallback):
+    """Plot the intermediate particles at each SMC iteration.
+
+    Plots a corner-style plot of the particles at each SMC iteration.
+
+    Parameters
+    ----------
+    outdir:
+        Directory to save the intermediate particle plots.  If ``None``
+        (default) saves to the current working directory.
+    base_filename:
+        Base filename for the intermediate particle plots.  The iteration number
+        will be appended to the base filename.  Default is ``"particles"``.
+    plot_kwargs:
+        Additional keyword arguments to pass to the `plot_corner` function.
+    """
+
+    def __init__(
+        self,
+        outdir: str | None = None,
+        base_filename: str = "particles",
+        plot_kwargs: dict[str, Any] | None = None,
+    ):
+        filename = f"{base_filename}_0.png"
+        self.base_filename = base_filename
+        super().__init__(outdir, filename, plot_kwargs)
+
+    def apply(
+        self,
+        state: "ParticleState",
+        context: "StepContext",
+        results: "SMCResult",
+    ) -> None:
+        from .plot import plot_corner
+
+        filename = f"{self.base_filename}_{context.iteration}.png"
+        self.full_path = self.outdir / filename
+        logger.debug(f"Plotting intermediate particles to {self.full_path}")
+        plot_corner(
+            state.particles,
+            filename=self.full_path,
+            **self.plot_kwargs,
+        )
+
+
 class StatePlot(PlotCallback):
     """
     Callback to plot user-specified state metadata every SMC iteration.
@@ -178,3 +227,53 @@ class StatePlot(PlotCallback):
         plt.tight_layout()
         fig.savefig(self.full_path)
         plt.close(fig)
+
+
+class MutationChainPlot(PlotCallback):
+    """
+    Callback to plot the chain from the mutation step of the SMC algorithm.
+
+    Parameters
+    ----------
+    outdir:
+        Directory to save the mutation chain plots.  If ``None`` (default) saves
+        to the current working directory.
+    base_filename:
+        Base filename for the mutation chain plots.  The iteration number will
+        be appended to the base filename.  Default is ``"chain"``.
+    plot_kwargs:
+        Additional keyword arguments to pass to the `plot_chain` function.
+    """
+
+    def __init__(
+        self,
+        outdir: str | None = None,
+        base_filename: str = "chain",
+        plot_kwargs: dict[str, Any] | None = None,
+        metadata_key: str = "mutation_chain",
+    ):
+        self.base_filename = base_filename
+        self.metadata_key = metadata_key
+        filename = f"{base_filename}_0.png"
+        super().__init__(outdir, filename, plot_kwargs)
+
+    def apply(
+        self,
+        state: "ParticleState",
+        context: "StepContext",
+        results: "SMCResult",
+    ) -> None:
+        chain = state.metadata.get(self.metadata_key)
+        if chain is not None:
+            filename = f"{self.base_filename}_{context.iteration}.png"
+            self.full_path = self.outdir / filename
+            logger.debug(f"Plotting mutation chain to {self.full_path}")
+            from .plot import plot_chain
+
+            plot_chain(
+                chain,
+                filename=self.full_path,
+                **self.plot_kwargs,
+            )
+        else:
+            logger.debug("No mutation chain found in state metadata.")
