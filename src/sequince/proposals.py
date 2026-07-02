@@ -1,81 +1,83 @@
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from ._array_api import asarray, namespace
 from ._typing import Array
+from .flows import NormalizingFlow, clone_flow
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
-else:  # pragma: no cover - runtime fallback
-    from orng import ArrayRNG  # type: ignore
+    from .steps.context import StepContext
 
 
-class ProposalKernel(Protocol):
-    """Protocol defining the interface required by waste-free moves."""
+class ProposalDistribution(Protocol):
+    """Protocol for proposal distributions used by bridged SMC targets."""
+
+    def log_prob(
+        self,
+        particles: Array,
+        context: StepContext | None = None,
+    ) -> Array:
+        """Evaluate the log proposal density in particle space."""
 
     def sample(
         self,
-        particles: Array,
-        rng: ArrayRNG,
+        n_samples: int,
+        context: StepContext | None = None,
     ) -> Array:
-        """Draw proposal particles corresponding to the supplied parents."""
+        """Draw samples from the proposal distribution."""
 
-    def log_density(
+    def sample_and_log_prob(
         self,
-        from_particles: Array,
-        to_particles: Array,
+        n_samples: int,
+        context: StepContext | None = None,
+    ) -> tuple[Array, Array]:
+        """Draw samples and return their log proposal densities."""
+
+
+class FlowProposal(ProposalDistribution):
+    """Adapt a normalizing flow to the proposal-distribution interface."""
+
+    def __init__(self, flow: NormalizingFlow):
+        self._flow = flow
+
+    @property
+    def flow(self) -> NormalizingFlow:
+        return self._flow
+
+    def clone(self) -> "FlowProposal":
+        return FlowProposal(clone_flow(self._flow))
+
+    def fit(
+        self,
+        particles: Array,
+        context: StepContext | None = None,
+    ) -> "FlowProposal":
+        self._flow.fit(particles, context=context)
+        return self
+
+    def log_prob(
+        self,
+        particles: Array,
+        context: StepContext | None = None,
     ) -> Array:
-        """Return log transition densities q(to | from) for each particle."""
-
-
-@dataclass(frozen=True)
-class GaussianRandomWalk:
-    """Isotropic Gaussian random-walk proposal."""
-
-    scale: float = 1.0
-
-    def __post_init__(self) -> None:
-        if self.scale <= 0.0:
-            raise ValueError("GaussianRandomWalk.scale must be positive.")
+        return self._flow.log_prob(particles, context=context)
 
     def sample(
         self,
-        particles: Array,
-        rng: ArrayRNG,
+        n_samples: int,
+        context: StepContext | None = None,
     ) -> Array:
-        xp = namespace(particles)
-        arr = asarray(particles, xp=xp)
-        noise = asarray(
-            rng.normal(
-                loc=0.0,
-                scale=self.scale,
-                size=arr.shape,
-            ),
-            xp=xp,
-            like=arr,
+        return self._flow.sample(n_samples, context=context)
+
+    def sample_and_log_prob(
+        self,
+        n_samples: int,
+        context: StepContext | None = None,
+    ) -> tuple[Array, Array]:
+        flow_sample_and_log_prob = getattr(
+            self._flow, "sample_and_log_prob", None
         )
-        return arr + noise
-
-    def log_density(
-        self,
-        from_particles: Array,
-        to_particles: Array,
-    ) -> Array:
-        xp = namespace(from_particles, to_particles)
-        start = asarray(from_particles, xp=xp)
-        end = asarray(to_particles, xp=xp)
-        if start.shape != end.shape:
-            raise ValueError(
-                "Particles passed to log_density must share shape."
-            )
-        diff = end - start
-        if diff.ndim == 1:
-            diff = xp.reshape(diff, (diff.shape[0], 1))
-        dim = diff.shape[1]
-        var = float(self.scale) ** 2
-        norm_const = -0.5 * dim * math.log(2.0 * math.pi * var)
-        exponent = -0.5 * xp.sum((diff**2) / var, axis=1)
-        return exponent + norm_const
+        if callable(flow_sample_and_log_prob):
+            return flow_sample_and_log_prob(n_samples, context=context)
+        samples = self.sample(n_samples, context=context)
+        return samples, self.log_prob(samples, context=context)

@@ -8,6 +8,7 @@ from typing import Mapping, Sequence
 import array_api_extra as xpx
 
 from ._array_api import asarray, namespace
+from .flows import NormalizingFlow, clone_flow
 
 
 def _to_index(columns):
@@ -119,6 +120,30 @@ class ParticleTransform:
 
 class IdentityTransform(ParticleTransform):
     """No-op transform that simply returns the input particles."""
+
+
+class FlowTransform(ParticleTransform):
+    """Adapt a normalizing flow to the ``ParticleTransform`` interface."""
+
+    def __init__(self, flow: NormalizingFlow):
+        self._flow = flow
+
+    @property
+    def flow(self) -> NormalizingFlow:
+        return self._flow
+
+    def clone(self) -> "FlowTransform":
+        return FlowTransform(clone_flow(self._flow))
+
+    def fit(self, particles, context=None):
+        self._flow.fit(particles, context=context)
+        return self
+
+    def forward(self, particles, context=None):
+        return self._flow.forward(particles, context=context)
+
+    def inverse(self, values, context=None):
+        return self._flow.inverse(values, context=context)
 
 
 @dataclass
