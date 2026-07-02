@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .steps.mutation import PARTICLE_TRANSFORM_KEY
+
 if TYPE_CHECKING:
     from .result import SMCResult
     from .state import ParticleState
@@ -287,3 +289,69 @@ class MutationChainPlot(PlotCallback):
             )
         else:
             logger.debug("No mutation chains found in state metadata.")
+
+
+class PlotParticleTransform(PlotCallback):
+    """
+    Callback to plot the active particle transform at each SMC iteration.
+
+    Parameters
+    ----------
+    outdir:
+        Directory to save the active particle transform plots.  If ``None``
+        (default) saves to the current working directory.
+    base_filename:
+        Base filename for the active particle transform plots. The iteration
+        number is appended to the base filename. Default is
+        :code:``"particle_transform"``.
+    metadata_key:
+        Key in the state metadata where the active particle transform is stored.
+        Default is :code:``"particle_transform"``.
+    plot_kwargs:
+        Additional keyword arguments to pass to the `plot_transform` function.
+    """
+
+    def __init__(
+        self,
+        outdir: str | None = None,
+        base_filename: str = "particle_transform",
+        metadata_key: str = PARTICLE_TRANSFORM_KEY,
+        plot_kwargs: dict[str, Any] | None = None,
+        parameter_inds: list[int] | None = None,
+        parameter_labels: list[str] | None = None,
+    ):
+        self.base_filename = base_filename
+        self.metadata_key = metadata_key
+        self.parameter_inds = parameter_inds
+        self.parameter_labels = parameter_labels
+        filename = f"{base_filename}_0.png"
+        super().__init__(outdir, filename, plot_kwargs)
+
+    def apply(
+        self,
+        state: "ParticleState",
+        context: "StepContext",
+        results: "SMCResult",
+    ) -> None:
+        transform = context.metadata.get(self.metadata_key)
+        if transform is not None:
+            filename = f"{self.base_filename}_{context.iteration}.png"
+            self.full_path = self.outdir / filename
+            logger.debug(f"Plotting particle transform to {self.full_path}")
+
+            particles = state.particles
+            transformed_particles = transform.forward(
+                particles, context=context
+            )[0]
+
+            from .plot import plot_corner
+
+            plot_corner(
+                transformed_particles,
+                filename=self.full_path,
+                parameter_inds=self.parameter_inds,
+                parameter_labels=self.parameter_labels,
+                **self.plot_kwargs,
+            )
+        else:
+            logger.debug("No particle transform found in state metadata.")
