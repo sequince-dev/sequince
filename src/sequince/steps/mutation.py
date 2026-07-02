@@ -103,7 +103,7 @@ class MutationStep(SMCStep):
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         latent, _ = transform.forward(arr, context=context)
-        return latent
+        return asarray(latent, xp=xp)
 
     @staticmethod
     def _inverse_transform(
@@ -115,7 +115,8 @@ class MutationStep(SMCStep):
             return values, None
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        return transform.inverse(arr, context=context)
+        output, log_det = transform.inverse(arr, context=context)
+        return asarray(output, xp=xp), asarray(log_det, xp=xp)
 
     @staticmethod
     def _combine_with_log_det(result: Any, log_det: Array | None):

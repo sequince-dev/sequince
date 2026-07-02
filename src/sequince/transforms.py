@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 import array_api_extra as xpx
 
 from ._array_api import asarray, namespace
-from .flows import NormalizingFlow, clone_flow
+from .flows import NormalizingFlow, clone_flow, flow_asarray
+
+logger = logging.getLogger(__name__)
 
 
 def _to_index(columns):
@@ -136,14 +139,21 @@ class FlowTransform(ParticleTransform):
         return FlowTransform(clone_flow(self._flow))
 
     def fit(self, particles, context=None):
-        self._flow.fit(particles, context=context)
+        backend_particles = flow_asarray(self._flow, particles)
+        logger.debug(
+            "Fitting flow transform to %d particles.",
+            backend_particles.shape[0],
+        )
+        self._flow.fit(backend_particles, context=context)
         return self
 
     def forward(self, particles, context=None):
-        return self._flow.forward(particles, context=context)
+        backend_particles = flow_asarray(self._flow, particles)
+        return self._flow.forward(backend_particles, context=context)
 
     def inverse(self, values, context=None):
-        return self._flow.inverse(values, context=context)
+        backend_values = flow_asarray(self._flow, values)
+        return self._flow.inverse(backend_values, context=context)
 
 
 @dataclass

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ._typing import Array
 
@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 class NormalizingFlow(Protocol):
     """Minimal interface for normalizing flows used by Sequince."""
+
+    xp: Any
 
     def fit(
         self, particles: Array, context: StepContext | None = None
@@ -43,6 +45,11 @@ class NormalizingFlow(Protocol):
         ...
 
 
+def flow_asarray(flow: NormalizingFlow, array: Any):
+    """Cast ``array`` to the backend array type expected by ``flow``."""
+    return flow.xp.asarray(array)
+
+
 def clone_flow(flow: NormalizingFlow) -> NormalizingFlow:
     """Return a fresh copy of ``flow``.
 
@@ -52,5 +59,13 @@ def clone_flow(flow: NormalizingFlow) -> NormalizingFlow:
 
     init_args = getattr(flow, "_init_args", None)
     if isinstance(init_args, dict):
-        return flow.__class__(**init_args)
+        cloned_args = copy.deepcopy(dict(init_args))
+        extra_kwargs = cloned_args.pop("kwargs", None)
+        if extra_kwargs is not None:
+            if not isinstance(extra_kwargs, dict):
+                raise TypeError(
+                    "Expected flow._init_args['kwargs'] to be a mapping."
+                )
+            cloned_args = {**extra_kwargs, **cloned_args}
+        return flow.__class__(**cloned_args)
     return copy.deepcopy(flow)

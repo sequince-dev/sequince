@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from ._typing import Array
-from .flows import NormalizingFlow, clone_flow
+from .flows import NormalizingFlow, clone_flow, flow_asarray
 
 if TYPE_CHECKING:
     from .steps.context import StepContext
@@ -52,7 +52,8 @@ class FlowProposal(ProposalDistribution):
         particles: Array,
         context: StepContext | None = None,
     ) -> "FlowProposal":
-        self._flow.fit(particles, context=context)
+        backend_particles = flow_asarray(self._flow, particles)
+        self._flow.fit(backend_particles, context=context)
         return self
 
     def log_prob(
@@ -60,7 +61,8 @@ class FlowProposal(ProposalDistribution):
         particles: Array,
         context: StepContext | None = None,
     ) -> Array:
-        return self._flow.log_prob(particles, context=context)
+        backend_particles = flow_asarray(self._flow, particles)
+        return self._flow.log_prob(backend_particles, context=context)
 
     def sample(
         self,

@@ -20,10 +20,9 @@ def namespace(*arrays: Any):
 def asarray(array: Any, *, xp=None, like=None):
     xp = xp or namespace(array, like)
     arr = xp.asarray(array)
-    reference = like if like is not None else array
-    if reference is None:
+    if like is None:
         return arr
-    return to_device(arr, get_device(reference))
+    return to_device(arr, get_device(like))
 
 
 def copy(array: Any, *, xp=None):
