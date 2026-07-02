@@ -6,6 +6,7 @@ from sequince.transforms import (
     BoundedToUnboundedTransform,
     BoundedToUnitHypercubeTransform,
     CompositeTransform,
+    FlowTransform,
     PeriodicBoundaryTransform,
 )
 
@@ -97,3 +98,47 @@ def test_composite_transform(particles):
     restored, restore_log_det = composite.inverse(latent)
     np.testing.assert_allclose(restored, particles)
     np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+
+
+def test_flow_transform_round_trip_and_clone(particles):
+    class ShiftFlow:
+        def __init__(self, shift=1.5):
+            self.shift = shift
+            self.fitted_particles = None
+
+        def fit(self, values, context=None):
+            self.fitted_particles = np.asarray(values, dtype=float).copy()
+            return self
+
+        def forward(self, values, context=None):
+            arr = np.asarray(values, dtype=float)
+            return arr + self.shift, np.zeros(arr.shape[0], dtype=float)
+
+        def inverse(self, values, context=None):
+            arr = np.asarray(values, dtype=float)
+            return arr - self.shift, np.zeros(arr.shape[0], dtype=float)
+
+        def log_prob(self, values, context=None):
+            arr = np.asarray(values, dtype=float)
+            if arr.ndim == 1:
+                arr = arr[:, np.newaxis]
+            return -0.5 * np.sum(arr**2, axis=1)
+
+        def sample(self, num_samples: int = 1, context=None):
+            return np.full((num_samples, 3), self.shift, dtype=float)
+
+    transform = FlowTransform(ShiftFlow())
+    transform.fit(particles)
+    latent, log_det = transform.forward(particles)
+    restored, restore_log_det = transform.inverse(latent)
+
+    np.testing.assert_allclose(restored, particles)
+    np.testing.assert_allclose(log_det + restore_log_det, 0.0)
+    np.testing.assert_allclose(
+        getattr(transform.flow, "fitted_particles"), particles
+    )
+
+    cloned = transform.clone()
+    assert isinstance(cloned, FlowTransform)
+    assert cloned is not transform
+    assert cloned.flow is not transform.flow

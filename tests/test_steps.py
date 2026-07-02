@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
+from sequince.mutation_kernels import GaussianRandomWalk
 from sequince.posterior import TemperedPosterior
-from sequince.proposals import GaussianRandomWalk
 from sequince.state import ParticleState
 from sequince.steps import (
     AdaptGaussianProposal,
