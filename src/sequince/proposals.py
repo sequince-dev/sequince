@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol
 
+from ._array_api import asarray, namespace
 from ._typing import Array
 from .flows import NormalizingFlow, clone_flow, flow_asarray
 
 if TYPE_CHECKING:
     from .steps.context import StepContext
+
+logger = logging.getLogger(__name__)
 
 
 class ProposalDistribution(Protocol):
@@ -52,6 +56,7 @@ class FlowProposal(ProposalDistribution):
         particles: Array,
         context: StepContext | None = None,
     ) -> "FlowProposal":
+        logger.info("Fitting flow proposal to %d particles", len(particles))
         backend_particles = flow_asarray(self._flow, particles)
         self._flow.fit(backend_particles, context=context)
         return self
@@ -61,8 +66,11 @@ class FlowProposal(ProposalDistribution):
         particles: Array,
         context: StepContext | None = None,
     ) -> Array:
+        xp = namespace(particles)
         backend_particles = flow_asarray(self._flow, particles)
-        return self._flow.log_prob(backend_particles, context=context)
+        return asarray(
+            self._flow.log_prob(backend_particles, context=context), xp=xp
+        )
 
     def sample(
         self,
