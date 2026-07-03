@@ -45,6 +45,8 @@ def test_tempered_posterior_accepts_proposal_distribution_object(
 
 def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
     class DummyFlow:
+        xp = np
+
         def __init__(self, shift=0.75):
             self.shift = shift
             self.fitted_particles = None

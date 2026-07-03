@@ -102,6 +102,8 @@ def test_composite_transform(particles):
 
 def test_flow_transform_round_trip_and_clone(particles):
     class ShiftFlow:
+        xp = np
+
         def __init__(self, shift=1.5):
             self.shift = shift
             self.fitted_particles = None
