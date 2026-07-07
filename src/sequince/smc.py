@@ -1,27 +1,35 @@
 from __future__ import annotations
 
 import logging
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Iterable,
-    List,
-    Mapping,
-    MutableMapping,
-    Sequence,
-)
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable
 
+from .checkpoint import SMCCheckpoint
 from .result import SMCResult
 from .state import ParticleState
 from .steps.base import StepContext
-from .utils import resolve_rng
+from .utils import call_with_optional_args, resolve_rng
 
 if TYPE_CHECKING:
     import numpy as np
     from orng import RandomGenerator
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SMCRuntime:
+    """Prepared SMC runtime state for fresh or resumed execution."""
+
+    state: ParticleState
+    produced_states: list[ParticleState]
+    t: int
+    next_observation_index: int
+    shared_context: dict[str, Any]
+    metadata: MutableMapping[str, Any]
+    outputs: MutableMapping[str, Any]
+    rng: Any
 
 
 class SequentialMonteCarlo:
@@ -55,10 +63,7 @@ class SequentialMonteCarlo:
             ]
         ],
         *,
-        callbacks: Sequence[
-            Callable[[ParticleState, StepContext, SMCResult], None]
-        ]
-        | None = None,
+        callbacks: Sequence[Callable[..., None]] | None = None,
         auto_normalize: bool = True,
     ):
         self._steps = list(steps)
@@ -67,13 +72,14 @@ class SequentialMonteCarlo:
 
     def run(
         self,
-        initial_state: ParticleState,
+        initial_state: ParticleState | None = None,
         observations: Iterable[Any] | None = None,
         num_steps: int | None = None,
         rng: "RandomGenerator" | np.random.Generator | int | None = None,
         shared_context: Mapping[str, Any] | None = None,
         metadata: MutableMapping[str, Any] | None = None,
         outputs: MutableMapping[str, Any] | None = None,
+        runtime: SMCRuntime | None = None,
     ) -> SMCResult:
         """Run the SMC algorithm.
 
@@ -101,11 +107,36 @@ class SequentialMonteCarlo:
             for communication between steps and callbacks.
         outputs:
             Optional mutable dictionary for storing outputs from steps.
+        runtime:
+            Optional prepared runtime returned by :meth:`resume_from`.
         """
-        rng = resolve_rng(rng)
-        shared_context = shared_context or {}
-        metadata = metadata or {}
-        outputs = outputs or {}
+        if runtime is not None:
+            if initial_state is not None:
+                raise ValueError(
+                    "run() accepts either initial_state or runtime, not both."
+                )
+            if any(
+                value is not None
+                for value in (rng, shared_context, metadata, outputs)
+            ):
+                raise ValueError(
+                    "run(runtime=...) does not accept rng, shared_context, "
+                    "metadata, or outputs."
+                )
+        elif initial_state is None:
+            raise ValueError("run() requires either initial_state or runtime.")
+
+        if runtime is None:
+            runtime = SMCRuntime(
+                state=initial_state,
+                produced_states=[],
+                t=0,
+                next_observation_index=0,
+                shared_context=dict(shared_context or {}),
+                metadata=metadata or {},
+                outputs=outputs or {},
+                rng=resolve_rng(rng),
+            )
 
         logger.info(
             "Starting SMC run with %d steps (auto_normalize=%s)",
@@ -118,22 +149,57 @@ class SequentialMonteCarlo:
             )
         if observations is not None:
             logger.debug("Observations iterator supplied to SMC run.")
+        if (
+            runtime.next_observation_index > 0
+            and observations is not None
+            and not isinstance(observations, Sequence)
+        ):
+            raise ValueError(
+                "Resuming with observations requires an indexable sequence or None."
+            )
 
-        produced_states: List[ParticleState] = []
-        state = initial_state
-
-        observation_iterator = (
-            iter(observations) if observations is not None else None
+        observation_sequence = (
+            observations if isinstance(observations, Sequence) else None
         )
+        observation_iterator = (
+            iter(observations)
+            if observations is not None and observation_sequence is None
+            else None
+        )
+        if (
+            runtime.next_observation_index > 0
+            and observation_sequence is None
+            and observations is not None
+        ):
+            raise ValueError(
+                "Resumed runtime only supports observations=None or sequence observations."
+            )
 
-        t = 0
         steps_remaining = num_steps if num_steps is not None else None
+        produced_states = list(runtime.produced_states)
+        state = runtime.state
+        t = runtime.t
+        next_observation_index = runtime.next_observation_index
+        shared_context = runtime.shared_context
+        metadata = runtime.metadata
+        outputs = runtime.outputs
+        rng = runtime.rng
+        context = None
 
         while steps_remaining is None or steps_remaining > 0:
             logger.debug("Beginning iteration %d.", t)
-            if observation_iterator is not None:
+            if observation_sequence is not None:
+                if next_observation_index < len(observation_sequence):
+                    observation = observation_sequence[next_observation_index]
+                    next_observation_index += 1
+                elif steps_remaining is None:
+                    break
+                else:
+                    observation = None
+            elif observation_iterator is not None:
                 try:
                     observation = next(observation_iterator)
+                    next_observation_index += 1
                 except StopIteration:
                     if steps_remaining is None:
                         break
@@ -147,6 +213,7 @@ class SequentialMonteCarlo:
 
             context = StepContext(
                 t=t,
+                next_observation_index=next_observation_index,
                 observation=observation,
                 shared=shared_context,
                 metadata=metadata,
@@ -173,6 +240,7 @@ class SequentialMonteCarlo:
                     state.log_evidence,
                 )
             produced_states.append(state)
+            result = SMCResult(states=list(produced_states), context=context)
 
             for callback in self._callbacks:
                 callback_name = getattr(
@@ -181,10 +249,10 @@ class SequentialMonteCarlo:
                 logger.debug(
                     "Iteration %d: invoking callback %s.", t, callback_name
                 )
-                callback(
-                    state,
-                    context,
-                    SMCResult(states=produced_states, context=context),
+                call_with_optional_args(
+                    callback,
+                    (state, context, result),
+                    (rng,),
                 )
 
             if context.metadata["stop_requested"]:
@@ -201,4 +269,34 @@ class SequentialMonteCarlo:
             len(produced_states),
             len(produced_states),
         )
-        return SMCResult(states=produced_states, context=context)
+        if context is None or not produced_states:
+            raise ValueError("SMC run produced no states.")
+        return SMCResult(states=list(produced_states), context=context)
+
+    def resume_from(
+        self,
+        checkpoint: SMCCheckpoint | Mapping[str, Any],
+        *,
+        rng: "RandomGenerator" | np.random.Generator | int | None = None,
+    ) -> SMCRuntime:
+        """Reconstruct runtime state from a checkpoint for use with :meth:`run`."""
+        checkpoint_obj = (
+            checkpoint
+            if isinstance(checkpoint, SMCCheckpoint)
+            else SMCCheckpoint.from_dict(checkpoint)
+        )
+        restored_rng = checkpoint_obj.restore_rng()
+        context_snapshot = checkpoint_obj.context.snapshot()
+        return SMCRuntime(
+            state=ParticleState.from_snapshot(checkpoint_obj.state.snapshot()),
+            produced_states=[
+                ParticleState.from_snapshot(state.snapshot())
+                for state in checkpoint_obj.result.states
+            ],
+            t=checkpoint_obj.context.t + 1,
+            next_observation_index=checkpoint_obj.context.next_observation_index,
+            shared_context=context_snapshot["shared"],
+            metadata=context_snapshot["metadata"],
+            outputs=context_snapshot["outputs"],
+            rng=restored_rng if restored_rng is not None else resolve_rng(rng),
+        )

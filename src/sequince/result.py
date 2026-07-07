@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 from numpy.random import Generator as NumPyGenerator
@@ -11,13 +13,12 @@ from numpy.random import Generator as NumPyGenerator
 from ._array_api import asarray, namespace, to_numpy
 from ._typing import Array
 from .state import ParticleState
+from .steps.context import StepContext
 from .steps.nested import NESTED_SMC_OUTPUT_KEY
 from .utils import resolve_rng
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
-
-    from .steps.base import StepContext
 
 
 def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
@@ -51,6 +52,37 @@ class SMCResult:
         return SMCResult(
             states=[*self.states, state],
             context=self.context,
+        )
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a detached snapshot suitable for checkpoint payloads."""
+        return {
+            "states": [state.snapshot() for state in self.states],
+            "context": self.context.snapshot(),
+        }
+
+    @classmethod
+    def from_snapshot(cls, payload: Mapping[str, Any]) -> "SMCResult":
+        """Reconstruct a result from :meth:`snapshot` output."""
+        if not isinstance(payload, Mapping):
+            raise TypeError("SMCResult snapshot must be a mapping.")
+        missing = {key for key in ("states", "context") if key not in payload}
+        if missing:
+            raise ValueError(
+                "SMCResult snapshot is missing required keys: "
+                + ", ".join(sorted(missing))
+            )
+        states_payload = payload["states"]
+        if not isinstance(states_payload, Sequence):
+            raise TypeError("SMCResult snapshot 'states' must be a sequence.")
+        return cls(
+            states=[
+                ParticleState.from_snapshot(state_payload)
+                for state_payload in states_payload
+            ],
+            context=StepContext.from_snapshot(
+                copy.deepcopy(payload["context"])
+            ),
         )
 
     def get_nested_results(
