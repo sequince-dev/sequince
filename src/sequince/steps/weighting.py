@@ -139,10 +139,14 @@ class BaseTemperedStep(SMCStep):
     ) -> ParticleState:
         """Initialize metadata related to tempering."""
         if "temperature" not in context.metadata:
-            logger.debug("Initializing tempering metadata in context to 0.0.")
-            context.metadata["temperature"] = 0.0
+            initial_temperature = float(state.metadata.get("temperature", 0.0))
+            logger.debug(
+                "Initializing tempering metadata in context to %.4f.",
+                initial_temperature,
+            )
+            context.metadata["temperature"] = initial_temperature
             state_metadata = dict(state.metadata)
-            state_metadata["temperature"] = 0.0
+            state_metadata["temperature"] = initial_temperature
             state = state.with_updates(metadata=state_metadata)
         if "temperature_delta" not in context.metadata:
             context.metadata["temperature_delta"] = 0.0
@@ -180,7 +184,8 @@ class TemperedWeighting(BaseTemperedStep):
         rng: "ArrayRNG",
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
-        temperature = float(
+        current_temperature = float(context.metadata.get("temperature", 0.0))
+        target_temperature = float(
             call_with_optional_context(
                 self._schedule,
                 (context.t,),
@@ -189,7 +194,13 @@ class TemperedWeighting(BaseTemperedStep):
         )
         if self._clip is not None:
             lo, hi = self._clip
-            temperature = float(max(lo, min(hi, temperature)))
+            target_temperature = float(max(lo, min(hi, target_temperature)))
+        if target_temperature < current_temperature:
+            raise ValueError(
+                "temperature_schedule produced a temperature smaller than the "
+                "current temperature."
+            )
+        temperature_delta = target_temperature - current_temperature
 
         log_increments = call_with_optional_context(
             self._log_increment_fn,
@@ -199,7 +210,7 @@ class TemperedWeighting(BaseTemperedStep):
         xp = namespace(state.log_weights)
         increments = (
             _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
-            * temperature
+            * temperature_delta
         )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
@@ -207,15 +218,21 @@ class TemperedWeighting(BaseTemperedStep):
             )
 
         logger.debug(
-            "TemperedWeighting: temperature %.4f applied; mean increment %.6f.",
-            temperature,
+            "TemperedWeighting: temperature %.4f -> %.4f applied; mean increment %.6f.",
+            current_temperature,
+            target_temperature,
             float(to_numpy(xp.sum(increments) / increments.shape[0])),
         )
+        metadata = dict(state.metadata)
+        metadata["temperature"] = target_temperature
         updated_state = state.with_updates(
-            log_weights=state.log_weights + increments
+            log_weights=state.log_weights + increments,
+            metadata=metadata,
         )
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
+        context.metadata["temperature"] = target_temperature
+        context.metadata["temperature_delta"] = temperature_delta
         return updated_state
 
 
