@@ -248,6 +248,8 @@ class EmceeMutation(MutationStep):
             moves=self._move,
             **self._kwargs,
         )
+        seed = int(to_numpy(rng.choice(2**32 - 1)))
+        sampler.random_state = np.random.RandomState(seed).get_state()
 
         state_result = sampler.run_mcmc(
             initial_positions,
