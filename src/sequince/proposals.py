@@ -15,8 +15,6 @@ from .flows import (
 )
 
 if TYPE_CHECKING:
-    from orng import RandomGenerator
-
     from .steps.context import StepContext
 
 logger = logging.getLogger(__name__)
@@ -36,7 +34,6 @@ class ProposalDistribution(Protocol):
         self,
         n_samples: int,
         context: StepContext | None = None,
-        rng: RandomGenerator | None = None,
     ) -> Array:
         """Draw samples from the proposal distribution."""
 
@@ -44,7 +41,6 @@ class ProposalDistribution(Protocol):
         self,
         n_samples: int,
         context: StepContext | None = None,
-        rng: RandomGenerator | None = None,
     ) -> tuple[Array, Array]:
         """Draw samples and return their log proposal densities."""
 
@@ -66,17 +62,10 @@ class FlowProposal(ProposalDistribution):
         self,
         particles: Array,
         context: StepContext | None = None,
-        rng: RandomGenerator | None = None,
     ) -> "FlowProposal":
         logger.info("Fitting flow proposal to %d particles", len(particles))
         backend_particles = flow_asarray(self._flow, particles)
-        from .utils import call_with_optional_args
-
-        call_with_optional_args(
-            self._flow.fit,
-            (backend_particles,),
-            (context, rng),
-        )
+        self._flow.fit(backend_particles, context=context)
         return self
 
     def state_dict(self) -> dict[str, Any]:
@@ -103,32 +92,21 @@ class FlowProposal(ProposalDistribution):
         self,
         n_samples: int,
         context: StepContext | None = None,
-        rng: RandomGenerator | None = None,
     ) -> Array:
-        from .utils import call_with_optional_args
-
-        return call_with_optional_args(
-            self._flow.sample,
-            (n_samples,),
-            (context, rng),
-        )
+        return self._flow.sample(n_samples, context=context)
 
     def sample_and_log_prob(
         self,
         n_samples: int,
         context: StepContext | None = None,
-        rng: RandomGenerator | None = None,
     ) -> tuple[Array, Array]:
         flow_sample_and_log_prob = getattr(
             self._flow, "sample_and_log_prob", None
         )
         if callable(flow_sample_and_log_prob):
-            from .utils import call_with_optional_args
-
-            return call_with_optional_args(
-                flow_sample_and_log_prob,
-                (n_samples,),
-                (context, rng),
+            return flow_sample_and_log_prob(
+                n_samples,
+                context=context,
             )
-        samples = self.sample(n_samples, context=context, rng=rng)
+        samples = self.sample(n_samples, context=context)
         return samples, self.log_prob(samples, context=context)
