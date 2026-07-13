@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, Sequence
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from .base import SMCStep, StepContext
 
@@ -150,6 +151,14 @@ class PeriodicStep(SMCStep):
             )
             return state
 
+    def state_dict(self) -> dict[str, Any]:
+        return {"step": self.step.state_dict()}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        nested_state = state.get("step", {})
+        if not isinstance(nested_state, Mapping):
+            raise TypeError("PeriodicStep state 'step' must be a mapping.")
+        self.step.load_state_dict(nested_state)
 
 class RepeatStep(SMCStep):
     """Repeat a step or sequence of steps a fixed number of times."""

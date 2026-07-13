@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from orng import RandomGenerator
 
@@ -72,3 +74,12 @@ class NestedSMCStep(SMCStep):
         if self.record_outputs:
             context.record_output(self.output_key, result)
         return result.final_state
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"runner": self.runner.state_dict()}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        runner_state = state.get("runner", {})
+        if not isinstance(runner_state, Mapping):
+            raise TypeError("NestedSMCStep state 'runner' must be a mapping.")
+        self.runner.load_state_dict(runner_state)
