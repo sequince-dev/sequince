@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
 from ._typing import MetaData, MutationStrategy
 from .posterior import TemperedPosterior
+from .proposals import ProposalDistribution
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .steps import (
@@ -28,7 +29,7 @@ def make_standard_bayesian_smc(
     log_prior: Callable[..., Any],
     log_likelihood: Callable[..., Any],
     *,
-    log_proposal: Callable[..., Any] | None = None,
+    log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
     target_ess_ratio: float = 0.7,
     max_temperature: float = 1.0,
     min_delta: float = 1e-8,
@@ -64,8 +65,8 @@ def make_standard_bayesian_smc(
     log_likelihood:
         Callable evaluating the log likelihood ``log l(x)``.
     log_proposal:
-        Optional callable for ``log q(x)`` when importance sampling proposals
-        are used.
+        Optional callable or proposal object providing ``log q(x)`` when
+        importance sampling proposals are used.
     target_ess_ratio:
         Target effective sample size ratio used by adaptive tempering.
     max_temperature:

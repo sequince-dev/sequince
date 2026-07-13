@@ -32,6 +32,7 @@ def _call_log_prob(
 
 
 LogProbFn = Callable[..., Array | float]
+PARTICLE_TRANSFORM_KEY = "particle_transform"
 
 
 def _as_scalar_log_prob(value: Any) -> float:
@@ -90,6 +91,7 @@ class MutationStep(SMCStep):
         xp = namespace(particles)
         transform = self._transform.clone()
         transform.fit(asarray(particles, xp=xp), context=context)
+        context.metadata[PARTICLE_TRANSFORM_KEY] = transform
         return transform
 
     @staticmethod
@@ -103,7 +105,7 @@ class MutationStep(SMCStep):
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         latent, _ = transform.forward(arr, context=context)
-        return latent
+        return asarray(latent, xp=xp)
 
     @staticmethod
     def _inverse_transform(
@@ -115,7 +117,8 @@ class MutationStep(SMCStep):
             return values, None
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        return transform.inverse(arr, context=context)
+        output, log_det = transform.inverse(arr, context=context)
+        return asarray(output, xp=xp), asarray(log_det, xp=xp)
 
     @staticmethod
     def _combine_with_log_det(result: Any, log_det: Array | None):

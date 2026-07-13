@@ -8,7 +8,7 @@ import numpy as np
 
 from .._array_api import to_numpy
 from .._typing import Array
-from ..proposals import ProposalKernel
+from ..mutation_kernels import MutationKernel
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-ProposalFactory = Callable[[Array, StepContext], ProposalKernel]
+MutationKernelFactory = Callable[[Array, StepContext], MutationKernel]
 
 
 class WasteFreeResampleMove(SMCStep):
@@ -28,14 +28,14 @@ class WasteFreeResampleMove(SMCStep):
 
     Examples
     --------
-    >>> from sequince.posteriors import TemperedPosterior
-    >>> from sequince.proposals import GaussianRandomWalk
+    >>> from sequince.posterior import TemperedPosterior
+    >>> from sequince.mutation_kernels import GaussianRandomWalk
     >>> from sequince.steps import WasteFreeResampleMove
     >>> tempered_post = TemperedPosterior(log_likelihood, log_prior)
-    >>> proposal = GaussianRandomWalk(scale=0.5)
+    >>> kernel = GaussianRandomWalk(scale=0.5)
     >>> step = WasteFreeResampleMove(
     ...     log_prob_fn=tempered_post,
-    ...     proposal=proposal,
+    ...     kernel=kernel,
     ...     resample_ancestors=True,
     ...     proposals_per_particle=3,
     ... )
@@ -51,8 +51,8 @@ class WasteFreeResampleMove(SMCStep):
     log_prob_fn:
         Callable returning log probabilities of the tempered target, or an
         object exposing a ``log_prob`` method (e.g. ``TemperedPosterior``).
-    proposal:
-        Proposal kernel supplying forward and backward log densities.
+    kernel:
+        Mutation kernel supplying forward and backward log densities.
     resample_ancestors:
         When ``True`` the step draws ancestors proportional to the current
         weights before proposing new particles (default). Set to ``False`` to
@@ -66,8 +66,7 @@ class WasteFreeResampleMove(SMCStep):
     def __init__(
         self,
         log_prob_fn: Callable[..., Any],
-        proposal: ProposalKernel
-        | Callable[[Array, StepContext], ProposalKernel],
+        kernel: MutationKernel | MutationKernelFactory,
         *,
         resample_ancestors: bool = True,
         proposals_per_particle: int = 1,
@@ -91,17 +90,15 @@ class WasteFreeResampleMove(SMCStep):
             self._log_prob_fn = _wrapped_log_prob
         else:
             self._log_prob_fn = log_prob_fn
-        if hasattr(proposal, "sample") and hasattr(proposal, "log_density"):
-            self._proposal: ProposalKernel | None = proposal  # type: ignore[assignment]
-            self._proposal_factory: (
-                Callable[[Array, StepContext], ProposalKernel] | None
-            ) = None
-        elif callable(proposal):
-            self._proposal = None
-            self._proposal_factory = proposal  # type: ignore[assignment]
+        if hasattr(kernel, "sample") and hasattr(kernel, "log_density"):
+            self._kernel: MutationKernel | None = kernel  # type: ignore[assignment]
+            self._kernel_factory: MutationKernelFactory | None = None
+        elif callable(kernel):
+            self._kernel = None
+            self._kernel_factory = kernel  # type: ignore[assignment]
         else:
             raise TypeError(
-                "proposal must implement ProposalKernel or be a callable returning one."
+                "kernel must implement MutationKernel or be a callable returning one."
             )
         self._resample = resample_ancestors
         self._n_proposals = int(proposals_per_particle)
@@ -141,7 +138,7 @@ class WasteFreeResampleMove(SMCStep):
         parent_particles = particles[ancestor_indices]
 
         log_prob_parents = self._evaluate_log_prob(parent_particles, context)
-        kernel = self._resolve_proposal(parent_particles, context)
+        kernel = self._resolve_kernel(parent_particles, context)
 
         log_base_weight = -np.log(n)
         remaining_log_mass = np.full(n, log_base_weight, dtype=float)
@@ -154,7 +151,7 @@ class WasteFreeResampleMove(SMCStep):
             proposals = kernel.sample(parent_particles, rng)
             if proposals.shape != parent_particles.shape:
                 raise ValueError(
-                    "Proposal kernel must return the same shape as the input particles."
+                    "Mutation kernel must return the same shape as the input particles."
                 )
 
             log_prob_proposals = self._evaluate_log_prob(proposals, context)
@@ -276,21 +273,21 @@ class WasteFreeResampleMove(SMCStep):
             raise ValueError("log_prob_fn must return one value per particle.")
         return arr
 
-    def _resolve_proposal(
+    def _resolve_kernel(
         self,
         parent_particles: Array,
         context: StepContext,
-    ) -> ProposalKernel:
-        if self._proposal_factory is not None:
-            kernel = self._proposal_factory(parent_particles, context)
+    ) -> MutationKernel:
+        if self._kernel_factory is not None:
+            kernel = self._kernel_factory(parent_particles, context)
         else:
-            if self._proposal is None:
+            if self._kernel is None:
                 raise RuntimeError(
-                    "Proposal factory did not return a valid ProposalKernel."
+                    "Kernel factory did not return a valid MutationKernel."
                 )
-            kernel = self._proposal
+            kernel = self._kernel
         if not hasattr(kernel, "sample") or not hasattr(kernel, "log_density"):
             raise TypeError(
-                "Resolved proposal must implement sample() and log_density()."
+                "Resolved kernel must implement sample() and log_density()."
             )
         return kernel

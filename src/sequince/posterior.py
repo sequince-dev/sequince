@@ -4,12 +4,12 @@ import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from sequince.transforms import ParticleTransform, get_prebuilt_transform
-
 from ._array_api import asarray, full, namespace
 from ._typing import Array
+from .proposals import ProposalDistribution
 from .state import ParticleState
 from .steps.context import StepContext
+from .transforms import ParticleTransform, get_prebuilt_transform
 from .utils import call_with_optional_context
 
 if TYPE_CHECKING:
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .steps.context import StepContext
 
 ArrayLikeFn = Callable[..., Array | float]
+LogProposalLike = ArrayLikeFn | ProposalDistribution
 
 
 def _evaluate(
@@ -44,6 +45,22 @@ def _evaluate(
     return array
 
 
+def _resolve_log_proposal_fn(
+    log_proposal: LogProposalLike | None,
+) -> ArrayLikeFn | None:
+    """Normalize proposal inputs to a log-density callable."""
+    if log_proposal is None:
+        return None
+    if callable(log_proposal):
+        return log_proposal
+    log_prob = getattr(log_proposal, "log_prob", None)
+    if callable(log_prob):
+        return log_prob
+    raise TypeError(
+        "log_proposal must be a callable, a ProposalDistribution, or None."
+    )
+
+
 @dataclass(frozen=True)
 class TemperedPosterior:
     """Wrapper exposing posterior building blocks for SMC workflows.
@@ -55,29 +72,30 @@ class TemperedPosterior:
     log_likelihood:
         Callable returning ``log l(x)`` for each particle.
     log_proposal:
-        Optional callable returning ``log q(x)``. When supplied the intermediate
-        targets follow the bridge ``q(x)^{1-β} [p(x)L(x)]^{β}``.
+        Optional callable or proposal object returning ``log q(x)``. When
+        supplied the intermediate targets follow the bridge
+        ``q(x)^{1-β} [p(x)L(x)]^{β}``.
     """
 
     log_prior: ArrayLikeFn
     log_likelihood: ArrayLikeFn
-    log_proposal: ArrayLikeFn | None = None
+    log_proposal: LogProposalLike | None = None
 
     def resolve_log_proposal(
         self,
-        log_proposal_override: ArrayLikeFn | None = None,
+        log_proposal_override: LogProposalLike | None = None,
     ) -> ArrayLikeFn | None:
         """Return the effective proposal callable for the current evaluation."""
         if log_proposal_override is not None:
-            return log_proposal_override
-        return self.log_proposal
+            return _resolve_log_proposal_fn(log_proposal_override)
+        return _resolve_log_proposal_fn(self.log_proposal)
 
     def log_increment(
         self,
         particles: Array,
         context: "StepContext",
         *,
-        log_proposal_override: ArrayLikeFn | None = None,
+        log_proposal_override: LogProposalLike | None = None,
     ) -> float | Any:
         """Return the log-weight increment required by the tempering step."""
         log_like = _evaluate(self.log_likelihood, particles, context)
@@ -98,7 +116,7 @@ class TemperedPosterior:
         particles: Array,
         context: "StepContext",
         *,
-        log_proposal_override: ArrayLikeFn | None = None,
+        log_proposal_override: LogProposalLike | None = None,
     ) -> float | Any:
         """Return the tempered log posterior evaluated at the current β."""
         beta = float(context.metadata.get("temperature", 0.0))
@@ -118,7 +136,7 @@ class TemperedPosterior:
         self,
         context: StepContext,
         *,
-        log_proposal_override: ArrayLikeFn | None = None,
+        log_proposal_override: LogProposalLike | None = None,
     ):
         frozen_context = StepContext(
             t=context.t,
@@ -160,7 +178,7 @@ def draw_additional_samples(
     *,
     log_prior: Callable[..., Any] | None = None,
     log_likelihood: Callable[..., Any] | None = None,
-    log_proposal: Callable[..., Any] | None = None,
+    log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
     posterior: TemperedPosterior | None = None,
     result: SMCResult,
     rng: "ArrayRNG",
@@ -182,8 +200,8 @@ def draw_additional_samples(
         Callable evaluating the log likelihood ``log l(x)``. If `posterior` is
         not provided, both `log_prior` and `log_likelihood` must be given.
     log_proposal:
-        Optional callable for ``log q(x)`` when importance sampling proposals
-        are used.
+        Optional callable or proposal object for ``log q(x)`` when importance
+        sampling proposals are used.
     posterior:
         TemperedPosterior object defining the target distribution.
     state:
