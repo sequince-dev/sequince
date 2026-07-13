@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ._typing import Array
 
 if TYPE_CHECKING:
-    from orng import RandomGenerator
-
     from .steps.context import StepContext
 
 
@@ -23,7 +21,6 @@ class NormalizingFlow(Protocol):
         self,
         particles: Array,
         context: StepContext | None = None,
-        rng: RandomGenerator | None = None,
     ) -> "NormalizingFlow": ...
 
     def forward(
@@ -48,7 +45,6 @@ class NormalizingFlow(Protocol):
         self,
         num_samples: int = 1,
         context: StepContext | None = None,
-        rng: RandomGenerator | None = None,
     ) -> Array:
         """Draw samples from the flow distribution."""
         ...
