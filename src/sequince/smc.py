@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from .checkpoint import SMCCheckpoint
+from .checkpoint import (
+    CheckpointWriter,
+    SMCCheckpoint,
+    StepState,
+    restore_steps,
+    snapshot_steps,
+)
 from .result import SMCResult
 from .state import ParticleState
 from .steps.base import StepContext
-from .utils import call_with_optional_args, resolve_rng
+from .utils import resolve_rng
 
 if TYPE_CHECKING:
     import numpy as np
@@ -49,6 +56,9 @@ class SequentialMonteCarlo:
         with the current state, context, and an ``SMCResult`` containing all states
         produced so far.  Callbacks can be used for logging, diagnostics, or custom
         stopping criteria that require access to the full history of states.
+    checkpoint_writers:
+        Optional persistence hooks invoked with a committed checkpoint after all
+        ordinary callbacks have completed.
     auto_normalize:
         If ``True`` (default) automatically normalize the particle weights at the end
         of each iteration.
@@ -64,11 +74,29 @@ class SequentialMonteCarlo:
         ],
         *,
         callbacks: Sequence[Callable[..., None]] | None = None,
+        checkpoint_writers: Sequence[CheckpointWriter] | None = None,
         auto_normalize: bool = True,
     ):
         self._steps = list(steps)
         self._callbacks = list(callbacks) if callbacks is not None else []
+        self._checkpoint_writers = list(checkpoint_writers or ())
         self._auto_normalize = auto_normalize
+
+    def state_dict(self) -> dict[str, Any]:
+        """Return mutable state for the configured step pipeline."""
+        return {
+            "steps": [item.to_dict() for item in snapshot_steps(self._steps)]
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore mutable state for the configured step pipeline."""
+        step_payload = state.get("steps", [])
+        if not isinstance(step_payload, Sequence):
+            raise TypeError("SMC runner state 'steps' must be a sequence.")
+        restore_steps(
+            self._steps,
+            [StepState.from_dict(item) for item in step_payload],
+        )
 
     def run(
         self,
@@ -250,11 +278,31 @@ class SequentialMonteCarlo:
                 logger.debug(
                     "Iteration %d: invoking callback %s.", t, callback_name
                 )
-                call_with_optional_args(
-                    callback,
-                    (state, context, result),
-                    (rng,),
+                callback(state, context, result)
+
+            next_iteration = context.t + 1
+            checkpoint_writers = [
+                writer
+                for writer in self._checkpoint_writers
+                if writer.is_due(next_iteration)
+            ]
+            if checkpoint_writers:
+                include_history = any(
+                    writer.include_history for writer in checkpoint_writers
                 )
+                save_rng = any(
+                    writer.save_rng for writer in checkpoint_writers
+                )
+                checkpoint = SMCCheckpoint.from_runtime(
+                    state=state,
+                    context=context,
+                    result=result,
+                    steps=self._steps,
+                    rng=rng if save_rng else None,
+                    include_history=include_history,
+                )
+                for writer in checkpoint_writers:
+                    writer.write(checkpoint)
 
             if context.metadata["stop_requested"]:
                 logger.info(
@@ -279,6 +327,7 @@ class SequentialMonteCarlo:
         checkpoint: SMCCheckpoint | Mapping[str, Any],
         *,
         rng: "RandomGenerator" | np.random.Generator | int | None = None,
+        shared_context: Mapping[str, Any] | None = None,
     ) -> SMCRuntime:
         """Reconstruct runtime state from a checkpoint for use with :meth:`run`."""
         checkpoint_obj = (
@@ -286,18 +335,20 @@ class SequentialMonteCarlo:
             if isinstance(checkpoint, SMCCheckpoint)
             else SMCCheckpoint.from_dict(checkpoint)
         )
+        restore_steps(self._steps, checkpoint_obj.step_states)
         restored_rng = checkpoint_obj.restore_rng()
-        context_snapshot = checkpoint_obj.context.snapshot()
+        state = ParticleState.from_snapshot(checkpoint_obj.state.snapshot())
+        history = checkpoint_obj.history or (checkpoint_obj.state,)
         return SMCRuntime(
-            state=ParticleState.from_snapshot(checkpoint_obj.state.snapshot()),
+            state=state,
             produced_states=[
-                ParticleState.from_snapshot(state.snapshot())
-                for state in checkpoint_obj.result.states
+                ParticleState.from_snapshot(item.snapshot())
+                for item in history
             ],
-            t=checkpoint_obj.context.t + 1,
-            next_observation_index=checkpoint_obj.context.next_observation_index,
-            shared_context=context_snapshot["shared"],
-            metadata=context_snapshot["metadata"],
-            outputs=context_snapshot["outputs"],
+            t=checkpoint_obj.next_iteration,
+            next_observation_index=checkpoint_obj.next_observation_index,
+            shared_context=dict(shared_context or {}),
+            metadata=copy.deepcopy(checkpoint_obj.metadata),
+            outputs=copy.deepcopy(checkpoint_obj.outputs),
             rng=restored_rng if restored_rng is not None else resolve_rng(rng),
         )
