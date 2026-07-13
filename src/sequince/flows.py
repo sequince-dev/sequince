@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._typing import Array
 
 if TYPE_CHECKING:
+    from orng import RandomGenerator
+
     from .steps.context import StepContext
 
 
@@ -17,7 +20,10 @@ class NormalizingFlow(Protocol):
     xp: Any
 
     def fit(
-        self, particles: Array, context: StepContext | None = None
+        self,
+        particles: Array,
+        context: StepContext | None = None,
+        rng: RandomGenerator | None = None,
     ) -> "NormalizingFlow": ...
 
     def forward(
@@ -39,7 +45,10 @@ class NormalizingFlow(Protocol):
         ...
 
     def sample(
-        self, num_samples: int = 1, context: StepContext | None = None
+        self,
+        num_samples: int = 1,
+        context: StepContext | None = None,
+        rng: RandomGenerator | None = None,
     ) -> Array:
         """Draw samples from the flow distribution."""
         ...
@@ -48,6 +57,31 @@ class NormalizingFlow(Protocol):
 def flow_asarray(flow: NormalizingFlow, array: Any):
     """Cast ``array`` to the backend array type expected by ``flow``."""
     return flow.xp.asarray(array)
+
+
+def flow_state_dict(flow: NormalizingFlow) -> dict[str, Any]:
+    """Return persistent flow state when the adapter exposes it."""
+    state_fn = getattr(flow, "state_dict", None)
+    if state_fn is None:
+        return {}
+    state = state_fn()
+    if not isinstance(state, Mapping):
+        raise TypeError("Flow state_dict() must return a mapping.")
+    return copy.deepcopy(dict(state))
+
+
+def load_flow_state_dict(
+    flow: NormalizingFlow, state: Mapping[str, Any]
+) -> None:
+    """Restore persistent flow state when supported by the adapter."""
+    load_fn = getattr(flow, "load_state_dict", None)
+    if load_fn is None:
+        if state:
+            raise ValueError(
+                f"{type(flow).__name__} does not support checkpoint state."
+            )
+        return
+    load_fn(copy.deepcopy(dict(state)))
 
 
 def clone_flow(flow: NormalizingFlow) -> NormalizingFlow:
