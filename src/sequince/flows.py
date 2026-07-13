@@ -10,8 +10,6 @@ from ._typing import Array
 if TYPE_CHECKING:
     from .steps.context import StepContext
 
-FLOW_FIT_OUTPUT_KEY = "flow_fit"
-
 
 class NormalizingFlow(Protocol):
     """Minimal interface for normalizing flows used by Sequince."""
@@ -20,13 +18,7 @@ class NormalizingFlow(Protocol):
 
     def fit(
         self, particles: Array, context: StepContext | None = None
-    ) -> "NormalizingFlow":
-        """Adapt the flow in place.
-
-        Implementations may record fit diagnostics in ``context.outputs`` under
-        :data:`FLOW_FIT_OUTPUT_KEY`.
-        """
-        ...
+    ) -> "NormalizingFlow": ...
 
     def forward(
         self, particles: Array, context: StepContext | None = None
@@ -56,25 +48,6 @@ class NormalizingFlow(Protocol):
 def flow_asarray(flow: NormalizingFlow, array: Any):
     """Cast ``array`` to the backend array type expected by ``flow``."""
     return flow.xp.asarray(array)
-
-
-def record_flow_fit_output(
-    context: "StepContext | None",
-    diagnostics: dict[str, Any],
-    *,
-    key: str = FLOW_FIT_OUTPUT_KEY,
-) -> dict[str, Any]:
-    """Record flow-fit diagnostics in ``context.outputs`` when available."""
-    if context is None:
-        return diagnostics
-    record_output = getattr(context, "record_output", None)
-    if callable(record_output):
-        record_output(key, diagnostics)
-        return diagnostics
-    outputs = getattr(context, "outputs", None)
-    if outputs is not None:
-        outputs.setdefault(key, []).append(diagnostics)
-    return diagnostics
 
 
 def clone_flow(flow: NormalizingFlow) -> NormalizingFlow:

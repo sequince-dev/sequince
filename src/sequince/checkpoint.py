@@ -16,7 +16,7 @@ from .utils import restore_rng, snapshot_rng
 
 @dataclass(frozen=True)
 class SMCCheckpoint:
-    """Detached runtime snapshot for callback-driven checkpointing."""
+    """Snapshot of the SMC runtime for checkpointing and resuming."""
 
     state: ParticleState
     context: StepContext
