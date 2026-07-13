@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import copy
 import inspect
-import logging
 from collections.abc import Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
-import h5py
 import numpy as np
-from array_api_compat import is_torch_namespace
 from orng import ArrayRNG, RandomGenerator
 
 from ._array_api import namespace
@@ -18,7 +14,6 @@ from ._typing import Array
 if TYPE_CHECKING:
     from .steps.base import StepContext
 
-logger = logging.getLogger(__name__)
 
 RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
 
@@ -47,7 +42,7 @@ def call_with_optional_args(
     base_args: tuple[Any, ...],
     optional_args: tuple[Any, ...] = (),
 ) -> Any:
-    """Call fn with optional positional arguments when its signature allows it."""
+    """Call ``fn`` with optional positional arguments when accepted."""
     signature = inspect.signature(fn)
     params = signature.parameters.values()
 
@@ -64,7 +59,6 @@ def call_with_optional_args(
     has_varargs = any(
         p.kind == inspect.Parameter.VAR_POSITIONAL for p in params
     )
-
     base_count = len(base_args)
     full_count = base_count + len(optional_args)
     max_positional = float("inf") if has_varargs else len(positional)
@@ -76,6 +70,15 @@ def call_with_optional_args(
     raise TypeError(
         "Function cannot accept the provided positional arguments."
     )
+
+
+def call_with_optional_context(
+    fn: Callable[..., Any],
+    base_args: tuple[Any, ...],
+    context: StepContext,
+) -> Any:
+    """Call fn with base_args and append context only if required."""
+    return call_with_optional_args(fn, base_args, (context,))
 
 
 def _snapshot_numpy_generator_state(
@@ -117,9 +120,9 @@ def _snapshot_orng_state(backend: str, state: Any) -> dict[str, Any]:
             return {
                 "kind": "torch",
                 "generator_state": generator.get_state().clone(),
-                "device": None
-                if generator_device is None
-                else str(generator_device),
+                "device": (
+                    None if generator_device is None else str(generator_device)
+                ),
             }
     if normalized_backend == "cupy":
         generator = state
@@ -132,14 +135,8 @@ def _snapshot_orng_state(backend: str, state: Any) -> dict[str, Any]:
             }
     if normalized_backend == "jax":
         xp = namespace(state)
-        return {
-            "kind": "jax",
-            "key": xp.asarray(state),
-        }
-    return {
-        "kind": normalized_backend,
-        "state": copy.deepcopy(state),
-    }
+        return {"kind": "jax", "key": xp.asarray(state)}
+    return {"kind": normalized_backend, "state": copy.deepcopy(state)}
 
 
 def _restore_orng_backend_state(
@@ -239,23 +236,11 @@ def restore_rng(
         )
         generator = _restore_orng_backend_state(backend, state)
         device = snapshot.get("device")
-        kwargs: dict[str, Any] = {
-            "backend": backend,
-            "generator": generator,
-        }
+        kwargs: dict[str, Any] = {"backend": backend, "generator": generator}
         if device is not None:
             kwargs["device"] = device
         return rng_type(**kwargs)
     raise ValueError(f"Unsupported RNG snapshot kind '{kind}'.")
-
-
-def call_with_optional_context(
-    fn: Callable[..., Any],
-    base_args: tuple[Any, ...],
-    context: StepContext,
-) -> Any:
-    """Call fn with base_args and append context only if required."""
-    return call_with_optional_args(fn, base_args, (context,))
 
 
 def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:
@@ -287,178 +272,3 @@ def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:
             "Bounds array must have the same number of dimensions as particles."
         )
     return xp.all((particles >= bounds[0]) & (particles <= bounds[1]), axis=-1)
-
-
-def _dtype_to_name(dtype: Any | str | None) -> str | None:
-    if dtype is None:
-        return None
-    if isinstance(dtype, str):
-        name = dtype
-    elif hasattr(dtype, "name") and getattr(dtype, "name"):
-        name = dtype.name
-    elif hasattr(dtype, "__name__"):
-        name = dtype.__name__
-    else:
-        text = str(dtype)
-        if text.startswith("<class '") and text.endswith("'>"):
-            text = text.split("'")[1]
-        if text.startswith("dtype(") and text.endswith(")"):
-            text = text[6:-1].strip("'\" ")
-        name = text
-    name = name.split(".")[-1]
-    return name.strip(" '\"<>").lower()
-
-
-def resolve_dtype(dtype: Any | str | None, xp: Any) -> Any | None:
-    if dtype is None or xp is None:
-        return dtype
-    if isinstance(dtype, str):
-        dtype_name = _dtype_to_name(dtype)
-        if is_torch_namespace(xp):
-            resolved = getattr(xp, dtype_name, None)
-            if resolved is None:
-                raise ValueError(
-                    f"Unknown dtype '{dtype}' for namespace {xp.__name__}"
-                )
-            return resolved
-        try:
-            return xp.dtype(dtype_name)
-        except (AttributeError, TypeError, ValueError):
-            resolved = getattr(xp, dtype_name, None)
-            if resolved is not None:
-                return resolved
-            raise ValueError(
-                f"Unknown dtype '{dtype}' for namespace "
-                f"{getattr(xp, '__name__', xp)}"
-            )
-    if is_torch_namespace(xp):
-        return dtype
-    try:
-        return xp.dtype(dtype)
-    except (AttributeError, TypeError, ValueError):
-        return dtype
-
-
-def encode_dtype(xp: Any, dtype: Any) -> dict[str, Any] | None:
-    if dtype is None:
-        return None
-    return {
-        "__dtype__": True,
-        "xp": xp.__name__,
-        "dtype": _dtype_to_name(dtype),
-    }
-
-
-def decode_dtype(xp: Any, encoded_dtype: Any) -> Any:
-    if isinstance(encoded_dtype, dict) and encoded_dtype.get("__dtype__"):
-        if encoded_dtype["xp"] != xp.__name__:
-            raise ValueError(
-                f"Encoded dtype xp {encoded_dtype['xp']} does not match "
-                f"current xp {xp.__name__}"
-            )
-        if is_torch_namespace(xp):
-            return getattr(xp, encoded_dtype["dtype"].split(".")[-1])
-        return xp.dtype(encoded_dtype["dtype"].split(".")[-1])
-    return encoded_dtype
-
-
-def to_numpy(value: Any) -> Any:
-    if hasattr(value, "detach") and hasattr(value, "cpu"):
-        return value.detach().cpu().numpy()
-    return np.asarray(value)
-
-
-def encode_for_hdf5(value: Any) -> Any:
-    if hasattr(value, "detach") and hasattr(value, "cpu"):
-        return value.detach().cpu().numpy()
-    if isinstance(value, np.ndarray):
-        return value
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, (int, float, str, bool)):
-        return value
-    if isinstance(value, (list, tuple)):
-        if all(isinstance(v, str) for v in value):
-            dt = h5py.string_dtype(encoding="utf-8")
-            return np.array(value, dtype=dt)
-        return [encode_for_hdf5(v) for v in value]
-    if isinstance(value, dict):
-        if not value:
-            return "__empty_dict__"
-        return {k: encode_for_hdf5(v) for k, v in value.items()}
-    if value is None:
-        return "__none__"
-    return value
-
-
-def decode_from_hdf5(value: Any) -> Any:
-    if isinstance(value, bytes):
-        value = value.decode("utf-8")
-    if isinstance(value, str):
-        if value == "__none__":
-            return None
-        if value == "__empty_dict__":
-            return {}
-        return value
-    if isinstance(value, np.ndarray):
-        if value.shape == ():
-            return value.item()
-        if value.dtype.kind in {"S", "O", "U"}:
-            try:
-                return value.astype(str).tolist()
-            except Exception:
-                return value
-        return value
-    if isinstance(value, list):
-        return [decode_from_hdf5(v) for v in value]
-    if isinstance(value, tuple):
-        return tuple(decode_from_hdf5(v) for v in value)
-    if isinstance(value, dict):
-        return {
-            (
-                k.decode("utf-8") if isinstance(k, bytes) else k
-            ): decode_from_hdf5(v)
-            for k, v in value.items()
-        }
-    return value
-
-
-def recursively_save_to_h5_file(
-    h5_file, path: str, dictionary: dict[str, Any]
-) -> None:
-    """Save a nested dictionary to an HDF5 group using flattened keys."""
-    group = h5_file.require_group(path)
-
-    def _save_flattened(g, prefix: str, mapping: dict[str, Any]) -> None:
-        for key, value in mapping.items():
-            full_key = f"{prefix}.{key}" if prefix else key
-            if isinstance(value, dict):
-                _save_flattened(g, full_key, value)
-                continue
-            if full_key in g:
-                del g[full_key]
-            try:
-                g.create_dataset(full_key, data=encode_for_hdf5(value))
-            except (TypeError, ValueError) as error:
-                logger.warning(
-                    "Falling back to string encoding for key %s: %s",
-                    full_key,
-                    error,
-                )
-                dt = h5py.string_dtype(encoding="utf-8")
-                g.create_dataset(full_key, data=np.array(str(value), dtype=dt))
-
-    _save_flattened(group, "", dictionary)
-
-
-def load_from_h5_file(h5_file, path: str) -> dict[str, Any]:
-    """Load a nested dictionary saved by ``recursively_save_to_h5_file``."""
-    group = h5_file[path]
-    result: dict[str, Any] = {}
-    for key, dataset in group.items():
-        parts = key.split(".")
-        cursor = result
-        for part in parts[:-1]:
-            cursor = cursor.setdefault(part, {})
-        cursor[parts[-1]] = decode_from_hdf5(dataset[()])
-    return result

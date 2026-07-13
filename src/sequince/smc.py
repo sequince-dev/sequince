@@ -123,10 +123,11 @@ class SequentialMonteCarlo:
                     "run(runtime=...) does not accept rng, shared_context, "
                     "metadata, or outputs."
                 )
-        elif initial_state is None:
-            raise ValueError("run() requires either initial_state or runtime.")
-
-        if runtime is None:
+        else:
+            if initial_state is None:
+                raise ValueError(
+                    "run() requires either initial_state or runtime."
+                )
             runtime = SMCRuntime(
                 state=initial_state,
                 produced_states=[],

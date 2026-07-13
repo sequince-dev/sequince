@@ -38,7 +38,6 @@ class SMCCallback:
         state: "ParticleState",
         context: "StepContext",
         results: "SMCResult",
-        rng: Any | None = None,
     ) -> None:
         raise NotImplementedError(
             "SMCCallback subclasses must implement apply()."
