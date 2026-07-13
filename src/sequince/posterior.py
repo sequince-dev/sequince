@@ -127,7 +127,14 @@ class TemperedPosterior:
             posterior = log_prior + beta * log_like
         else:
             log_prop = _evaluate(log_proposal, particles, context)
-            posterior = (1.0 - beta) * log_prop + beta * (log_prior + log_like)
+            if beta == 0.0:
+                posterior = log_prop
+            elif beta == 1.0:
+                posterior = log_prior + log_like
+            else:
+                posterior = (1.0 - beta) * log_prop + beta * (
+                    log_prior + log_like
+                )
         if particles.ndim == 1:
             return float(posterior[0])
         return posterior
@@ -164,9 +171,14 @@ class TemperedPosterior:
                     particles,
                     frozen_context,
                 )
-                posterior = (1.0 - beta) * frozen_log_prop + beta * (
-                    frozen_log_prior + frozen_log_like
-                )
+                if beta == 0.0:
+                    posterior = frozen_log_prop
+                elif beta == 1.0:
+                    posterior = frozen_log_prior + frozen_log_like
+                else:
+                    posterior = (1.0 - beta) * frozen_log_prop + beta * (
+                        frozen_log_prior + frozen_log_like
+                    )
             if particles.ndim == 1:
                 return float(posterior[0])
             return posterior

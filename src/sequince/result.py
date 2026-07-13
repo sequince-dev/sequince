@@ -135,14 +135,14 @@ class SMCResult:
         with_replacement: bool = True,
     ) -> Array:
         """Draw samples from the weighted posterior represented by the final state."""
-        xp = namespace(self.final_state.particles, self.final_state.weights)
+        final_state = self.final_state
+        xp = namespace(final_state.particles, final_state.weights)
+        particles = xp.atleast_2d(final_state.particles)
         if n_samples is None:
-            return xp.atleast_2d(self.final_state.particles)
+            n_samples = particles.shape[0]
         if n_samples <= 0:
             raise ValueError("n_samples must be positive.")
         rng_obj: ArrayRNG = resolve_rng(rng)
-        final_state = self.final_state
-        particles = xp.atleast_2d(final_state.particles)
         weights = asarray(final_state.weights, xp=xp)
         indices = asarray(
             rng_obj.choice(
