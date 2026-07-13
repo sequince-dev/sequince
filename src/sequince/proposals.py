@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ._array_api import asarray, namespace
 from ._typing import Array
-from .flows import NormalizingFlow, clone_flow, flow_asarray
+from .flows import (
+    NormalizingFlow,
+    clone_flow,
+    flow_asarray,
+    flow_state_dict,
+    load_flow_state_dict,
+)
 
 if TYPE_CHECKING:
+    from orng import RandomGenerator
+
     from .steps.context import StepContext
 
 logger = logging.getLogger(__name__)
@@ -27,6 +36,7 @@ class ProposalDistribution(Protocol):
         self,
         n_samples: int,
         context: StepContext | None = None,
+        rng: RandomGenerator | None = None,
     ) -> Array:
         """Draw samples from the proposal distribution."""
 
@@ -34,6 +44,7 @@ class ProposalDistribution(Protocol):
         self,
         n_samples: int,
         context: StepContext | None = None,
+        rng: RandomGenerator | None = None,
     ) -> tuple[Array, Array]:
         """Draw samples and return their log proposal densities."""
 
@@ -55,11 +66,27 @@ class FlowProposal(ProposalDistribution):
         self,
         particles: Array,
         context: StepContext | None = None,
+        rng: RandomGenerator | None = None,
     ) -> "FlowProposal":
         logger.info("Fitting flow proposal to %d particles", len(particles))
         backend_particles = flow_asarray(self._flow, particles)
-        self._flow.fit(backend_particles, context=context)
+        from .utils import call_with_optional_args
+
+        call_with_optional_args(
+            self._flow.fit,
+            (backend_particles,),
+            (context, rng),
+        )
         return self
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"flow": flow_state_dict(self._flow)}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        flow_state = state.get("flow", {})
+        if not isinstance(flow_state, Mapping):
+            raise TypeError("FlowProposal state 'flow' must be a mapping.")
+        load_flow_state_dict(self._flow, flow_state)
 
     def log_prob(
         self,
@@ -76,18 +103,32 @@ class FlowProposal(ProposalDistribution):
         self,
         n_samples: int,
         context: StepContext | None = None,
+        rng: RandomGenerator | None = None,
     ) -> Array:
-        return self._flow.sample(n_samples, context=context)
+        from .utils import call_with_optional_args
+
+        return call_with_optional_args(
+            self._flow.sample,
+            (n_samples,),
+            (context, rng),
+        )
 
     def sample_and_log_prob(
         self,
         n_samples: int,
         context: StepContext | None = None,
+        rng: RandomGenerator | None = None,
     ) -> tuple[Array, Array]:
         flow_sample_and_log_prob = getattr(
             self._flow, "sample_and_log_prob", None
         )
         if callable(flow_sample_and_log_prob):
-            return flow_sample_and_log_prob(n_samples, context=context)
-        samples = self.sample(n_samples, context=context)
+            from .utils import call_with_optional_args
+
+            return call_with_optional_args(
+                flow_sample_and_log_prob,
+                (n_samples,),
+                (context, rng),
+            )
+        samples = self.sample(n_samples, context=context, rng=rng)
         return samples, self.log_prob(samples, context=context)
