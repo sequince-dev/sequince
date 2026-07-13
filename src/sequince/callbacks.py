@@ -4,9 +4,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .checkpoint import SMCCheckpoint
 from .steps.mutation import PARTICLE_TRANSFORM_KEY
-from .utils import call_with_optional_args
 
 if TYPE_CHECKING:
     from .result import SMCResult
@@ -25,13 +23,8 @@ class SMCCallback:
         state: "ParticleState",
         context: "StepContext",
         results: "SMCResult",
-        rng: Any | None = None,
     ) -> None:
-        call_with_optional_args(
-            self.apply,
-            (state, context, results),
-            (rng,),
-        )
+        self.apply(state, context, results)
 
     def apply(
         self,
@@ -71,60 +64,6 @@ class PlotCallback(SMCCallback):
         self.plot_kwargs = plot_kwargs or {}
 
         Path(self.outdir).mkdir(parents=True, exist_ok=True)
-
-
-class HDF5Checkpoint(SMCCallback):
-    """Write SMC checkpoints to an HDF5 file at a fixed iteration cadence."""
-
-    def __init__(
-        self,
-        file_path: str | Path,
-        *,
-        every: int = 1,
-        path: str = "checkpoint",
-        dsetname: str = "state",
-        save_rng: bool = True,
-    ) -> None:
-        if every <= 0:
-            raise ValueError("every must be positive.")
-        file_path = Path(file_path)
-        lower_path = file_path.name.lower()
-        if not lower_path.endswith((".h5", ".hdf5")):
-            raise ValueError(
-                "Checkpoint file must be an HDF5 file (.h5 or .hdf5)."
-            )
-        self.file_path = file_path
-        self.every = int(every)
-        self.path = path
-        self.dsetname = dsetname
-        self.save_rng = save_rng
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def apply(
-        self,
-        state: "ParticleState",
-        context: "StepContext",
-        results: "SMCResult",
-        rng: Any | None = None,
-    ) -> None:
-        completed_iterations = context.t + 1
-        if completed_iterations % self.every != 0:
-            return
-        checkpoint_rng = rng if self.save_rng else None
-        checkpoint = SMCCheckpoint.from_runtime(
-            state=state,
-            context=context,
-            result=results,
-            rng=checkpoint_rng,
-        )
-        import h5py
-
-        with h5py.File(self.file_path, "a") as h5_file:
-            checkpoint.save_hdf5(
-                h5_file,
-                path=self.path,
-                dsetname=self.dsetname,
-            )
 
 
 class TracePlot(PlotCallback):
