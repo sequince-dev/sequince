@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -45,9 +46,8 @@ def test_tempered_posterior_accepts_proposal_distribution_object(
 
 def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
     class DummyFlow:
-        xp = np
-
-        def __init__(self, shift=0.75):
+        def __init__(self, shift: float = 0.75) -> None:
+            self.xp: Any = np
             self.shift = shift
             self.fitted_particles = None
 
@@ -72,6 +72,12 @@ def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
         def sample(self, num_samples: int = 1, context=None):
             return np.full((num_samples, 2), self.shift, dtype=float)
 
+        def state_dict(self):
+            return {"fitted_particles": self.fitted_particles}
+
+        def load_state_dict(self, state):
+            self.fitted_particles = np.asarray(state["fitted_particles"])
+
     training_particles = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=float)
     proposal = FlowProposal(DummyFlow()).fit(
         training_particles,
@@ -88,6 +94,11 @@ def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
     np.testing.assert_allclose(
         sampled_log_prob,
         proposal.log_prob(sampled_particles, context=context_factory()),
+    )
+    restored_proposal = FlowProposal(DummyFlow())
+    restored_proposal.load_state_dict(proposal.state_dict())
+    np.testing.assert_allclose(
+        getattr(restored_proposal.flow, "fitted_particles"), training_particles
     )
 
 
