@@ -129,6 +129,12 @@ def test_flow_transform_round_trip_and_clone(particles):
         def sample(self, num_samples: int = 1, context=None):
             return np.full((num_samples, 3), self.shift, dtype=float)
 
+        def state_dict(self):
+            return {"fitted_particles": self.fitted_particles}
+
+        def load_state_dict(self, state):
+            self.fitted_particles = np.asarray(state["fitted_particles"])
+
     transform = FlowTransform(ShiftFlow())
     transform.fit(particles)
     latent, log_det = transform.forward(particles)
@@ -144,6 +150,12 @@ def test_flow_transform_round_trip_and_clone(particles):
     assert isinstance(cloned, FlowTransform)
     assert cloned is not transform
     assert cloned.flow is not transform.flow
+
+    restored_transform = FlowTransform(ShiftFlow())
+    restored_transform.load_state_dict(transform.state_dict())
+    np.testing.assert_allclose(
+        restored_transform.flow.fitted_particles, particles
+    )
 
 
 def test_flow_transform_passes_fit_kwargs(particles):
