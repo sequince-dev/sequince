@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import numpy as np
 from orng import RandomGenerator
@@ -19,9 +19,7 @@ from .utils import resolve_rng
 
 CHECKPOINT_VERSION = 1
 _HDF_KIND = "_sequince_kind"
-_HDF_KEY_KIND = "_sequince_key_kind"
-_HDF_KEY = "_sequince_key"
-_HDF_SCALAR_TYPE = "_sequince_scalar_type"
+_HDF_PYTHON_TYPE = "_sequince_python_type"
 
 
 def _attr_text(value: Any) -> str:
@@ -46,43 +44,23 @@ def _write_pickled_hdf_value(
 
 
 def _write_hdf_value(parent: Any, name: str, value: Any, protocol: int) -> Any:
-    """Recursively write Python containers using native HDF5 structures."""
+    """Write mappings, sequences, and native leaves to HDF5 recursively."""
     if name in parent:
         del parent[name]
 
     if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            return _write_pickled_hdf_value(parent, name, value, protocol)
         node = parent.create_group(name)
         node.attrs[_HDF_KIND] = "mapping"
-        for index, (key, item) in enumerate(value.items()):
-            child_name = (
-                quote(key, safe="") or "%"
-                if isinstance(key, str)
-                else f"@{index:08d}"
-            )
-            child = _write_hdf_value(node, child_name, item, protocol)
-            if isinstance(key, str):
-                try:
-                    child.attrs[_HDF_KEY] = key
-                    child.attrs[_HDF_KEY_KIND] = "string"
-                    continue
-                except (TypeError, ValueError):
-                    if _HDF_KEY in child.attrs:
-                        del child.attrs[_HDF_KEY]
-            child.attrs[_HDF_KEY] = np.void(
-                pickle.dumps(key, protocol=protocol)
-            )
-            child.attrs[_HDF_KEY_KIND] = "pickle"
+        for key, item in value.items():
+            child_name = quote(key, safe="") or "%"
+            _write_hdf_value(node, child_name, item, protocol)
         return node
 
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple)):
         node = parent.create_group(name)
-        container_kind = {
-            list: "list",
-            tuple: "tuple",
-            set: "set",
-            frozenset: "frozenset",
-        }
-        node.attrs[_HDF_KIND] = container_kind[type(value)]
+        node.attrs[_HDF_KIND] = "list" if isinstance(value, list) else "tuple"
         for index, item in enumerate(value):
             _write_hdf_value(node, f"{index:08d}", item, protocol)
         return node
@@ -108,41 +86,23 @@ def _write_hdf_value(parent: Any, name: str, value: Any, protocol: int) -> Any:
         node.attrs[_HDF_KIND] = "bytes"
         return node
 
-    if isinstance(value, np.ndarray):
+    if isinstance(value, (np.ndarray, np.generic)):
         if value.dtype.hasobject:
             return _write_pickled_hdf_value(parent, name, value, protocol)
         try:
             node = parent.create_dataset(name, data=value)
         except (TypeError, ValueError):
             return _write_pickled_hdf_value(parent, name, value, protocol)
-        node.attrs[_HDF_KIND] = "array"
-        return node
-
-    if isinstance(value, np.generic):
-        try:
-            node = parent.create_dataset(name, data=value)
-        except (TypeError, ValueError):
-            return _write_pickled_hdf_value(parent, name, value, protocol)
-        node.attrs[_HDF_KIND] = "numpy_scalar"
+        node.attrs[_HDF_KIND] = "numpy"
         return node
 
     if isinstance(value, (bool, int, float, complex)):
         try:
             node = parent.create_dataset(name, data=value)
-        except OverflowError:
-            if isinstance(value, int):
-                node = parent.create_dataset(
-                    name,
-                    data=str(value),
-                    dtype="S" + str(len(str(value))),
-                )
-                node.attrs[_HDF_KIND] = "bigint"
-                return node
-            return _write_pickled_hdf_value(parent, name, value, protocol)
-        except (TypeError, ValueError):
+        except (OverflowError, TypeError, ValueError):
             return _write_pickled_hdf_value(parent, name, value, protocol)
         node.attrs[_HDF_KIND] = "scalar"
-        node.attrs[_HDF_SCALAR_TYPE] = type(value).__name__
+        node.attrs[_HDF_PYTHON_TYPE] = type(value).__name__
         return node
 
     return _write_pickled_hdf_value(parent, name, value, protocol)
@@ -155,32 +115,14 @@ def _read_hdf_value(node: Any) -> Any:
     kind = _attr_text(node.attrs[_HDF_KIND])
 
     if kind == "mapping":
-        mapping_value: dict[Any, Any] = {}
-        for child_name in sorted(node.keys()):
-            child = node[child_name]
-            key_kind = _attr_text(child.attrs[_HDF_KEY_KIND])
-            if key_kind == "string":
-                key = child.attrs[_HDF_KEY]
-                if isinstance(key, bytes):
-                    key = key.decode("utf-8")
-            elif key_kind == "pickle":
-                key = pickle.loads(bytes(child.attrs[_HDF_KEY]))
-            else:
-                raise ValueError(
-                    f"Unsupported HDF5 mapping key kind {key_kind!r}."
-                )
-            mapping_value[key] = _read_hdf_value(child)
-        return mapping_value
-
-    if kind in ("list", "tuple", "set", "frozenset"):
-        items = [_read_hdf_value(node[name]) for name in sorted(node.keys())]
-        container_constructors = {
-            "list": list,
-            "tuple": tuple,
-            "set": set,
-            "frozenset": frozenset,
+        return {
+            "" if name == "%" else unquote(name): _read_hdf_value(node[name])
+            for name in node
         }
-        return container_constructors[kind](items)
+
+    if kind in ("list", "tuple"):
+        items = [_read_hdf_value(node[name]) for name in sorted(node.keys())]
+        return items if kind == "list" else tuple(items)
 
     if kind == "none":
         return None
@@ -193,17 +135,13 @@ def _read_hdf_value(node: Any) -> Any:
         )
     if kind == "bytes":
         return node[...].tobytes()
-    if kind == "array":
-        return node[...]
-    if kind == "numpy_scalar":
+    if kind == "numpy":
         return node[()]
-    if kind == "bigint":
-        return int(node[()].decode("ascii"))
     if kind == "scalar":
         scalar_value = node[()]
         if isinstance(scalar_value, np.generic):
             scalar_value = scalar_value.item()
-        scalar_type = _attr_text(node.attrs[_HDF_SCALAR_TYPE])
+        scalar_type = _attr_text(node.attrs[_HDF_PYTHON_TYPE])
         scalar_constructors = {
             "bool": bool,
             "int": int,
@@ -548,7 +486,6 @@ class SMCCheckpoint:
         if self.history is None:
             if "history" in group:
                 del group["history"]
-            runtime_payload["history_length"] = 0
         else:
             history_group = group.require_group("history")
             if replace_history:
@@ -566,8 +503,6 @@ class SMCCheckpoint:
                     self.history[index].to_dict(),
                     protocol,
                 )
-            history_group.attrs["length"] = len(self.history)
-            runtime_payload["history_length"] = len(self.history)
 
         temporary_name = f"{dsetname}.tmp"
         _write_hdf_value(group, temporary_name, runtime_payload, protocol)
@@ -587,14 +522,12 @@ class SMCCheckpoint:
         checkpoint_payload = _read_hdf_value(group[dsetname])
         if not isinstance(checkpoint_payload, dict):
             raise TypeError("HDF5 checkpoint runtime must be a mapping.")
-        history_length = int(checkpoint_payload.pop("history_length", 0))
-        if history_length:
-            if "history" not in group:
-                raise ValueError("Checkpoint history is missing from HDF5.")
+        checkpoint_payload["history"] = None
+        if "history" in group:
             history_group = group["history"]
             checkpoint_payload["history"] = [
-                _read_hdf_value(history_group[f"{index:08d}"])
-                for index in range(history_length)
+                _read_hdf_value(history_group[name])
+                for name in sorted(history_group)
             ]
         return cls.from_dict(checkpoint_payload)
 
