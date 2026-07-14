@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import copy
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -64,45 +62,3 @@ class StepContext:
     def record_output(self, key: str, value: Any) -> None:
         """Store an output value that can be accessed by callbacks."""
         self.outputs.setdefault(key, []).append(value)
-
-    def snapshot(self) -> dict[str, Any]:
-        """Return a detached snapshot suitable for checkpoint payloads."""
-        return {
-            "t": int(self.t),
-            "next_observation_index": int(self.next_observation_index),
-            "observation": copy.deepcopy(self.observation),
-            "shared": copy.deepcopy(dict(self.shared)),
-            "metadata": copy.deepcopy(self.metadata),
-            "outputs": copy.deepcopy(self.outputs),
-        }
-
-    @classmethod
-    def from_snapshot(cls, payload: Mapping[str, Any]) -> "StepContext":
-        """Reconstruct a context from :meth:`snapshot` output."""
-        if not isinstance(payload, Mapping):
-            raise TypeError("StepContext snapshot must be a mapping.")
-        missing = {
-            key
-            for key in (
-                "t",
-                "next_observation_index",
-                "observation",
-                "shared",
-                "metadata",
-                "outputs",
-            )
-            if key not in payload
-        }
-        if missing:
-            raise ValueError(
-                "StepContext snapshot is missing required keys: "
-                + ", ".join(sorted(missing))
-            )
-        return cls(
-            t=int(payload["t"]),
-            next_observation_index=int(payload["next_observation_index"]),
-            observation=copy.deepcopy(payload["observation"]),
-            shared=copy.deepcopy(payload["shared"]),
-            metadata=copy.deepcopy(payload["metadata"]),
-            outputs=copy.deepcopy(payload["outputs"]),
-        )
