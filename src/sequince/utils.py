@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
@@ -37,57 +36,39 @@ def resolve_rng(
     )
 
 
-def call_with_optional_args(
-    fn: Callable[..., Any],
-    base_args: tuple[Any, ...],
-    optional_args: tuple[Any, ...] = (),
-) -> Any:
-    """Call ``fn`` with optional positional arguments when accepted."""
-    signature = inspect.signature(fn)
-    params = signature.parameters.values()
-
-    positional = [
-        p
-        for p in params
-        if p.kind
-        in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        )
-    ]
-    required = sum(1 for p in positional if p.default is inspect._empty)
-    has_varargs = any(
-        p.kind == inspect.Parameter.VAR_POSITIONAL for p in params
-    )
-    base_count = len(base_args)
-    max_positional = float("inf") if has_varargs else len(positional)
-
-    for optional_count in range(len(optional_args), -1, -1):
-        argument_count = base_count + optional_count
-        if required <= argument_count <= max_positional:
-            return fn(*base_args, *optional_args[:optional_count])
-    raise TypeError(
-        "Function cannot accept the provided positional arguments."
-    )
-
-
 def call_with_optional_context(
     fn: Callable[..., Any],
     base_args: tuple[Any, ...],
     context: StepContext,
 ) -> Any:
     """Call fn with base_args and append context only if required."""
-    return call_with_optional_args(fn, base_args, (context,))
-
-
-def snapshot_rng(rng: RandomGenerator) -> dict[str, Any]:
-    """Capture RNG state through ORNG's public state protocol."""
-    return rng.state_dict()
-
-
-def restore_rng(snapshot: Mapping[str, Any]) -> RandomGenerator:
-    """Restore an RNG from a snapshot created by :func:`snapshot_rng`."""
-    return RandomGenerator.from_state_dict(snapshot)
+    signature = inspect.signature(fn)
+    params = signature.parameters.values()
+    positional = [
+        parameter
+        for parameter in params
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    required = sum(
+        parameter.default is inspect._empty for parameter in positional
+    )
+    has_varargs = any(
+        parameter.kind == inspect.Parameter.VAR_POSITIONAL
+        for parameter in params
+    )
+    max_positional = float("inf") if has_varargs else len(positional)
+    base_count = len(base_args)
+    if required <= base_count + 1 <= max_positional:
+        return fn(*base_args, context)
+    if required <= base_count <= max_positional:
+        return fn(*base_args)
+    raise TypeError(
+        "Function cannot accept the provided positional arguments."
+    )
 
 
 def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:
