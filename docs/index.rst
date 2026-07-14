@@ -11,6 +11,7 @@ sequential methods.
 
    getting_started
    user_guide
+   checkpointing
    examples
    api/index
 
