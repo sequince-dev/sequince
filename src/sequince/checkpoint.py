@@ -10,11 +10,12 @@ from typing import Any
 from urllib.parse import quote
 
 import numpy as np
+from orng import RandomGenerator
 
 from .result import SMCResult
 from .state import ParticleState
 from .steps.context import StepContext
-from .utils import resolve_rng, restore_rng, snapshot_rng
+from .utils import resolve_rng
 
 CHECKPOINT_VERSION = 1
 _HDF_KIND = "_sequince_kind"
@@ -310,7 +311,7 @@ class StepState:
         )
 
 
-def snapshot_steps(steps: Sequence[Any]) -> tuple[StepState, ...]:
+def capture_step_states(steps: Sequence[Any]) -> tuple[StepState, ...]:
     """Capture mutable state from a configured step pipeline."""
     return tuple(
         StepState.from_step(index, step) for index, step in enumerate(steps)
@@ -372,13 +373,10 @@ class SMCCheckpoint:
         include_history: bool = True,
     ) -> "SMCCheckpoint":
         """Capture a checkpoint after a completed SMC iteration."""
-        state_copy = ParticleState.from_snapshot(state.snapshot())
+        state_copy = state.copy()
         history = None
         if include_history:
-            history = tuple(
-                ParticleState.from_snapshot(item.snapshot())
-                for item in result.states
-            )
+            history = tuple(item.copy() for item in result.states)
         return cls(
             state=state_copy,
             next_iteration=context.t + 1,
@@ -391,8 +389,8 @@ class SMCCheckpoint:
                 }
             ),
             outputs=copy.deepcopy(dict(context.outputs)),
-            step_states=snapshot_steps(steps),
-            rng_state=None if rng is None else snapshot_rng(resolve_rng(rng)),
+            step_states=capture_step_states(steps),
+            rng_state=None if rng is None else resolve_rng(rng).state_dict(),
             history=history,
         )
 
@@ -400,7 +398,7 @@ class SMCCheckpoint:
         """Return a detached plain-Python checkpoint representation."""
         return {
             "version": self.version,
-            "state": self.state.snapshot(),
+            "state": self.state.to_dict(),
             "next_iteration": self.next_iteration,
             "next_observation_index": self.next_observation_index,
             "metadata": copy.deepcopy(self.metadata),
@@ -410,7 +408,7 @@ class SMCCheckpoint:
             "history": (
                 None
                 if self.history is None
-                else [item.snapshot() for item in self.history]
+                else [item.to_dict() for item in self.history]
             ),
         }
 
@@ -469,7 +467,7 @@ class SMCCheckpoint:
                 "non-negative."
             )
         return cls(
-            state=ParticleState.from_snapshot(copy.deepcopy(payload["state"])),
+            state=ParticleState.from_dict(copy.deepcopy(payload["state"])),
             next_iteration=next_iteration,
             next_observation_index=next_observation_index,
             metadata=copy.deepcopy(dict(payload["metadata"])),
@@ -484,7 +482,7 @@ class SMCCheckpoint:
                 None
                 if history_payload is None
                 else tuple(
-                    ParticleState.from_snapshot(copy.deepcopy(item))
+                    ParticleState.from_dict(copy.deepcopy(item))
                     for item in history_payload
                 )
             ),
@@ -495,7 +493,7 @@ class SMCCheckpoint:
         """Return a live ORNG generator restored from this checkpoint."""
         if self.rng_state is None:
             return None
-        return restore_rng(self.rng_state)
+        return RandomGenerator.from_state_dict(self.rng_state)
 
     def result(
         self, shared_context: Mapping[str, Any] | None = None
@@ -565,7 +563,7 @@ class SMCCheckpoint:
                 _write_hdf_value(
                     history_group,
                     f"{index:08d}",
-                    self.history[index].snapshot(),
+                    self.history[index].to_dict(),
                     protocol,
                 )
             history_group.attrs["length"] = len(self.history)

@@ -10,8 +10,8 @@ from .checkpoint import (
     CheckpointWriter,
     SMCCheckpoint,
     StepState,
+    capture_step_states,
     restore_steps,
-    snapshot_steps,
 )
 from .result import SMCResult
 from .state import ParticleState
@@ -85,7 +85,9 @@ class SequentialMonteCarlo:
     def state_dict(self) -> dict[str, Any]:
         """Return mutable state for the configured step pipeline."""
         return {
-            "steps": [item.to_dict() for item in snapshot_steps(self._steps)]
+            "steps": [
+                item.to_dict() for item in capture_step_states(self._steps)
+            ]
         }
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
@@ -337,14 +339,11 @@ class SequentialMonteCarlo:
         )
         restore_steps(self._steps, checkpoint_obj.step_states)
         restored_rng = checkpoint_obj.restore_rng()
-        state = ParticleState.from_snapshot(checkpoint_obj.state.snapshot())
+        state = checkpoint_obj.state.copy()
         history = checkpoint_obj.history or (checkpoint_obj.state,)
         return SMCRuntime(
             state=state,
-            produced_states=[
-                ParticleState.from_snapshot(item.snapshot())
-                for item in history
-            ],
+            produced_states=[item.copy() for item in history],
             t=checkpoint_obj.next_iteration,
             next_observation_index=checkpoint_obj.next_observation_index,
             shared_context=dict(shared_context or {}),
