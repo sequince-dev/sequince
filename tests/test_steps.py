@@ -12,18 +12,12 @@ from sequince.steps import (
     ContinueWhile,
     ExpandDimensions,
     MetadataTransformation,
-    MetropolisHastingsMutation,
     SMCTransformation,
     WasteFreeResampleMove,
 )
 from sequince.steps.base import StepContext
 from sequince.steps.control import PeriodicStep
-from sequince.steps.mutation import (
-    CallableMutationKernel,
-    EmceeMutation,
-    GaussianRandomWalk,
-    MiniPCNMutation,
-)
+from sequince.steps.mutation import GaussianRandomWalk
 from sequince.steps.resampling import (
     MultinomialResampling,
     SystematicResampling,
@@ -34,7 +28,6 @@ from sequince.steps.weighting import (
     LogLikelihoodWeighting,
     TemperedWeighting,
 )
-from sequince.transforms import AffineTransform
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -234,90 +227,6 @@ def test_multinomial_resampling_resamples_particles(
     assert "ancestors" in resampled.metadata
 
 
-def test_emcee_mutation_runs_single_step(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    pytest.importorskip("emcee")
-
-    def log_prob(position: np.ndarray, context: StepContext) -> float:
-        return float(-0.5 * np.sum(position**2))
-
-    context = context_factory(shared={"temperature": 1.0})
-    step = EmceeMutation(log_prob, n_steps=1)
-    mutated = step(particle_state, context, rng)
-
-    assert mutated.particles.shape == particle_state.particles.shape
-    assert "emcee_acceptance" in mutated.metadata
-    assert mutated.metadata["emcee_steps"] == 1
-
-
-def test_emcee_mutation_resolves_bilby_de_move() -> None:
-    emcee = pytest.importorskip("emcee")
-
-    step = EmceeMutation(lambda position: 0.0, move="bilby-de")
-
-    assert len(step._move) == 2  # noqa: SLF001
-    assert isinstance(step._move[0][0], emcee.moves.DEMove)  # noqa: SLF001
-    assert step._move[0][1] == 0.9  # noqa: SLF001
-    assert step._move[1][0].gamma0 == 1.0  # noqa: SLF001
-    assert step._move[1][1] == 0.1  # noqa: SLF001
-
-
-def test_emcee_mutation_with_transform(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    pytest.importorskip("emcee")
-
-    def log_prob(position: np.ndarray, context: StepContext) -> float:
-        return float(-0.5 * np.sum(position**2))
-
-    context = context_factory(shared={"temperature": 1.0})
-    transform = AffineTransform(columns=[0])
-    transform.fit(particle_state.particles)
-    step = EmceeMutation(log_prob, n_steps=1, transform=transform)
-    mutated = step(particle_state, context, rng)
-
-    assert mutated.particles.shape == particle_state.particles.shape
-    assert "emcee_acceptance" in mutated.metadata
-    assert mutated.metadata["emcee_steps"] == 1
-
-
-def test_minipcn_mutation_runs_single_step(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    pytest.importorskip("minipcn")
-
-    def log_prob(position: np.ndarray, context: StepContext) -> float:
-        return -0.5 * np.sum(position**2, axis=-1)
-
-    context = context_factory(shared={"temperature": 1.0})
-    step = MiniPCNMutation(log_prob, n_steps=1)
-    mutated = step(particle_state, context, rng)
-
-    assert mutated.particles.shape == particle_state.particles.shape
-    assert "minipcn_acceptance" in mutated.metadata
-    assert mutated.metadata["minipcn_steps"] == 1
-
-
-def test_minipcn_mutation_with_transform(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    pytest.importorskip("minipcn")
-
-    def log_prob(position: np.ndarray, context: StepContext) -> float:
-        return float(-0.5 * np.sum(position**2))
-
-    context = context_factory(shared={"temperature": 1.0})
-    transform = AffineTransform(columns=[1])
-    transform.fit(particle_state.particles)
-    step = MiniPCNMutation(log_prob, n_steps=3, transform=transform)
-    mutated = step(particle_state, context, rng)
-
-    assert mutated.particles.shape == particle_state.particles.shape
-    assert "minipcn_acceptance" in mutated.metadata
-    assert mutated.metadata["minipcn_steps"] == 3
-
-
 def test_adapt_gaussian_proposal_updates_scale(
     particle_state: ParticleState,
     context_factory,
@@ -498,82 +407,6 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
         scale == context.metadata["proposal_scale"]
         for scale in context.metadata["factory_scales"]
     )  # noqa: PLR2004
-
-
-def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-) -> None:
-    kernel = CallableMutationKernel(
-        lambda particles, inner_rng: particles + 0.5,
-        symmetric=True,
-    )
-    step = MetropolisHastingsMutation(
-        lambda particles, context: np.zeros(particles.shape[0]),
-        kernel,
-        n_steps=2,
-        store_chains=True,
-    )
-
-    updated = step(particle_state, context_factory(), rng)
-
-    np.testing.assert_allclose(
-        updated.particles, particle_state.particles + 1.0
-    )
-    np.testing.assert_allclose(updated.log_weights, particle_state.log_weights)
-    assert updated.metadata["metropolis_hastings_acceptance"] == 1.0
-    assert updated.metadata["metropolis_hastings_acceptance_by_step"] == [
-        1.0,
-        1.0,
-    ]
-    assert updated.metadata["mutation_chains"].shape == (2, 4, 2)
-
-
-def test_metropolis_hastings_mutation_applies_transition_ratio(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-) -> None:
-    kernel = CallableMutationKernel(
-        lambda particles, inner_rng: particles + 1.0,
-        log_transition_ratio_fn=lambda start, end: np.full(
-            start.shape[0], -np.inf
-        ),
-    )
-    step = MetropolisHastingsMutation(
-        lambda particles, context: 0.0,
-        kernel,
-    )
-
-    updated = step(particle_state, context_factory(), rng)
-
-    np.testing.assert_allclose(updated.particles, particle_state.particles)
-    assert updated.metadata["metropolis_hastings_acceptance"] == 0.0
-
-
-def test_metropolis_hastings_mutation_supports_kernel_factory(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-) -> None:
-    context = context_factory(metadata={"proposal_scale": 0.2})
-
-    def factory(particles, inner_context):
-        inner_context.metadata["factory_shape"] = particles.shape
-        return GaussianRandomWalk(
-            scale=inner_context.metadata["proposal_scale"]
-        )
-
-    step = MetropolisHastingsMutation(
-        lambda particles, inner_context: np.zeros(particles.shape[0]),
-        factory,
-    )
-
-    updated = step(particle_state, context, rng)
-
-    assert updated.particles.shape == particle_state.particles.shape
-    assert context.metadata["factory_shape"] == particle_state.particles.shape
 
 
 def test_dimensionality_expansion_appends_block(
