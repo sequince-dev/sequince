@@ -7,7 +7,6 @@ import pytest
 
 from sequince.mutation_kernels import (
     CallableMutationKernel,
-    DifferentialEvolution,
     GaussianRandomWalk,
 )
 from sequince.posterior import TemperedPosterior
@@ -545,11 +544,13 @@ def test_metropolis_hastings_mutation_supports_kernel_factory(
     context_factory,
     rng,
 ) -> None:
-    context = context_factory(metadata={"de_mix": 0.0})
+    context = context_factory(metadata={"proposal_scale": 0.2})
 
     def factory(particles, inner_context):
         inner_context.metadata["factory_shape"] = particles.shape
-        return DifferentialEvolution(mix=inner_context.metadata["de_mix"])
+        return GaussianRandomWalk(
+            scale=inner_context.metadata["proposal_scale"]
+        )
 
     step = MetropolisHastingsMutation(
         lambda particles, inner_context: np.zeros(particles.shape[0]),

@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from ._array_api import arange, asarray, full, namespace, to_numpy
+from ._array_api import asarray, full, namespace, to_numpy
 from ._typing import Array
 
 if TYPE_CHECKING:
@@ -194,114 +194,10 @@ class GaussianRandomWalk(SymmetricMutationKernel):
         return exponent + norm_const
 
 
-@dataclass(frozen=True)
-class DifferentialEvolution(SymmetricMutationKernel):
-    """Ensemble differential-evolution mutation kernel.
-
-    Proposals have the form ``x + gamma * (x_a - x_b)``. The default scale
-    mixture follows the differential-evolution proposal used by Bilby's
-    dynesty ensemble walks.
-    """
-
-    scale: float | None = None
-    mix: float = 0.5
-    mode_hop_scale: float = 1.0
-    gamma_shape: float = 4.0
-    gamma_scale: float = 0.25
-
-    def __post_init__(self) -> None:
-        if self.scale is not None and self.scale <= 0.0:
-            raise ValueError("DifferentialEvolution.scale must be positive.")
-        if not 0.0 <= self.mix <= 1.0:
-            raise ValueError("DifferentialEvolution.mix must be in [0, 1].")
-        if self.mode_hop_scale <= 0.0:
-            raise ValueError(
-                "DifferentialEvolution.mode_hop_scale must be positive."
-            )
-        if self.gamma_shape <= 0.0 or self.gamma_scale <= 0.0:
-            raise ValueError(
-                "DifferentialEvolution gamma parameters must be positive."
-            )
-
-    def sample(self, particles: Array, rng: ArrayRNG) -> Array:
-        xp = namespace(particles)
-        arr = asarray(particles, xp=xp)
-        if arr.ndim not in (1, 2):
-            raise ValueError(
-                "DifferentialEvolution requires a 1-D or 2-D particle array."
-            )
-
-        n_particles = arr.shape[0]
-        if n_particles < 3:
-            raise ValueError(
-                "DifferentialEvolution requires at least three particles."
-            )
-
-        working = arr
-        squeeze_last = arr.ndim == 1
-        if squeeze_last:
-            working = xp.reshape(arr, (n_particles, 1))
-        dimension = working.shape[1]
-
-        donor_a_raw = asarray(
-            rng.choice(n_particles - 1, size=n_particles, replace=True),
-            xp=xp,
-            like=working,
-        )
-        rows = arange(
-            n_particles,
-            xp=xp,
-            dtype=donor_a_raw.dtype,
-            like=working,
-        )
-        one = full(
-            (n_particles,),
-            1,
-            xp=xp,
-            dtype=donor_a_raw.dtype,
-            like=working,
-        )
-        zero = one - one
-        donor_a = donor_a_raw + xp.where(donor_a_raw >= rows, one, zero)
-
-        donor_b_raw = asarray(
-            rng.choice(n_particles - 2, size=n_particles, replace=True),
-            xp=xp,
-            like=working,
-        )
-        low = xp.minimum(rows, donor_a)
-        high = xp.maximum(rows, donor_a)
-        donor_b = donor_b_raw + xp.where(donor_b_raw >= low, one, zero)
-        donor_b = donor_b + xp.where(donor_b >= high, one, zero)
-
-        differences = working[donor_a] - working[donor_b]
-        default_scale = 2.38 / math.sqrt(2.0 * dimension)
-        local_scale = default_scale if self.scale is None else self.scale
-        gamma_draws = asarray(
-            rng.gamma(
-                shape=self.gamma_shape,
-                scale=self.gamma_scale,
-                size=(n_particles, 1),
-            ),
-            xp=xp,
-            like=working,
-        )
-        mix_draws = asarray(rng.random((n_particles, 1)), xp=xp, like=working)
-        gamma = xp.where(
-            mix_draws < self.mix,
-            local_scale * gamma_draws,
-            self.mode_hop_scale,
-        )
-        proposals = working + gamma * differences
-        if squeeze_last:
-            return proposals[:, 0]
-        return proposals
-
-
 @dataclass
 class MixtureMutationKernel:
     """Mixture of mutation kernels.
-    
+
     Randomly selects one component kernel for each proposal."""
 
     kernels: Sequence[MutationKernel]
@@ -385,7 +281,6 @@ class MixtureMutationKernel:
 
 
 MUTATION_KERNELS: dict[str, type] = {
-    "differential-evolution": DifferentialEvolution,
     "gaussian-random-walk": GaussianRandomWalk,
     "mixture": MixtureMutationKernel,
 }

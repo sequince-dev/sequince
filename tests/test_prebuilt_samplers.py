@@ -7,7 +7,6 @@ import pytest
 
 from sequince import ParticleState, TemperedPosterior
 from sequince.mutation_kernels import (
-    DifferentialEvolution,
     GaussianRandomWalk,
     MixtureMutationKernel,
 )
@@ -101,15 +100,15 @@ def test_make_standard_bayesian_smc_supports_minipcn_mutation() -> None:
     assert isinstance(steps[2], MiniPCNMutation)
 
 
-def test_make_standard_bayesian_smc_supports_differential_evolution() -> None:
+def test_make_standard_bayesian_smc_supports_gaussian_random_walk() -> None:
     smc, _, _ = make_standard_bayesian_smc(
         _quadratic_log_prior,
         _zero_log_likelihood,
         mutation="metropolis-hastings",
         mutation_n_steps=3,
         mutation_kwargs={
-            "kernel": "differential-evolution",
-            "kernel_kwargs": {"mix": 0.25},
+            "kernel": "gaussian-random-walk",
+            "kernel_kwargs": {"scale": 0.25},
             "store_chains": True,
         },
     )
@@ -117,8 +116,8 @@ def test_make_standard_bayesian_smc_supports_differential_evolution() -> None:
     steps = smc._steps  # noqa: SLF001
     mutation = steps[2]
     assert isinstance(mutation, MetropolisHastingsMutation)
-    assert isinstance(mutation._kernel, DifferentialEvolution)  # noqa: SLF001
-    assert mutation._kernel.mix == 0.25  # noqa: SLF001
+    assert isinstance(mutation._kernel, GaussianRandomWalk)  # noqa: SLF001
+    assert mutation._kernel.scale == 0.25  # noqa: SLF001
     assert mutation._n_steps == 3  # noqa: SLF001
 
 
@@ -131,15 +130,6 @@ def test_metropolis_hastings_requires_kernel() -> None:
         )
 
 
-def test_differential_evolution_is_not_a_mutation_strategy() -> None:
-    with pytest.raises(ValueError, match="mutation must be"):
-        make_standard_bayesian_smc(
-            _quadratic_log_prior,
-            _zero_log_likelihood,
-            mutation="differential-evolution",  # type: ignore[arg-type]
-        )
-
-
 def test_make_standard_bayesian_smc_supports_mixture_kernel() -> None:
     smc, _, _ = make_standard_bayesian_smc(
         _quadratic_log_prior,
@@ -149,7 +139,10 @@ def test_make_standard_bayesian_smc_supports_mixture_kernel() -> None:
             "kernel": "mixture",
             "kernel_kwargs": {
                 "kernels": [
-                    {"kernel": "differential-evolution"},
+                    {
+                        "kernel": "gaussian-random-walk",
+                        "kernel_kwargs": {"scale": 0.5},
+                    },
                     {
                         "kernel": "gaussian-random-walk",
                         "kernel_kwargs": {"scale": 0.2},
@@ -164,7 +157,7 @@ def test_make_standard_bayesian_smc_supports_mixture_kernel() -> None:
     assert isinstance(mutation, MetropolisHastingsMutation)
     mixture = mutation._kernel  # noqa: SLF001
     assert isinstance(mixture, MixtureMutationKernel)
-    assert isinstance(mixture.kernels[0], DifferentialEvolution)
+    assert isinstance(mixture.kernels[0], GaussianRandomWalk)
     assert isinstance(mixture.kernels[1], GaussianRandomWalk)
 
 

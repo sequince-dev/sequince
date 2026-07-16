@@ -7,7 +7,6 @@ from orng import ArrayRNG
 from sequince._array_api import namespace
 from sequince.mutation_kernels import (
     CallableMutationKernel,
-    DifferentialEvolution,
     GaussianRandomWalk,
     MixtureMutationKernel,
     evaluate_log_transition_ratio,
@@ -76,60 +75,11 @@ def test_legacy_density_kernel_transition_ratio(rng) -> None:
     np.testing.assert_allclose(ratio, 0.0)
 
 
-def test_differential_evolution_mode_hop_uses_other_particles(rng) -> None:
-    particles = np.array([1.0, 2.0, 4.0, 8.0])
-    kernel = DifferentialEvolution(mix=0.0, mode_hop_scale=1.0)
-
-    proposals = kernel.sample(particles, rng)
-    deltas = proposals - particles
-
-    for target, delta in enumerate(deltas):
-        donors = np.delete(particles, target)
-        possible = {
-            float(a - b)
-            for index, a in enumerate(donors)
-            for other_index, b in enumerate(donors)
-            if index != other_index
-        }
-        assert float(delta) in possible
-    np.testing.assert_allclose(
-        kernel.log_transition_ratio(particles, proposals), 0.0
-    )
-
-
-def test_differential_evolution_preserves_matrix_shape(rng) -> None:
-    particles = np.arange(12, dtype=float).reshape(4, 3)
-
-    proposals = DifferentialEvolution().sample(particles, rng)
-
-    assert proposals.shape == particles.shape
-    assert np.all(np.isfinite(proposals))
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({"scale": 0.0}, "scale"),
-        ({"mix": 1.1}, "mix"),
-        ({"mode_hop_scale": 0.0}, "mode_hop_scale"),
-        ({"gamma_shape": 0.0}, "gamma parameters"),
-    ],
-)
-def test_differential_evolution_validates_options(kwargs, message) -> None:
-    with pytest.raises(ValueError, match=message):
-        DifferentialEvolution(**kwargs)
-
-
-def test_differential_evolution_requires_three_particles(rng) -> None:
-    with pytest.raises(ValueError, match="at least three"):
-        DifferentialEvolution().sample(np.array([[0.0], [1.0]]), rng)
-
-
 def test_get_mutation_kernel_constructs_named_kernel() -> None:
-    kernel = get_mutation_kernel("differential-evolution", mix=0.25)
+    kernel = get_mutation_kernel("gaussian-random-walk", scale=0.25)
 
-    assert isinstance(kernel, DifferentialEvolution)
-    assert kernel.mix == 0.25
+    assert isinstance(kernel, GaussianRandomWalk)
+    assert kernel.scale == 0.25
 
 
 def test_get_mutation_kernel_validates_name() -> None:
@@ -193,8 +143,8 @@ def test_get_mutation_kernel_builds_recursive_mixture() -> None:
         "mixture",
         kernels=[
             {
-                "kernel": "differential-evolution",
-                "kernel_kwargs": {"mix": 0.25},
+                "kernel": "gaussian-random-walk",
+                "kernel_kwargs": {"scale": 0.25},
             },
             {
                 "kernel": "gaussian-random-walk",
@@ -205,13 +155,13 @@ def test_get_mutation_kernel_builds_recursive_mixture() -> None:
     )
 
     assert isinstance(kernel, MixtureMutationKernel)
-    assert isinstance(kernel.kernels[0], DifferentialEvolution)
+    assert isinstance(kernel.kernels[0], GaussianRandomWalk)
     assert isinstance(kernel.kernels[1], GaussianRandomWalk)
     assert kernel.weights == (0.75, 0.25)
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
-def test_differential_evolution_mutation_preserves_backend(
+def test_gaussian_random_walk_mutation_preserves_backend(
     backend: str,
     backend_factory,
 ) -> None:
@@ -220,7 +170,7 @@ def test_differential_evolution_mutation_preserves_backend(
     state = ParticleState(particles=particles, log_weights=log_weights)
     step = MetropolisHastingsMutation(
         lambda values, context: -0.5 * row_sum(values**2),
-        DifferentialEvolution(mix=0.0),
+        GaussianRandomWalk(scale=0.1),
         n_steps=2,
         store_chains=True,
     )
@@ -246,7 +196,10 @@ def test_mixture_mutation_kernel_preserves_backend(
     kernel = get_mutation_kernel(
         "mixture",
         kernels=[
-            {"kernel": "differential-evolution"},
+            {
+                "kernel": "gaussian-random-walk",
+                "kernel_kwargs": {"scale": 0.2},
+            },
             {
                 "kernel": "gaussian-random-walk",
                 "kernel_kwargs": {"scale": 0.1},

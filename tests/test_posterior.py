@@ -118,7 +118,7 @@ def test_draw_additional_samples_respects_terminal_weights(
     assert updated_result.final_state is updated_state
 
 
-def test_draw_additional_samples_supports_differential_evolution(
+def test_draw_additional_samples_supports_metropolis_hastings(
     context_factory,
     rng,
 ) -> None:
@@ -140,8 +140,8 @@ def test_draw_additional_samples_supports_differential_evolution(
         mutation="metropolis-hastings",
         mutation_n_steps=2,
         mutation_kwargs={
-            "kernel": "differential-evolution",
-            "kernel_kwargs": {"mix": 0.0},
+            "kernel": "gaussian-random-walk",
+            "kernel_kwargs": {"scale": 0.1},
         },
         particle_transform=None,
         posterior=posterior,
