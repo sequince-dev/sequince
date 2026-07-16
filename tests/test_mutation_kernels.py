@@ -5,16 +5,16 @@ import pytest
 from orng import ArrayRNG
 
 from sequince._array_api import namespace
-from sequince.mutation_kernels import (
+from sequince.state import ParticleState
+from sequince.steps.base import StepContext
+from sequince.steps.mutation import (
     CallableMutationKernel,
     GaussianRandomWalk,
+    MetropolisHastingsMutation,
     MixtureMutationKernel,
     evaluate_log_transition_ratio,
     get_mutation_kernel,
 )
-from sequince.state import ParticleState
-from sequince.steps.base import StepContext
-from sequince.steps.mutation import MetropolisHastingsMutation
 
 
 def test_callable_symmetric_kernel(rng) -> None:

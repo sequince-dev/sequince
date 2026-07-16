@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Callable, cast
+
+import numpy as np
+
+from ..._array_api import asarray, namespace, to_numpy
+from ..._typing import Array
+from ...transforms import ParticleTransform
+from ..base import SMCStep
+from ..context import StepContext
+
+if TYPE_CHECKING:
+    from ...posterior import TemperedPosterior
+
+LogProbFn = Callable[..., Array | float]
+PARTICLE_TRANSFORM_KEY = "particle_transform"
+
+
+def call_log_prob(
+    fn: LogProbFn,
+    position: Array,
+    context: StepContext,
+) -> Any:
+    try:
+        return fn(position, context)
+    except TypeError:
+        return fn(position)
+
+
+def as_scalar_log_prob(value: Any) -> float:
+    array = to_numpy(value)
+    if array.ndim == 0:
+        return float(array)
+    if array.size == 1:
+        return float(array.reshape(()))
+    raise TypeError(
+        "Log-probability function must return a scalar when vectorization is disabled."
+    )
+
+
+def as_vector_log_prob(value: Any, length: int) -> np.ndarray:
+    array = to_numpy(value)
+    return array.reshape(length)
+
+
+class MutationStep(SMCStep):
+    def __init__(
+        self,
+        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        *,
+        transform: ParticleTransform | None = None,
+        store_chains: bool = False,
+    ):
+        super().__init__()
+        if hasattr(log_prob_fn, "log_prob"):
+            posterior = log_prob_fn
+
+            def _wrapped_log_prob(
+                particles: Array,
+                context: StepContext,
+            ) -> Array | float:
+                log_proposal_override = context.metadata.get(
+                    "log_proposal_override"
+                )
+                return posterior.log_prob(
+                    particles,
+                    context,
+                    log_proposal_override=log_proposal_override,
+                )
+
+            self._log_prob_fn = cast(LogProbFn, _wrapped_log_prob)
+        else:
+            self._log_prob_fn = cast(LogProbFn, log_prob_fn)
+        self._transform = transform
+        self._store_chains = store_chains
+        self._chain: Array | None = None
+
+    def _prepare_transform(
+        self, particles: Array, context: StepContext
+    ) -> ParticleTransform | None:
+        if self._transform is None:
+            return None
+        xp = namespace(particles)
+        transform = self._transform.clone()
+        transform.fit(asarray(particles, xp=xp), context=context)
+        context.metadata[PARTICLE_TRANSFORM_KEY] = transform
+        return transform
+
+    @staticmethod
+    def _forward_transform(
+        values: Array,
+        transform: ParticleTransform | None,
+        context: StepContext,
+    ):
+        if transform is None:
+            return values
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        latent, _ = transform.forward(arr, context=context)
+        return asarray(latent, xp=xp)
+
+    @staticmethod
+    def _inverse_transform(
+        values: Array,
+        transform: ParticleTransform | None,
+        context: StepContext,
+    ):
+        if transform is None:
+            return values, None
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        output, log_det = transform.inverse(arr, context=context)
+        return asarray(output, xp=xp), asarray(log_det, xp=xp)
+
+    @staticmethod
+    def _combine_with_log_det(result: Any, log_det: Array | None):
+        if log_det is None:
+            return result
+        xp = namespace(result, log_det)
+        result_arr = xp.asarray(result)
+        log_det_arr = xp.asarray(log_det)
+        return result_arr + log_det_arr

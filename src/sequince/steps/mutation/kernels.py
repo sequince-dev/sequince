@@ -5,8 +5,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from ._array_api import asarray, full, namespace, to_numpy
-from ._typing import Array
+from ..._array_api import asarray, full, namespace, to_numpy
+from ..._typing import Array
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -198,7 +198,8 @@ class GaussianRandomWalk(SymmetricMutationKernel):
 class MixtureMutationKernel:
     """Mixture of mutation kernels.
 
-    Randomly selects one component kernel for each proposal."""
+    Randomly selects one component kernel for each proposal.
+    """
 
     kernels: Sequence[MutationKernel]
     weights: Sequence[float] | None = None
@@ -255,10 +256,10 @@ class MixtureMutationKernel:
             to_numpy(
                 rng.choice(
                     len(self.kernels),
-                    size=(),
+                    size=(1,),
                     p=self.weights,
                 )
-            )
+            )[0]
         )
         self._selected_kernel = self.kernels[selected_index]
         return self._selected_kernel.sample(particles, rng)

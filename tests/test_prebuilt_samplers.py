@@ -6,10 +6,6 @@ import numpy as np
 import pytest
 
 from sequince import ParticleState, TemperedPosterior
-from sequince.mutation_kernels import (
-    GaussianRandomWalk,
-    MixtureMutationKernel,
-)
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 from sequince.steps import (
     AdaptiveTemperedWeighting,
@@ -19,6 +15,10 @@ from sequince.steps import (
     SystematicResampling,
 )
 from sequince.steps.base import SMCStep, StepContext
+from sequince.steps.mutation import (
+    GaussianRandomWalk,
+    MixtureMutationKernel,
+)
 
 if TYPE_CHECKING:
     from orng import ArrayRNG

@@ -8,12 +8,12 @@ import numpy as np
 
 from .._array_api import to_numpy
 from .._typing import Array
-from ..mutation_kernels import (
+from ..utils import call_with_optional_context
+from .base import SMCStep, StepContext
+from .mutation import (
     MutationKernel,
     evaluate_log_transition_ratio,
 )
-from ..utils import call_with_optional_context
-from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -32,7 +32,7 @@ class WasteFreeResampleMove(SMCStep):
     Examples
     --------
     >>> from sequince.posterior import TemperedPosterior
-    >>> from sequince.mutation_kernels import GaussianRandomWalk
+    >>> from sequince.steps.mutation import GaussianRandomWalk
     >>> from sequince.steps import WasteFreeResampleMove
     >>> tempered_post = TemperedPosterior(log_likelihood, log_prior)
     >>> kernel = GaussianRandomWalk(scale=0.5)

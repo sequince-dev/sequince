@@ -98,7 +98,8 @@ def make_standard_bayesian_smc(
     mutation_kwargs:
         Extra keyword arguments forwarded to the mutation step constructor.
         ``"metropolis-hastings"`` requires ``kernel`` and accepts optional
-        ``kernel_kwargs``.
+        ``kernel_kwargs``. For ``"emcee"``, ``move`` may be a named move,
+        weighted move configuration, or the ``"bilby-de"`` preset.
     logging_frequency:
         Frequency (in SMC iterations) at which to log sampler status.
         Defaults to 1 (log every iteration). If set to 0, logging is disabled.

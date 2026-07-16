@@ -5,10 +5,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from sequince.mutation_kernels import (
-    CallableMutationKernel,
-    GaussianRandomWalk,
-)
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps import (
@@ -22,7 +18,12 @@ from sequince.steps import (
 )
 from sequince.steps.base import StepContext
 from sequince.steps.control import PeriodicStep
-from sequince.steps.mutation import EmceeMutation, MiniPCNMutation
+from sequince.steps.mutation import (
+    CallableMutationKernel,
+    EmceeMutation,
+    GaussianRandomWalk,
+    MiniPCNMutation,
+)
 from sequince.steps.resampling import (
     MultinomialResampling,
     SystematicResampling,
@@ -248,6 +249,18 @@ def test_emcee_mutation_runs_single_step(
     assert mutated.particles.shape == particle_state.particles.shape
     assert "emcee_acceptance" in mutated.metadata
     assert mutated.metadata["emcee_steps"] == 1
+
+
+def test_emcee_mutation_resolves_bilby_de_move() -> None:
+    emcee = pytest.importorskip("emcee")
+
+    step = EmceeMutation(lambda position: 0.0, move="bilby-de")
+
+    assert len(step._move) == 2  # noqa: SLF001
+    assert isinstance(step._move[0][0], emcee.moves.DEMove)  # noqa: SLF001
+    assert step._move[0][1] == 0.9  # noqa: SLF001
+    assert step._move[1][0].gamma0 == 1.0  # noqa: SLF001
+    assert step._move[1][1] == 0.1  # noqa: SLF001
 
 
 def test_emcee_mutation_with_transform(
