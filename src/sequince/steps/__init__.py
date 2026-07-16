@@ -7,7 +7,11 @@ from .context import (
 )
 from .control import ContinueWhile
 from .log import LoggingStep
-from .mutation import EmceeMutation, MiniPCNMutation
+from .mutation import (
+    EmceeMutation,
+    MetropolisHastingsMutation,
+    MiniPCNMutation,
+)
 from .nested import NestedSMCStep
 from .proposal import AdaptGaussianProposal
 from .resampling import (
@@ -39,6 +43,7 @@ __all__ = [
     "SMCTransformation",
     "TransformationStep",
     "EmceeMutation",
+    "MetropolisHastingsMutation",
     "MiniPCNMutation",
     "NestedSMCStep",
     "AdaptGaussianProposal",
