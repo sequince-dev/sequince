@@ -17,7 +17,10 @@ class NormalizingFlow(Protocol):
     xp: Any
 
     def fit(
-        self, particles: Array, context: StepContext | None = None
+        self,
+        particles: Array,
+        context: StepContext | None = None,
+        **kwargs: Any,
     ) -> "NormalizingFlow": ...
 
     def forward(

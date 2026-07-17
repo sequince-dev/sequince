@@ -144,3 +144,63 @@ def test_flow_transform_round_trip_and_clone(particles):
     assert isinstance(cloned, FlowTransform)
     assert cloned is not transform
     assert cloned.flow is not transform.flow
+
+
+def test_flow_transform_passes_fit_kwargs(particles):
+    class RecordingFlow:
+        xp = np
+
+        def __init__(self):
+            self.fit_options = None
+
+        def fit(self, values, context=None, **kwargs):
+            self.fit_options = kwargs
+            return self
+
+        def forward(self, values, context=None):
+            return values, np.zeros(values.shape[0])
+
+        def inverse(self, values, context=None):
+            return values, np.zeros(values.shape[0])
+
+    transform = FlowTransform(
+        RecordingFlow(),
+        fit_kwargs={"n_epochs": 7, "batch_size": 2},
+    )
+
+    transform.fit(particles)
+
+    assert transform.flow.fit_options == {"n_epochs": 7, "batch_size": 2}
+    assert transform.fit_kwargs == {"n_epochs": 7, "batch_size": 2}
+
+
+def test_flow_transform_preserves_input_namespace(particles):
+    torch = pytest.importorskip("torch")
+    torch_api = pytest.importorskip("array_api_compat.torch")
+
+    class TorchFlow:
+        xp = torch_api
+
+        def fit(self, values, context=None, **kwargs):
+            return self
+
+        def forward(self, values, context=None):
+            values = torch.asarray(values)
+            return values + 1.0, torch.zeros(values.shape[0])
+
+        def inverse(self, values, context=None):
+            values = torch.asarray(values)
+            return values - 1.0, torch.zeros(values.shape[0])
+
+    transform = CompositeTransform(
+        [AffineTransform(), FlowTransform(TorchFlow())]
+    )
+    transform.fit(particles)
+
+    latent, log_det = transform.forward(particles)
+    restored, inverse_log_det = transform.inverse(latent)
+
+    assert isinstance(latent, np.ndarray)
+    assert isinstance(log_det, np.ndarray)
+    np.testing.assert_allclose(restored, particles, atol=1e-12)
+    np.testing.assert_allclose(log_det + inverse_log_det, 0.0)

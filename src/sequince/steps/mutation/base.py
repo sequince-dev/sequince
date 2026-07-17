@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 import numpy as np
 
@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 
 LogProbFn = Callable[..., Array | float]
 PARTICLE_TRANSFORM_KEY = "particle_transform"
+TransformRefit = (
+    Literal["always", "per-context", "once"]
+    | Callable[[Array, StepContext], bool]
+)
 
 
 def call_log_prob(
@@ -45,11 +49,22 @@ def as_vector_log_prob(value: Any, length: int) -> np.ndarray:
 
 
 class MutationStep(SMCStep):
+    """Base class for mutations that optionally operate in transformed space.
+
+    ``transform_refit`` controls whether a cloned transform is fitted for every
+    mutation call, once per outer :class:`StepContext`, or only once for the
+    lifetime of this mutation step. A callable can instead request fits based
+    on the particles and context. It is evaluated once per mutation
+    application, including the initial fit, and may consume or reset a trigger
+    stored in the context.
+    """
+
     def __init__(
         self,
         log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
         *,
         transform: ParticleTransform | None = None,
+        transform_refit: TransformRefit = "always",
         store_chains: bool = False,
     ):
         super().__init__()
@@ -72,7 +87,23 @@ class MutationStep(SMCStep):
             self._log_prob_fn = cast(LogProbFn, _wrapped_log_prob)
         else:
             self._log_prob_fn = cast(LogProbFn, log_prob_fn)
+        if not callable(transform_refit) and not isinstance(
+            transform_refit, str
+        ):
+            raise TypeError("transform_refit must be a mode or callable.")
+        if isinstance(transform_refit, str) and transform_refit not in {
+            "always",
+            "per-context",
+            "once",
+        }:
+            raise ValueError(
+                "transform_refit must be 'always', 'per-context', "
+                "'once', or a callable."
+            )
         self._transform = transform
+        self._transform_refit = transform_refit
+        self._prepared_transform: ParticleTransform | None = None
+        self._prepared_context: StepContext | None = None
         self._store_chains = store_chains
         self._chain: Array | None = None
 
@@ -81,9 +112,31 @@ class MutationStep(SMCStep):
     ) -> ParticleTransform | None:
         if self._transform is None:
             return None
-        xp = namespace(particles)
-        transform = self._transform.clone()
-        transform.fit(asarray(particles, xp=xp), context=context)
+        triggered = (
+            bool(self._transform_refit(particles, context))
+            if callable(self._transform_refit)
+            else False
+        )
+        should_fit = (
+            self._transform_refit == "always"
+            or self._prepared_transform is None
+            or triggered
+            or (
+                self._transform_refit == "per-context"
+                and self._prepared_context is not context
+            )
+        )
+        if should_fit:
+            xp = namespace(particles)
+            transform = self._transform.clone()
+            transform.fit(asarray(particles, xp=xp), context=context)
+            self._prepared_transform = transform
+            self._prepared_context = context
+        else:
+            cached_transform = self._prepared_transform
+            if cached_transform is None:  # pragma: no cover - guarded above
+                raise RuntimeError("Prepared transform cache is empty.")
+            transform = cached_transform
         context.metadata[PARTICLE_TRANSFORM_KEY] = transform
         return transform
 

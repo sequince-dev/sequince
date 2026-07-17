@@ -14,6 +14,7 @@ from ...transforms import ParticleTransform
 from ..context import StepContext
 from .base import (
     MutationStep,
+    TransformRefit,
     as_scalar_log_prob,
     as_vector_log_prob,
     call_log_prob,
@@ -144,13 +145,17 @@ class EmceeMutation(MutationStep):
         move: Any = None,
         run_kwargs: dict[str, Any] | None = None,
         transform: ParticleTransform | None = None,
+        transform_refit: TransformRefit = "always",
         store_chains: bool = False,
         **kwargs,
     ):
         import emcee
 
         super().__init__(
-            log_prob_fn, transform=transform, store_chains=store_chains
+            log_prob_fn,
+            transform=transform,
+            transform_refit=transform_refit,
+            store_chains=store_chains,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")

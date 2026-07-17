@@ -1,6 +1,10 @@
 """Mutation steps, kernels, and configuration helpers."""
 
-from .base import PARTICLE_TRANSFORM_KEY, MutationStep
+from .base import (
+    PARTICLE_TRANSFORM_KEY,
+    MutationStep,
+    TransformRefit,
+)
 from .emcee import (
     EMCEE_MOVES,
     EmceeMutation,
@@ -34,6 +38,7 @@ __all__ = [
     "MutationStep",
     "PARTICLE_TRANSFORM_KEY",
     "SymmetricMutationKernel",
+    "TransformRefit",
     "evaluate_log_transition_ratio",
     "get_emcee_move",
     "get_mutation_kernel",
