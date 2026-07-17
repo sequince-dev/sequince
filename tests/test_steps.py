@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pytest
@@ -27,6 +27,7 @@ from sequince.steps.weighting import (
     FixedTemperedWeighting,
     LogLikelihoodWeighting,
     TemperedWeighting,
+    evolving_target_ess_ratio,
 )
 
 if TYPE_CHECKING:
@@ -108,6 +109,39 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     assert context.metadata["temperature_delta"] == pytest.approx(0.25)
 
 
+def test_evolving_target_ess_ratio_uses_clipped_temperature_progress() -> None:
+    schedule = evolving_target_ess_ratio(
+        0.2,
+        0.8,
+        rate=2.0,
+        max_temperature=2.0,
+    )
+
+    assert schedule(-1.0) == pytest.approx(0.2)
+    assert schedule(1.0) == pytest.approx(0.35)
+    assert schedule(2.0) == pytest.approx(0.8)
+    assert schedule(3.0) == pytest.approx(0.8)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"start": 0.0, "end": 0.8}, "start must be"),
+        ({"start": 0.2, "end": 1.1}, "end must be"),
+        ({"start": 0.2, "end": 0.8, "rate": 0.0}, "rate must be"),
+        (
+            {"start": 0.2, "end": 0.8, "max_temperature": 0.0},
+            "max_temperature must be",
+        ),
+    ],
+)
+def test_evolving_target_ess_ratio_validates_arguments(
+    kwargs: dict[str, float], match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        evolving_target_ess_ratio(**kwargs)
+
+
 def test_adaptive_tempered_weighting_reaches_max_temperature(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
@@ -142,6 +176,73 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
     assert "temperature_delta" in context.metadata
     assert context.metadata["stop_requested"] is True
     assert context.metadata["stop_immediately"] is False
+
+
+@pytest.mark.parametrize("criterion", ["ess", "cess"])
+def test_adaptive_tempered_weighting_supports_evolving_target(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    criterion: Literal["ess", "cess"],
+) -> None:
+    schedule_calls: list[tuple[float, int]] = []
+
+    def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
+        return np.linspace(-2.0, 2.0, particles.shape[0])
+
+    def target_schedule(temperature: float, context: StepContext) -> float:
+        schedule_calls.append((temperature, context.t))
+        return 0.95
+
+    state = particle_state.with_updates(metadata={"temperature": 0.0})
+    fixed_context = context_factory(t=4)
+    scheduled_context = context_factory(t=4)
+    fixed_step = AdaptiveTemperedWeighting(
+        log_like,
+        target_ess_ratio=0.8,
+        criterion=criterion,
+        min_delta=1e-8,
+        max_bisection_iter=60,
+    )
+    scheduled_step = AdaptiveTemperedWeighting(
+        log_like,
+        target_ess_ratio=target_schedule,
+        criterion=criterion,
+        min_delta=1e-8,
+        max_bisection_iter=60,
+    )
+
+    fixed_step(state, fixed_context, rng)
+    updated = scheduled_step(state, scheduled_context, rng)
+
+    assert schedule_calls == [(0.0, 4)]
+    assert (
+        scheduled_context.metadata["temperature_delta"]
+        < fixed_context.metadata["temperature_delta"]
+    )
+    assert updated.metadata["target_ess_ratio"] == pytest.approx(0.95)
+    assert scheduled_context.metadata["target_ess_ratio"] == pytest.approx(
+        0.95
+    )
+
+
+@pytest.mark.parametrize("invalid_target", [0.0, 1.1, np.nan])
+def test_adaptive_tempered_weighting_validates_scheduled_target(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    invalid_target: float,
+) -> None:
+    step = AdaptiveTemperedWeighting(
+        lambda particles: np.arange(particles.shape[0], dtype=float),
+        target_ess_ratio=lambda temperature: invalid_target,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="target_ess_ratio must resolve to a value in",
+    ):
+        step(particle_state, context_factory(), rng)
 
 
 def test_adaptive_tempered_weighting_no_op_when_max_reached(
