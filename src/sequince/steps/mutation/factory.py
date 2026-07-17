@@ -60,7 +60,7 @@ def get_mutation_step(
             n_steps=mutation_n_steps,
             **kwargs,
         )
-    elif mutation == "none":
+    elif mutation == "none" or mutation is None:
         mutation_step = None
     else:
         raise ValueError(
