@@ -1,5 +1,5 @@
 ---
-title: 'Sequince: a modular sequential Monte Carlo toolkit for extensible sequential inference'
+title: 'Sequince: a modular sequential Monte Carlo toolkit'
 tags:
   - Python
   - Bayesian inference
@@ -63,10 +63,10 @@ The Python ecosystem already contains several useful SMC-related tools. The
 teaching and prototyping standard methods. `SMCPy` focuses on uncertainty
 quantification and Bayesian calibration with parallel likelihood-tempering SMC
 samplers, including fixed and adaptive tempering variants [@smcpy_repo].
-`pocomc` focuses on persistent sampling for posterior inference
-[@karamanis2025persistent]. Broader Bayesian software ecosystems also expose
-SMC functionality. `PyMC` includes a sequential Monte Carlo sampler within a
-general probabilistic programming framework [@abrilpla2023pymc], while
+`pocomc` implements persistent sampling with normalizing flows for posterior
+inference [@karamanis2025persistent]. Broader Bayesian software ecosystems also
+expose SMC functionality. `PyMC` includes a sequential Monte Carlo sampler
+within a general probabilistic programming framework [@abrilpla2023pymc], while
 `BlackJAX` provides composable inference components in the JAX ecosystem and
 includes SMC methods alongside other Monte Carlo algorithms
 [@cabezas2024blackjax]. Recent domain-specific frameworks such as SHARPy
@@ -93,7 +93,7 @@ control, or transformation steps.
 The runtime context carries the current iteration, optional observations,
 shared user-provided configuration, mutable metadata for communication between
 steps, and recorded outputs for later inspection. This design supports both
-static posterior inference and genuinely sequential settings in which new data
+static posterior inference and sequential settings in which new data
 arrive over time. It also allows algorithm-specific state, such as temperatures
 or diagnostic summaries, to be passed through the SMC pipeline without
 hard-coding that logic into the runner itself.
@@ -126,12 +126,12 @@ Bayesian inference ecosystems such as `bilby` [@ashton2019bilby]. In these
 settings, the main benefit of `sequince` is not a single fixed algorithm, but a
 shared framework for expressing and testing new sequential inference ideas. This
 includes companion-package development such as `sequince-flows`, which extends
-the ecosystem with flow-based components needed for normalizing-flow-assisted
-analyses in the style of `aspire`.
+the ecosystem with flow-based components needed for normalizing-flow-based
+preconditioning similar `pocomc` or ASPIRE-style analyses [@Williams:2025aar].
 
 # AI usage disclosure
 
-Generative AI tools were used to assist with code refactoring and rewriting
+Generative AI tools were used to assist with code implementation and refactoring
 from targeted prompts. OpenAI Codex, via ChatGPT 5.3 and 5.4, and GitHub
 Copilot were used during software development. The authors reviewed, edited,
 and validated all AI-assisted outputs and retained responsibility for the
