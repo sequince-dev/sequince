@@ -30,6 +30,14 @@ Particle state and results
    :undoc-members:
    :show-inheritance:
 
+Checkpointing
+-------------
+
+.. automodule:: sequince.checkpoint
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Posterior utilities
 -------------------
 
