@@ -26,6 +26,47 @@ TargetESSRatio = float | Callable[..., float]
 logger = logging.getLogger(__name__)
 
 
+def evolving_target_ess_ratio(
+    start: float,
+    end: float,
+    *,
+    rate: float = 1.0,
+    max_temperature: float = 1.0,
+) -> Callable[[float], float]:
+    """Return a power-law schedule for an evolving target ESS ratio.
+
+    The schedule evolves from ``start`` to ``end`` as the temperature moves
+    from zero to ``max_temperature``. Temperatures outside that interval are
+    clipped to the corresponding endpoint. Values of ``rate`` greater than
+    one delay the transition, while values below one accelerate it.
+
+    Parameters
+    ----------
+    start:
+        Target ESS ratio at zero temperature; must be in ``(0, 1]``.
+    end:
+        Target ESS ratio at ``max_temperature``; must be in ``(0, 1]``.
+    rate:
+        Positive exponent controlling the rate of transition.
+    max_temperature:
+        Positive temperature at which the schedule reaches ``end``.
+    """
+    if not 0.0 < start <= 1.0:
+        raise ValueError("start must be in (0, 1].")
+    if not 0.0 < end <= 1.0:
+        raise ValueError("end must be in (0, 1].")
+    if not rate > 0.0:
+        raise ValueError("rate must be positive.")
+    if not max_temperature > 0.0:
+        raise ValueError("max_temperature must be positive.")
+
+    def schedule(temperature: float) -> float:
+        progress = min(max(temperature / max_temperature, 0.0), 1.0)
+        return start + (end - start) * progress**rate
+
+    return schedule
+
+
 def _weights_as_1d_array(
     value: Any, *, xp, like: Array | None = None
 ) -> Array:
