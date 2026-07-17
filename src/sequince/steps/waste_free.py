@@ -8,9 +8,12 @@ import numpy as np
 
 from .._array_api import to_numpy
 from .._typing import Array
-from ..mutation_kernels import MutationKernel
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
+from .mutation import (
+    MutationKernel,
+    evaluate_log_transition_ratio,
+)
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -29,7 +32,7 @@ class WasteFreeResampleMove(SMCStep):
     Examples
     --------
     >>> from sequince.posterior import TemperedPosterior
-    >>> from sequince.mutation_kernels import GaussianRandomWalk
+    >>> from sequince.steps.mutation import GaussianRandomWalk
     >>> from sequince.steps import WasteFreeResampleMove
     >>> tempered_post = TemperedPosterior(log_likelihood, log_prior)
     >>> kernel = GaussianRandomWalk(scale=0.5)
@@ -90,7 +93,10 @@ class WasteFreeResampleMove(SMCStep):
             self._log_prob_fn = _wrapped_log_prob
         else:
             self._log_prob_fn = log_prob_fn
-        if hasattr(kernel, "sample") and hasattr(kernel, "log_density"):
+        has_correction = hasattr(kernel, "log_transition_ratio") or hasattr(
+            kernel, "log_density"
+        )
+        if hasattr(kernel, "sample") and has_correction:
             self._kernel: MutationKernel | None = kernel  # type: ignore[assignment]
             self._kernel_factory: MutationKernelFactory | None = None
         elif callable(kernel):
@@ -155,15 +161,11 @@ class WasteFreeResampleMove(SMCStep):
                 )
 
             log_prob_proposals = self._evaluate_log_prob(proposals, context)
-            log_forward = kernel.log_density(parent_particles, proposals)
-            log_backward = kernel.log_density(proposals, parent_particles)
-
-            log_r = (
-                log_prob_proposals
-                + log_backward
-                - log_prob_parents
-                - log_forward
+            transition_ratio = evaluate_log_transition_ratio(
+                kernel, parent_particles, proposals
             )
+
+            log_r = log_prob_proposals - log_prob_parents + transition_ratio
             np.clip(log_r, a_min=-1e12, a_max=1e12, out=log_r)
             log_accept = np.minimum(log_r, 0.0)
             accept_prob = np.exp(log_accept)
@@ -286,8 +288,12 @@ class WasteFreeResampleMove(SMCStep):
                     "Kernel factory did not return a valid MutationKernel."
                 )
             kernel = self._kernel
-        if not hasattr(kernel, "sample") or not hasattr(kernel, "log_density"):
+        has_correction = hasattr(kernel, "log_transition_ratio") or hasattr(
+            kernel, "log_density"
+        )
+        if not hasattr(kernel, "sample") or not has_correction:
             raise TypeError(
-                "Resolved kernel must implement sample() and log_density()."
+                "Resolved kernel must implement sample() and either "
+                "log_transition_ratio() or log_density()."
             )
         return kernel

@@ -116,3 +116,37 @@ def test_draw_additional_samples_respects_terminal_weights(
     assert updated_state.log_weights.shape == (8,)
     assert np.allclose(updated_state.weights, np.full(8, 1.0 / 8.0))
     assert updated_result.final_state is updated_state
+
+
+def test_draw_additional_samples_supports_metropolis_hastings(
+    context_factory,
+    rng,
+) -> None:
+    particles = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+    state = ParticleState(
+        particles=particles,
+        metadata={"temperature": 1.0},
+    )
+    result = SMCResult([state], context_factory(metadata={"temperature": 1.0}))
+    posterior = TemperedPosterior(
+        log_prior=lambda values, context: np.zeros(values.shape[0]),
+        log_likelihood=lambda values, context: np.zeros(values.shape[0]),
+    )
+
+    updated_state, updated_result = draw_additional_samples(
+        result=result,
+        rng=rng,
+        n_particles=8,
+        mutation="metropolis-hastings",
+        mutation_n_steps=2,
+        mutation_kwargs={
+            "kernel": "gaussian-random-walk",
+            "kernel_kwargs": {"scale": 0.1},
+        },
+        particle_transform=None,
+        posterior=posterior,
+    )
+
+    assert updated_state.particles.shape == (8, 1)
+    assert updated_state.metadata["metropolis_hastings_steps"] == 2
+    assert updated_result.final_state is updated_state

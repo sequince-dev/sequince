@@ -7,7 +7,12 @@ try:  # pragma: no cover - typing helper only
 except Exception:  # pragma: no cover - optional dependency missing
     Array = Any  # type: ignore
 
-MutationStrategy = Literal["emcee", "minipcn", "none"]
+MutationStrategy = Literal[
+    "emcee",
+    "metropolis-hastings",
+    "minipcn",
+    "none",
+]
 
 MetaData = MutableMapping[str, Any]
 SharedContext = Mapping[str, Any]

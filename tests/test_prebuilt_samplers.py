@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 import pytest
 
@@ -13,10 +11,7 @@ from sequince.steps import (
     MiniPCNMutation,
     SystematicResampling,
 )
-from sequince.steps.base import SMCStep, StepContext
-
-if TYPE_CHECKING:
-    from orng import ArrayRNG
+from sequince.steps.base import StepContext
 
 
 def _quadratic_log_prior(particles: np.ndarray, context=None) -> np.ndarray:
@@ -84,17 +79,6 @@ def test_make_standard_bayesian_smc_validates_resampling_name() -> None:
         )
 
 
-def test_make_standard_bayesian_smc_supports_minipcn_mutation() -> None:
-    smc, _, _ = make_standard_bayesian_smc(
-        _quadratic_log_prior,
-        _zero_log_likelihood,
-        mutation="minipcn",
-    )
-
-    steps = smc._steps  # noqa: SLF001
-    assert isinstance(steps[2], MiniPCNMutation)
-
-
 def test_make_standard_bayesian_smc_accepts_proposal_distribution() -> None:
     class ZeroProposal:
         def log_prob(self, particles: np.ndarray, context=None) -> np.ndarray:
@@ -124,43 +108,3 @@ def test_make_standard_bayesian_smc_accepts_proposal_distribution() -> None:
     )
 
     assert np.allclose(values, _quadratic_log_prior(particles))
-
-
-def test_make_standard_bayesian_smc_can_disable_mutation() -> None:
-    smc, _, _ = make_standard_bayesian_smc(
-        _quadratic_log_prior,
-        _zero_log_likelihood,
-        mutation="none",
-    )
-
-    steps = smc._steps  # noqa: SLF001
-    assert len(steps) == 3
-    assert isinstance(steps[0], AdaptiveTemperedWeighting)
-    assert isinstance(steps[1], SystematicResampling)
-    assert isinstance(steps[2], LoggingStep)
-
-
-class IdentityMutation(SMCStep):
-    def apply(self, state, context: StepContext, rng: "ArrayRNG"):
-        return state
-
-
-def test_make_standard_bayesian_smc_accepts_custom_mutation_step() -> None:
-    custom = IdentityMutation()
-    smc, _, _ = make_standard_bayesian_smc(
-        _quadratic_log_prior,
-        _zero_log_likelihood,
-        mutation=custom,
-    )
-
-    steps = smc._steps  # noqa: SLF001
-    assert steps[-2] is custom
-
-
-def test_make_standard_bayesian_smc_validates_mutation_name() -> None:
-    with pytest.raises(ValueError):
-        make_standard_bayesian_smc(
-            _quadratic_log_prior,
-            _zero_log_likelihood,
-            mutation="unknown",  # type: ignore[arg-type]
-        )

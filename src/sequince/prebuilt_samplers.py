@@ -90,14 +90,16 @@ def make_standard_bayesian_smc(
     resampling_kwargs:
         Extra keyword arguments forwarded to the resampling step constructor.
     mutation:
-        Mutation strategy to use. Accepts ``"emcee"`` (default),
-        ``"minipcn"``, ``"none"``, or a pre-built ``SMCStep`` instance.
+        Mutation strategy to use. Accepts ``"emcee"``,
+        ``"metropolis-hastings"``, ``"minipcn"`` (default), ``"none"``, or a
+        pre-built ``SMCStep`` instance.
     mutation_n_steps:
         Number of mutation steps to run per iteration.
     mutation_kwargs:
         Extra keyword arguments forwarded to the mutation step constructor.
-        For ``"emcee"`` these are passed to ``emcee.EnsembleSampler``; for
-        ``"minipcn"`` they are provided to ``MiniPCNMutation``.
+        ``"metropolis-hastings"`` requires ``kernel`` and accepts optional
+        ``kernel_kwargs``. For ``"emcee"``, ``move`` may be a named move,
+        weighted move configuration, or the ``"bilby-de"`` preset.
     logging_frequency:
         Frequency (in SMC iterations) at which to log sampler status.
         Defaults to 1 (log every iteration). If set to 0, logging is disabled.
