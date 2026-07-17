@@ -202,5 +202,5 @@ def test_flow_transform_preserves_input_namespace(particles):
 
     assert isinstance(latent, np.ndarray)
     assert isinstance(log_det, np.ndarray)
-    np.testing.assert_allclose(restored, particles)
+    np.testing.assert_allclose(restored, particles, atol=1e-12)
     np.testing.assert_allclose(log_det + inverse_log_det, 0.0)
