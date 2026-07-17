@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 IncrementFn = Callable[..., Array | float]
 TemperatureSchedule = Callable[..., float]
+TargetESSRatio = float | Callable[..., float]
 
 logger = logging.getLogger(__name__)
 
@@ -306,8 +307,10 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     log_increment_fn:
         A callable or ``TemperedPosterior`` providing the log-weight increments.
     target_ess_ratio:
-        The target ESS ratio (ESS / n) to achieve after weighting; must be in
-        the interval (0, 1].
+        The target ESS ratio (ESS / n) to achieve after weighting, or a
+        callable that returns the target for the current temperature. The
+        callable may optionally also accept the current ``StepContext``. Each
+        resolved target must be in the interval (0, 1].
     max_temperature:
         The maximum temperature to reach; once this temperature is reached,
         the SMC run is requested to stop after the current iteration.
@@ -328,14 +331,16 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         self,
         log_increment_fn: IncrementFn | "TemperedPosterior",
         *,
-        target_ess_ratio: float = 0.7,
+        target_ess_ratio: TargetESSRatio = 0.7,
         max_temperature: float = 1.0,
         min_delta: float = 1e-4,
         normalize_after: bool = True,
         max_bisection_iter: int = 30,
         criterion: Literal["ess", "cess"] = "ess",
     ):
-        if not (0.0 < target_ess_ratio <= 1.0):
+        if not callable(target_ess_ratio) and not (
+            0.0 < target_ess_ratio <= 1.0
+        ):
             raise ValueError("target_ess_ratio must be in (0, 1].")
         if max_temperature <= 0.0:
             raise ValueError("max_temperature must be positive.")
@@ -378,15 +383,24 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         increments = _weights_as_1d_array(
             log_increments, xp=xp, like=state.log_weights
         )
+        target_ess_ratio = self._resolve_target_ess_ratio(
+            current_temp, context
+        )
 
         if _max_abs(increments, xp=xp) <= 1e-12:
             delta = remaining
         else:
-            delta = self._find_delta(state.log_weights, increments, remaining)
+            delta = self._find_delta(
+                state.log_weights,
+                increments,
+                remaining,
+                target_ess_ratio=target_ess_ratio,
+            )
 
         new_log_weights = state.log_weights + delta * increments
         metadata = dict(state.metadata)
         metadata["temperature"] = current_temp + delta
+        metadata["target_ess_ratio"] = target_ess_ratio
 
         updated_state = state.with_updates(
             log_weights=new_log_weights, metadata=metadata
@@ -396,11 +410,15 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         context.metadata["temperature"] = metadata["temperature"]
         context.metadata["temperature_delta"] = delta
+        context.metadata["target_ess_ratio"] = target_ess_ratio
         new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
         logger.debug(
-            "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, ESS ratio=%.4f.",
+            "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
+            "target %s ratio=%.4f, ESS ratio=%.4f.",
             delta,
             metadata["temperature"],
+            self._criterion.upper(),
+            target_ess_ratio,
             new_ess_ratio,
         )
         if (
@@ -414,11 +432,34 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             context.request_stop()
         return updated_state
 
+    def _resolve_target_ess_ratio(
+        self,
+        current_temperature: float,
+        context: StepContext,
+    ) -> float:
+        target = self._target_ess_ratio
+        if callable(target):
+            resolved_target = call_with_optional_context(
+                target,
+                (current_temperature,),
+                context,
+            )
+        else:
+            resolved_target = target
+        target_value = float(resolved_target)
+        if not 0.0 < target_value <= 1.0:
+            raise ValueError(
+                "target_ess_ratio must resolve to a value in (0, 1]."
+            )
+        return target_value
+
     def _find_delta(
         self,
         base_log_weights: Array,
         increments: Array,
         max_delta: float,
+        *,
+        target_ess_ratio: float,
     ) -> float:
         low = 0.0
         high = max_delta
@@ -430,11 +471,11 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         )
 
         base_ratio = ratio_fn(base_log_weights, increments, 0.0)
-        if base_ratio <= self._target_ess_ratio:
+        if base_ratio <= target_ess_ratio:
             return max(self._min_delta, min(high, self._min_delta))
 
         hi_ratio = ratio_fn(base_log_weights, increments, high)
-        if hi_ratio >= self._target_ess_ratio:
+        if hi_ratio >= target_ess_ratio:
             return high
 
         for _ in range(self._max_bisection_iter):
@@ -442,7 +483,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             if high - low <= self._min_delta:
                 break
             ratio = ratio_fn(base_log_weights, increments, mid)
-            if ratio >= self._target_ess_ratio:
+            if ratio >= target_ess_ratio:
                 low = mid
             else:
                 high = mid
