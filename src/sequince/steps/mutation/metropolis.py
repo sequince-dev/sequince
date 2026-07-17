@@ -148,6 +148,7 @@ class MetropolisHastingsMutation(MutationStep):
             log_acceptance = (
                 proposed_log_prob - current_log_prob + transition_ratio
             )
+            # TODO: use orng directly
             uniforms = asarray(
                 rng.random((n_particles,)),
                 xp=xp,
