@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Sequence
 
 from .base import SMCStep, StepContext
 
@@ -149,3 +149,43 @@ class PeriodicStep(SMCStep):
                 self.offset,
             )
             return state
+
+
+class RepeatStep(SMCStep):
+    """Repeat a step or sequence of steps a fixed number of times."""
+
+    def __init__(self, step: SMCStep, n: int):
+        if n < 1:
+            raise ValueError("n must be at least one.")
+        self.step = step
+        self.n = int(n)
+
+    def apply(self, state, context, rng):
+        for _ in range(self.n):
+            state = self.step(state, context, rng)
+
+            if context.metadata.get("stop_immediately", False):
+                break
+
+        return state
+
+
+class SequentialStep(SMCStep):
+    """Apply several SMC steps in order.
+
+    This is useful for grouping multiple steps together into a single step,
+    which can then be used in other contexts (e.g., as part of a
+    `RepeatStep` or `PeriodicStep`).
+    """
+
+    def __init__(self, steps: Sequence[SMCStep]):
+        self.steps = tuple(steps)
+
+    def apply(self, state, context, rng):
+        for step in self.steps:
+            state = step(state, context, rng)
+
+            if context.metadata.get("stop_immediately", False):
+                break
+
+        return state
