@@ -7,7 +7,11 @@ from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
 from ...transforms import ParticleTransform
 from ..context import StepContext
-from .base import MutationStep, call_log_prob
+from .base import (
+    MutationStep,
+    TransformRefit,
+    call_log_prob,
+)
 from .kernels import MutationKernel, evaluate_log_transition_ratio
 
 if TYPE_CHECKING:
@@ -36,10 +40,14 @@ class MetropolisHastingsMutation(MutationStep):
         *,
         n_steps: int = 1,
         transform: ParticleTransform | None = None,
+        transform_refit: TransformRefit = "always",
         store_chains: bool = False,
     ):
         super().__init__(
-            log_prob_fn, transform=transform, store_chains=store_chains
+            log_prob_fn,
+            transform=transform,
+            transform_refit=transform_refit,
+            store_chains=store_chains,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")

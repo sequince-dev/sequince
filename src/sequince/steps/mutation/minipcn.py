@@ -9,7 +9,11 @@ from ..._array_api import asarray, namespace
 from ..._typing import Array
 from ...transforms import ParticleTransform
 from ..context import StepContext
-from .base import MutationStep, call_log_prob
+from .base import (
+    MutationStep,
+    TransformRefit,
+    call_log_prob,
+)
 
 if TYPE_CHECKING:
     from orng import ArrayRNG
@@ -35,11 +39,15 @@ class MiniPCNMutation(MutationStep):
         step_fn: str = "tpcn",
         verbose: bool = False,
         transform: ParticleTransform | None = None,
+        transform_refit: TransformRefit = "always",
         store_chains: bool = False,
         **kwargs,
     ):
         super().__init__(
-            log_prob_fn, transform=transform, store_chains=store_chains
+            log_prob_fn,
+            transform=transform,
+            transform_refit=transform_refit,
+            store_chains=store_chains,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")

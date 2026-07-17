@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import array_api_extra as xpx
 
-from ._array_api import asarray, namespace
+from ._array_api import asarray, namespace, to_numpy
 from .flows import NormalizingFlow, clone_flow, flow_asarray
 
 logger = logging.getLogger(__name__)
@@ -128,15 +128,28 @@ class IdentityTransform(ParticleTransform):
 class FlowTransform(ParticleTransform):
     """Adapt a normalizing flow to the ``ParticleTransform`` interface."""
 
-    def __init__(self, flow: NormalizingFlow):
+    def __init__(
+        self,
+        flow: NormalizingFlow,
+        *,
+        fit_kwargs: Mapping[str, Any] | None = None,
+    ):
         self._flow = flow
+        self._fit_kwargs = dict(fit_kwargs or {})
 
     @property
     def flow(self) -> NormalizingFlow:
         return self._flow
 
+    @property
+    def fit_kwargs(self) -> Mapping[str, Any]:
+        return dict(self._fit_kwargs)
+
     def clone(self) -> "FlowTransform":
-        return FlowTransform(clone_flow(self._flow))
+        return FlowTransform(
+            clone_flow(self._flow),
+            fit_kwargs=self._fit_kwargs,
+        )
 
     def fit(self, particles, context=None):
         backend_particles = flow_asarray(self._flow, particles)
@@ -144,16 +157,42 @@ class FlowTransform(ParticleTransform):
             "Fitting flow transform to %d particles.",
             backend_particles.shape[0],
         )
-        self._flow.fit(backend_particles, context=context)
+        self._flow.fit(
+            backend_particles,
+            context=context,
+            **self._fit_kwargs,
+        )
         return self
+
+    @staticmethod
+    def _restore_namespace(values, like):
+        xp = namespace(like)
+        try:
+            if namespace(values) is xp:
+                return asarray(values, xp=xp, like=like)
+        except TypeError:
+            pass
+        return asarray(to_numpy(values), xp=xp, like=like)
 
     def forward(self, particles, context=None):
         backend_particles = flow_asarray(self._flow, particles)
-        return self._flow.forward(backend_particles, context=context)
+        values, log_det = self._flow.forward(
+            backend_particles, context=context
+        )
+        return (
+            self._restore_namespace(values, particles),
+            self._restore_namespace(log_det, particles),
+        )
 
     def inverse(self, values, context=None):
         backend_values = flow_asarray(self._flow, values)
-        return self._flow.inverse(backend_values, context=context)
+        particles, log_det = self._flow.inverse(
+            backend_values, context=context
+        )
+        return (
+            self._restore_namespace(particles, values),
+            self._restore_namespace(log_det, values),
+        )
 
 
 @dataclass
