@@ -35,6 +35,17 @@ def test_get_mutation_step_constructs_minipcn() -> None:
     assert isinstance(mutation, MiniPCNMutation)
 
 
+def test_get_mutation_step_passes_transform_refit() -> None:
+    mutation = get_mutation_step(
+        "minipcn",
+        _posterior(),
+        mutation_kwargs={"transform_refit": "per-context"},
+    )
+
+    assert isinstance(mutation, MiniPCNMutation)
+    assert mutation._transform_refit == "per-context"  # noqa: SLF001
+
+
 def test_get_mutation_step_constructs_gaussian_random_walk() -> None:
     mutation = get_mutation_step(
         "metropolis-hastings",
