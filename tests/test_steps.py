@@ -31,7 +31,7 @@ from sequince.steps.weighting import (
 )
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
 
 def test_step_context_request_stop(step_context: StepContext) -> None:
@@ -518,7 +518,7 @@ def test_dimensionality_expansion_appends_block(
             self,
             state: ParticleState,
             context: StepContext,
-            rng: "ArrayRNG",
+            rng: "RandomGenerator",
         ) -> ParticleState:
             n = state.particles.shape[0]
             new_block = np.full((n, 2), fill_value=0.5)
@@ -616,7 +616,7 @@ def test_step_every_n_iterations_applies_step_conditionally(
             self,
             state: ParticleState,
             context: StepContext,
-            rng: "ArrayRNG",
+            rng: "RandomGenerator",
         ) -> ParticleState:
             applied_iterations.append(context.t)
             return state

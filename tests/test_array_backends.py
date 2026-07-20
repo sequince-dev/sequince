@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from orng import ArrayRNG
+from orng import RandomGenerator
 
 from sequince._array_api import namespace
 from sequince.posterior import TemperedPosterior
@@ -34,7 +34,7 @@ def test_sequince_runs_with_array_backends(
     results = smc.run(
         initial_state,
         num_steps=1,
-        rng=ArrayRNG(backend=backend, seed=1234),
+        rng=RandomGenerator(backend=backend, seed=1234),
     )
 
     assert len(results) == 1
@@ -45,7 +45,7 @@ def test_sequince_runs_with_array_backends(
 
     samples = results.posterior_samples(
         n_samples=particles.shape[0],
-        rng=ArrayRNG(backend=backend, seed=4321),
+        rng=RandomGenerator(backend=backend, seed=4321),
     )
     assert samples.shape[0] == particles.shape[0]
     assert namespace(samples) is backend_ns

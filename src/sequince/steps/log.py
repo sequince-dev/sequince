@@ -6,7 +6,7 @@ from .base import SMCStep
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
     from .base import StepContext
@@ -48,7 +48,7 @@ class LoggingStep(SMCStep):
         self,
         state: "ParticleState",
         context: "StepContext",
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if context.t % self._frequency != 0:
             return state

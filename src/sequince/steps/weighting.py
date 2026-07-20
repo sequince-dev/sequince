@@ -13,7 +13,7 @@ from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..posterior import TemperedPosterior
     from ..state import ParticleState
@@ -129,7 +129,7 @@ class LogLikelihoodWeighting(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         xp = namespace(state.log_weights)
         log_like = call_with_optional_context(
@@ -223,7 +223,7 @@ class TemperedWeighting(BaseTemperedStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
         current_temperature = float(context.metadata.get("temperature", 0.0))
@@ -297,7 +297,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
         log_increments = call_with_optional_context(
@@ -400,7 +400,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
         current_temp = context.metadata.get("temperature", 0.0)

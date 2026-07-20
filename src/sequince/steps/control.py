@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable, Sequence
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
 
@@ -38,7 +38,7 @@ class ContinueWhile(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if self._predicate(state, context):
             context.clear_stop_request()
@@ -84,7 +84,7 @@ class StopIf(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if self._predicate(state, context):
             if self._immediate:
@@ -131,7 +131,7 @@ class PeriodicStep(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if (context.t - self.offset) % self.n == 0:
             logger.debug(

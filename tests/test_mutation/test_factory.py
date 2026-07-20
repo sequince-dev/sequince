@@ -16,7 +16,7 @@ from sequince.steps.mutation import (
 )
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
 
 def _posterior() -> TemperedPosterior:
@@ -105,7 +105,7 @@ def test_get_mutation_step_can_disable_mutation() -> None:
 
 
 class IdentityMutation(SMCStep):
-    def apply(self, state, context: StepContext, rng: "ArrayRNG"):
+    def apply(self, state, context: StepContext, rng: "RandomGenerator"):
         return state
 
 

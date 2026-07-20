@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from orng import ArrayRNG
+from orng import RandomGenerator
 
 from sequince._array_api import namespace
 from sequince.state import ParticleState
@@ -178,7 +178,7 @@ def test_gaussian_random_walk_mutation_preserves_backend(
     updated = step(
         state,
         StepContext(t=0),
-        ArrayRNG(backend=backend, seed=2468),
+        RandomGenerator(backend=backend, seed=2468),
     )
 
     assert updated.particles.shape == particles.shape
@@ -210,7 +210,7 @@ def test_mixture_mutation_kernel_preserves_backend(
 
     proposals = kernel.sample(
         particles,
-        ArrayRNG(backend=backend, seed=1357),
+        RandomGenerator(backend=backend, seed=1357),
     )
 
     assert proposals.shape == particles.shape

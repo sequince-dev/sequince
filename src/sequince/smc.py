@@ -19,7 +19,7 @@ from .utils import resolve_rng
 
 if TYPE_CHECKING:
     import numpy as np
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class SequentialMonteCarlo:
     steps:
         A sequence of callables implementing SMC steps.  Each callable should accept
         three arguments: the current ``ParticleState``, the current ``StepContext``,
-        and an ``orng.ArrayRNG`` instance, and return a new ``ParticleState``.
+        and an ``orng.RandomGenerator`` instance, and return a new ``ParticleState``.
     callbacks:
         Optional sequence of callables that will be invoked at the end of each iteration
         with the current state, context, and an ``SMCResult`` containing all states
@@ -50,7 +50,7 @@ class SequentialMonteCarlo:
         self,
         steps: Sequence[
             Callable[
-                [ParticleState, StepContext, "ArrayRNG"],
+                [ParticleState, StepContext, "RandomGenerator"],
                 ParticleState,
             ]
         ],
@@ -70,7 +70,7 @@ class SequentialMonteCarlo:
         initial_state: ParticleState,
         observations: Iterable[Any] | None = None,
         num_steps: int | None = None,
-        rng: "ArrayRNG" | np.random.Generator | int | None = None,
+        rng: "RandomGenerator" | np.random.Generator | int | None = None,
         shared_context: Mapping[str, Any] | None = None,
         metadata: MutableMapping[str, Any] | None = None,
         outputs: MutableMapping[str, Any] | None = None,

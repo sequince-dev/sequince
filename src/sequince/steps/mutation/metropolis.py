@@ -15,7 +15,7 @@ from .base import (
 from .kernels import MutationKernel, evaluate_log_transition_ratio
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ...posterior import TemperedPosterior
     from ...state import ParticleState
@@ -115,7 +115,7 @@ class MetropolisHastingsMutation(MutationStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         xp = namespace(state.particles)
         transform = self._prepare_transform(state.particles, context)

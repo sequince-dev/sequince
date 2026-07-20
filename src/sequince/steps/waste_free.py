@@ -16,7 +16,7 @@ from .mutation import (
 )
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
 
@@ -115,7 +115,7 @@ class WasteFreeResampleMove(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         n = state.log_weights.shape[0]
         if n == 0:
