@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from ..._array_api import asarray, full, namespace, to_numpy
+from ..._array_api import asarray, full, namespace
 from ..._typing import Array
 
 if TYPE_CHECKING:
@@ -161,14 +161,10 @@ class GaussianRandomWalk(SymmetricMutationKernel):
     ) -> Array:
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
-        noise = asarray(
-            rng.normal(
-                loc=0.0,
-                scale=self.scale,
-                size=arr.shape,
-            ),
-            xp=xp,
-            like=arr,
+        noise = rng.normal(
+            loc=0.0,
+            scale=self.scale,
+            size=arr.shape,
         )
         return arr + noise
 
@@ -253,12 +249,10 @@ class MixtureMutationKernel:
 
     def sample(self, particles: Array, rng: RandomGenerator) -> Array:
         selected_index = int(
-            to_numpy(
-                rng.choice(
-                    len(self.kernels),
-                    size=(1,),
-                    p=self.weights,
-                )
+            rng.choice(
+                len(self.kernels),
+                size=(1,),
+                p=self.weights,
             )[0]
         )
         self._selected_kernel = self.kernels[selected_index]

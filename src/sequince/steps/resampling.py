@@ -92,8 +92,7 @@ class MultinomialResampling(ResamplingStep):
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
-        draws = rng.choice(n, size=n, p=probs)
-        return asarray(draws, xp=xp, like=probs)
+        return rng.choice(n, size=n, p=probs)
 
 
 class StratifiedResampling(ResamplingStep):
@@ -106,7 +105,7 @@ class StratifiedResampling(ResamplingStep):
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
         offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
-        jitter = asarray(rng.random((n,)), xp=xp, like=probs)
+        jitter = rng.random((n,))
         positions = (offsets + jitter) / n
         cumulative = xp.cumulative_sum(probs)
         return xpx.searchsorted(cumulative, positions, side="right", xp=xp)
@@ -121,7 +120,7 @@ class SystematicResampling(ResamplingStep):
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
-        start = asarray(rng.random(), xp=xp, like=probs)
+        start = rng.random()
         offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
         positions = (start + offsets) / n
         cumulative = xp.cumulative_sum(probs)
