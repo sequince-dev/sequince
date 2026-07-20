@@ -17,6 +17,7 @@ from .steps import (
 )
 from .steps.base import SMCStep, StepContext
 from .steps.mutation import get_mutation_step
+from .steps.weighting import TargetESSRatio
 from .transforms import ParticleTransform, get_prebuilt_transform
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ def make_standard_bayesian_smc(
     log_likelihood: Callable[..., Any],
     *,
     log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
-    target_ess_ratio: float = 0.7,
+    target_ess_ratio: TargetESSRatio = 0.7,
     max_temperature: float = 1.0,
     min_delta: float = 1e-8,
     weighting_criterion: Literal["ess", "cess"] = "ess",
@@ -68,7 +69,9 @@ def make_standard_bayesian_smc(
         Optional callable or proposal object providing ``log q(x)`` when
         importance sampling proposals are used.
     target_ess_ratio:
-        Target effective sample size ratio used by adaptive tempering.
+        Target effective sample size ratio used by adaptive tempering, or a
+        callable of the current temperature and optional ``StepContext`` that
+        returns the target for each iteration.
     max_temperature:
         Final tempering temperature; typically ``1.0`` for full posterior.
     min_delta:
