@@ -9,15 +9,20 @@ from orng import RandomGenerator
 from sequince._array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
+from sequince.stats import (
+    cess_ratio_from_log_weights_and_increments,
+    ess_ratio_from_log_weights,
+)
 from sequince.steps import (
     AdaptGaussianProposal,
     ContinueWhile,
     ExpandDimensions,
     MetadataTransformation,
+    MutateIfResampled,
     SMCTransformation,
     WasteFreeResampleMove,
 )
-from sequince.steps.base import StepContext
+from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.control import PeriodicStep
 from sequince.steps.mutation import GaussianRandomWalk
 from sequince.steps.resampling import (
@@ -227,6 +232,18 @@ def test_adaptive_tempered_weighting_supports_evolving_target(
     assert scheduled_context.metadata["target_ess_ratio"] == pytest.approx(
         0.95
     )
+    delta = scheduled_context.metadata["temperature_delta"]
+    increments = log_like(state.particles, scheduled_context)
+    expected_ess_ratio = ess_ratio_from_log_weights(
+        state.log_weights + delta * increments
+    )
+    expected_cess_ratio = cess_ratio_from_log_weights_and_increments(
+        state.log_weights, delta * increments
+    )
+    for metadata in (scheduled_context.metadata, updated.metadata):
+        assert metadata["temperature_delta"] == pytest.approx(delta)
+        assert metadata["ess_ratio"] == pytest.approx(expected_ess_ratio)
+        assert metadata["cess_ratio"] == pytest.approx(expected_cess_ratio)
 
 
 @pytest.mark.parametrize("invalid_target", [0.0, 1.1, np.nan])
@@ -260,16 +277,21 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
 
     result_state = step(state, context, rng)
 
-    expected_state = state.with_updates(
-        metadata=dict(state.metadata, temperature=1.0)
+    assert np.array_equal(result_state.particles, state.particles)
+    assert result_state.metadata["temperature"] == 1.0
+    assert result_state.metadata["temperature_delta"] == 0.0
+    assert result_state.metadata["ess_ratio"] == pytest.approx(
+        ess_ratio_from_log_weights(state.log_weights)
     )
-
-    assert np.array_equal(result_state.particles, expected_state.particles)
-    assert result_state.metadata == expected_state.metadata
+    assert result_state.metadata["cess_ratio"] == 1.0
     assert context.metadata["stop_requested"] is True
     assert context.metadata["stop_immediately"] is True
     assert context.metadata["temperature"] == 1.0
     assert context.metadata["temperature_delta"] == 0.0
+    assert context.metadata["ess_ratio"] == pytest.approx(
+        ess_ratio_from_log_weights(state.log_weights)
+    )
+    assert context.metadata["cess_ratio"] == 1.0
 
 
 def test_tempered_posterior_custom_increment_is_used_by_weighting(
@@ -312,6 +334,33 @@ def test_systematic_resampling_skips_when_not_required(
     step = SystematicResampling(ess_threshold=0.2, always_resample=False)
     result = step(normalized, context, rng)
     assert result is normalized  # no resampling expected
+
+
+@pytest.mark.parametrize("resampled", [False, True])
+def test_mutate_if_resampled(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    resampled: bool,
+) -> None:
+    class TrackingMutation(SMCStep):
+        def apply(self, state, context, rng):
+            context.metadata["mutation_called"] = True
+            return state.with_updates(particles=state.particles + 1.0)
+
+    context = context_factory(metadata={"resampled": resampled})
+    step = MutateIfResampled(TrackingMutation())
+    updated = step(particle_state, context, rng)
+
+    assert context.metadata["mutation_skipped"] is not resampled
+    assert updated.metadata["mutation_skipped"] is not resampled
+    assert context.metadata.get("mutation_called", False) is resampled
+    expected_particles = (
+        particle_state.particles + 1.0
+        if resampled
+        else particle_state.particles
+    )
+    assert np.array_equal(updated.particles, expected_particles)
 
 
 def test_multinomial_resampling_resamples_particles(
