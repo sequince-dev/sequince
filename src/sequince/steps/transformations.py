@@ -146,9 +146,8 @@ class TransformationStep(SMCStep):
         transformed_state = self._transformation.forward(state, context, rng)
         context.metadata[self._transformation_key] = self._transformation
         if self._posterior is not None:
-            base_log_proposal = context.metadata.get(
-                self._log_proposal_override_key,
-                self._posterior.log_proposal,
+            base_log_proposal = self._posterior.resolve_log_proposal(
+                context.metadata.get(self._log_proposal_override_key)
             )
             if base_log_proposal is not None:
                 _transformed_log_proposal = (

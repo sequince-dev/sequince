@@ -10,6 +10,7 @@ from .._array_api import arange, asarray, full, namespace
 from .._typing import Array
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
+from .context import LOG_PROPOSAL_OVERRIDE_KEY
 from .mutation import (
     MutationKernel,
     evaluate_log_transition_ratio,
@@ -73,6 +74,7 @@ class WasteFreeResampleMove(SMCStep):
         *,
         resample_ancestors: bool = True,
         proposals_per_particle: int = 1,
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         if hasattr(log_prob_fn, "log_prob"):
             posterior = log_prob_fn
@@ -82,7 +84,7 @@ class WasteFreeResampleMove(SMCStep):
                 context: StepContext,
             ) -> Any:
                 log_proposal_override = context.metadata.get(
-                    "log_proposal_override"
+                    log_proposal_override_key
                 )
                 return posterior.log_prob(
                     particles,

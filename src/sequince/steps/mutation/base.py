@@ -8,7 +8,7 @@ from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
 from ...transforms import ParticleTransform
 from ..base import SMCStep
-from ..context import StepContext
+from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
 
 if TYPE_CHECKING:
     from ...posterior import TemperedPosterior
@@ -66,6 +66,7 @@ class MutationStep(SMCStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__()
         if hasattr(log_prob_fn, "log_prob"):
@@ -76,7 +77,7 @@ class MutationStep(SMCStep):
                 context: StepContext,
             ) -> Array | float:
                 log_proposal_override = context.metadata.get(
-                    "log_proposal_override"
+                    log_proposal_override_key
                 )
                 return posterior.log_prob(
                     particles,
