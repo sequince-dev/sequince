@@ -4,7 +4,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
-from orng import ArrayRNG
+from orng import RandomGenerator
 
 from ._array_api import namespace
 from ._typing import Array
@@ -13,25 +13,25 @@ if TYPE_CHECKING:
     from .steps.base import StepContext
 
 
-RNGLike: TypeAlias = ArrayRNG | np.random.Generator | int | None
+RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
 
 
 def resolve_rng(
     rng: RNGLike = None,
     *,
     backend: str | None = None,
-) -> ArrayRNG | np.random.Generator:
-    """Return the provided RNG or create an ``ArrayRNG`` for the requested backend."""
-    if isinstance(rng, ArrayRNG):
+) -> RandomGenerator | np.random.Generator:
+    """Return the provided RNG or create an ``RandomGenerator`` for the requested backend."""
+    if isinstance(rng, RandomGenerator):
         return rng
     if isinstance(rng, np.random.Generator):
         return rng
     if isinstance(rng, int):
-        return ArrayRNG(backend=backend or "numpy", seed=rng)
+        return RandomGenerator(backend=backend or "numpy", seed=rng)
     if rng is None:
-        return ArrayRNG(backend=backend or "numpy")
+        return RandomGenerator(backend=backend or "numpy")
     raise TypeError(
-        "rng must be an ArrayRNG, numpy.random.Generator, an int seed, or None."
+        "rng must be an RandomGenerator, numpy.random.Generator, an int seed, or None."
     )
 
 

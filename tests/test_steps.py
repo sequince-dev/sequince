@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pytest
+from orng import RandomGenerator
 
+from sequince._array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps import (
@@ -20,6 +22,7 @@ from sequince.steps.control import PeriodicStep
 from sequince.steps.mutation import GaussianRandomWalk
 from sequince.steps.resampling import (
     MultinomialResampling,
+    StratifiedResampling,
     SystematicResampling,
 )
 from sequince.steps.weighting import (
@@ -31,7 +34,7 @@ from sequince.steps.weighting import (
 )
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
 
 def test_step_context_request_stop(step_context: StepContext) -> None:
@@ -328,6 +331,32 @@ def test_multinomial_resampling_resamples_particles(
     assert "ancestors" in resampled.metadata
 
 
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
+@pytest.mark.parametrize(
+    "step_type",
+    [MultinomialResampling, StratifiedResampling, SystematicResampling],
+)
+def test_resampling_preserves_array_backend(
+    backend: str,
+    step_type,
+    backend_factory,
+    context_factory,
+) -> None:
+    _, particles, log_weights, _ = backend_factory(backend)
+    state = ParticleState(particles=particles, log_weights=log_weights)
+    backend_ns = namespace(particles)
+
+    updated = step_type(always_resample=True)(
+        state,
+        context_factory(),
+        RandomGenerator(backend=backend, seed=1234),
+    )
+
+    assert namespace(updated.particles) is backend_ns
+    assert namespace(updated.log_weights) is backend_ns
+    assert namespace(updated.metadata["ancestors"]) is backend_ns
+
+
 def test_adapt_gaussian_proposal_updates_scale(
     particle_state: ParticleState,
     context_factory,
@@ -470,6 +499,37 @@ def test_waste_free_resample_move_multiple_proposals(
     assert context.metadata["waste_free_total_proposals"] == n * 3
 
 
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
+def test_waste_free_resample_move_preserves_array_backend(
+    backend: str,
+    backend_factory,
+    context_factory,
+) -> None:
+    xp, particles, log_weights, row_sum = backend_factory(backend)
+    state = ParticleState(particles=particles, log_weights=log_weights)
+    backend_ns = namespace(particles)
+
+    def log_prob(values, context: StepContext):
+        return -0.5 * row_sum(values**2)
+
+    step = WasteFreeResampleMove(
+        log_prob,
+        GaussianRandomWalk(scale=0.4),
+        proposals_per_particle=2,
+    )
+    updated = step(
+        state,
+        context_factory(shared={"temperature": 1.0}),
+        RandomGenerator(backend=backend, seed=1234),
+    )
+
+    assert namespace(updated.particles) is backend_ns
+    assert namespace(updated.log_weights) is backend_ns
+    assert namespace(updated.metadata["ancestors"]) is backend_ns
+    assert updated.particles.shape == particles.shape
+    assert updated.log_weights.shape == log_weights.shape
+
+
 def test_waste_free_resample_move_supports_dynamic_proposal(
     particle_state: ParticleState,
     context_factory,
@@ -518,7 +578,7 @@ def test_dimensionality_expansion_appends_block(
             self,
             state: ParticleState,
             context: StepContext,
-            rng: "ArrayRNG",
+            rng: "RandomGenerator",
         ) -> ParticleState:
             n = state.particles.shape[0]
             new_block = np.full((n, 2), fill_value=0.5)
@@ -616,7 +676,7 @@ def test_step_every_n_iterations_applies_step_conditionally(
             self,
             state: ParticleState,
             context: StepContext,
-            rng: "ArrayRNG",
+            rng: "RandomGenerator",
         ) -> ParticleState:
             applied_iterations.append(context.t)
             return state

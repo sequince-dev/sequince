@@ -21,7 +21,7 @@ from .base import (
 )
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ...posterior import TemperedPosterior
     from ...state import ParticleState
@@ -168,7 +168,7 @@ class EmceeMutation(MutationStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         import emcee
 

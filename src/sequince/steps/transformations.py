@@ -14,7 +14,7 @@ from .context import (
 )
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from .._typing import Array
     from ..posterior import TemperedPosterior
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MetadataUpdateFn = Callable[
-    ["ParticleState", StepContext, "ArrayRNG"],
+    ["ParticleState", StepContext, "RandomGenerator"],
     dict[str, Any] | None,
 ]
 
@@ -36,7 +36,7 @@ class SMCTransformation:
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         return state
 
@@ -77,7 +77,7 @@ class MetadataTransformation(SMCTransformation):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         state_metadata = dict(state.metadata)
         if self.state_metadata_fn is not None:
@@ -111,7 +111,7 @@ class TransformationStep(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         transformed_state = self._transformation.forward(state, context, rng)
         context.metadata[self._transformation_key] = self._transformation
@@ -183,7 +183,7 @@ class ExpandDimensions(TransformationStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         xp = namespace(state.particles)
         current_particles = asarray(state.particles, xp=xp)

@@ -8,7 +8,7 @@ import numpy as np
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
 
@@ -72,7 +72,7 @@ class AdaptGaussianProposal(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         del rng  # Step does not require randomness.
 

@@ -80,7 +80,7 @@ def backend_factory() -> Callable[[str], BackendFactoryReturn]:
 
 @pytest.fixture
 def rng():
-    """Seeded ArrayRNG for deterministic tests."""
+    """Seeded RandomGenerator for deterministic tests."""
     return resolve_rng(12345)
 
 

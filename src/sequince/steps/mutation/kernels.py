@@ -5,13 +5,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from ..._array_api import asarray, full, namespace, to_numpy
+from ..._array_api import asarray, full, namespace
 from ..._typing import Array
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 else:  # pragma: no cover - runtime fallback
-    from orng import ArrayRNG  # type: ignore
+    from orng import RandomGenerator  # type: ignore
 
 
 class MutationKernel(Protocol):
@@ -20,7 +20,7 @@ class MutationKernel(Protocol):
     def sample(
         self,
         particles: Array,
-        rng: ArrayRNG,
+        rng: RandomGenerator,
     ) -> Array:
         """Draw proposal particles corresponding to the supplied parents."""
 
@@ -56,7 +56,7 @@ class SymmetricMutationKernel:
         )
 
 
-ProposalFn = Callable[[Array, ArrayRNG], Array]
+ProposalFn = Callable[[Array, RandomGenerator], Array]
 LogTransitionRatioFn = Callable[[Array, Array], Array]
 LogDensityFn = Callable[[Array, Array], Array]
 
@@ -88,7 +88,7 @@ class CallableMutationKernel:
                 "log_transition_ratio_fn, or log_density_fn."
             )
 
-    def sample(self, particles: Array, rng: ArrayRNG) -> Array:
+    def sample(self, particles: Array, rng: RandomGenerator) -> Array:
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         return asarray(self.proposal_fn(arr, rng), xp=xp, like=arr)
@@ -157,18 +157,14 @@ class GaussianRandomWalk(SymmetricMutationKernel):
     def sample(
         self,
         particles: Array,
-        rng: ArrayRNG,
+        rng: RandomGenerator,
     ) -> Array:
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
-        noise = asarray(
-            rng.normal(
-                loc=0.0,
-                scale=self.scale,
-                size=arr.shape,
-            ),
-            xp=xp,
-            like=arr,
+        noise = rng.normal(
+            loc=0.0,
+            scale=self.scale,
+            size=arr.shape,
         )
         return arr + noise
 
@@ -251,14 +247,12 @@ class MixtureMutationKernel:
         """Return the component selected by the latest call to ``sample``."""
         return self._selected_kernel
 
-    def sample(self, particles: Array, rng: ArrayRNG) -> Array:
+    def sample(self, particles: Array, rng: RandomGenerator) -> Array:
         selected_index = int(
-            to_numpy(
-                rng.choice(
-                    len(self.kernels),
-                    size=(1,),
-                    p=self.weights,
-                )
+            rng.choice(
+                len(self.kernels),
+                size=(1,),
+                p=self.weights,
             )[0]
         )
         self._selected_kernel = self.kernels[selected_index]

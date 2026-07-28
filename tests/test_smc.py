@@ -11,7 +11,7 @@ from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.weighting import AdaptiveTemperedWeighting
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
 
 class StopAfterNStep(SMCStep):
@@ -22,7 +22,7 @@ class StopAfterNStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         count = state.metadata.get("calls", 0) + 1
         metadata = dict(state.metadata)
@@ -37,7 +37,7 @@ class RecordObservationStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         metadata = dict(state.metadata)
         metadata.setdefault("observations", []).append(context.observation)
@@ -52,7 +52,7 @@ class RecordStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         metadata = dict(state.metadata)
         history = list(metadata.get("executed_steps", []))
@@ -116,7 +116,7 @@ def test_smc_deferred_stop_finishes_current_iteration(
             self,
             state: ParticleState,
             context: StepContext,
-            rng: "ArrayRNG",
+            rng: "RandomGenerator",
         ) -> ParticleState:
             context.request_stop()
             return state
@@ -141,7 +141,7 @@ def test_smc_immediate_stop_skips_remaining_steps(
             self,
             state: ParticleState,
             context: StepContext,
-            rng: "ArrayRNG",
+            rng: "RandomGenerator",
         ) -> ParticleState:
             context.request_stop_immediately()
             return state
@@ -194,7 +194,7 @@ def test_smc_invokes_callbacks_with_incremental_results(
     particle_state: ParticleState, rng
 ) -> None:
     def annotate_iteration(
-        state: ParticleState, context: StepContext, rng: "ArrayRNG"
+        state: ParticleState, context: StepContext, rng: "RandomGenerator"
     ) -> ParticleState:
         metadata = dict(state.metadata)
         history = list(metadata.get("history", []))
@@ -248,7 +248,7 @@ def test_callback_can_request_stop(particle_state: ParticleState, rng) -> None:
             context.request_stop()
 
     def identity_step(
-        state: ParticleState, context: StepContext, rng: "ArrayRNG"
+        state: ParticleState, context: StepContext, rng: "RandomGenerator"
     ) -> ParticleState:
         return state
 

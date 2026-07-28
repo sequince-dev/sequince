@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
+import math
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
-from .._array_api import to_numpy
+from .._array_api import arange, asarray, full, namespace
 from .._typing import Array
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
@@ -16,7 +16,7 @@ from .mutation import (
 )
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
 
@@ -115,7 +115,7 @@ class WasteFreeResampleMove(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         n = state.log_weights.shape[0]
         if n == 0:
@@ -123,31 +123,37 @@ class WasteFreeResampleMove(SMCStep):
                 "WasteFreeResampleMove requires at least one particle."
             )
 
-        particles = np.asarray(state.particles, dtype=float)
+        xp = namespace(state.particles, state.log_weights)
+        particles = asarray(state.particles, xp=xp)
         squeeze_last = False
         if particles.ndim == 1:
-            particles = particles[:, np.newaxis]
+            particles = xp.reshape(particles, (n, 1))
             squeeze_last = True
 
         if self._resample:
             weights = state.weights
-            ancestor_indices = to_numpy(
-                rng.choice(n, size=n, replace=True, p=weights)
-            ).astype(int)
-            logger.debug(
-                "WasteFreeResampleMove drew ancestors with effective ESS %.4f.",
-                float(state.effective_sample_size()),
-            )
+            ancestor_indices = rng.choice(n, size=n, replace=True, p=weights)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "WasteFreeResampleMove drew ancestors with effective ESS %.4f.",
+                    state.effective_sample_size(),
+                )
         else:
-            ancestor_indices = np.arange(n, dtype=int)
+            ancestor_indices = arange(n, xp=xp, like=particles)
 
         parent_particles = particles[ancestor_indices]
 
         log_prob_parents = self._evaluate_log_prob(parent_particles, context)
         kernel = self._resolve_kernel(parent_particles, context)
 
-        log_base_weight = -np.log(n)
-        remaining_log_mass = np.full(n, log_base_weight, dtype=float)
+        log_base_weight = -math.log(n)
+        remaining_log_mass = full(
+            (n,),
+            log_base_weight,
+            xp=xp,
+            dtype=log_prob_parents.dtype,
+            like=log_prob_parents,
+        )
 
         candidate_particles = [parent_particles]
         proposal_log_weights: list[Array] = []
@@ -155,6 +161,7 @@ class WasteFreeResampleMove(SMCStep):
 
         for _ in range(self._n_proposals):
             proposals = kernel.sample(parent_particles, rng)
+            proposals = asarray(proposals, xp=xp, like=particles)
             if proposals.shape != parent_particles.shape:
                 raise ValueError(
                     "Mutation kernel must return the same shape as the input particles."
@@ -164,16 +171,29 @@ class WasteFreeResampleMove(SMCStep):
             transition_ratio = evaluate_log_transition_ratio(
                 kernel, parent_particles, proposals
             )
+            transition_ratio = asarray(
+                transition_ratio,
+                xp=xp,
+                like=particles,
+            )
 
             log_r = log_prob_proposals - log_prob_parents + transition_ratio
-            np.clip(log_r, a_min=-1e12, a_max=1e12, out=log_r)
-            log_accept = np.minimum(log_r, 0.0)
-            accept_prob = np.exp(log_accept)
+            log_r = xp.clip(log_r, -1e12, 1e12)
+            zeros = full(
+                log_r.shape,
+                0.0,
+                xp=xp,
+                dtype=log_r.dtype,
+                like=log_r,
+            )
+            log_accept = xp.minimum(log_r, zeros)
+            accept_prob = xp.exp(log_accept)
             acceptance_history.append(accept_prob)
 
-            with np.errstate(divide="ignore"):
-                proposal_log_mass = remaining_log_mass + np.log(accept_prob)
-                remaining_log_mass = remaining_log_mass + np.log1p(
+            proposal_log_mass = remaining_log_mass + xp.log(accept_prob)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                remaining_log_mass = remaining_log_mass + xp.log1p(
                     -accept_prob
                 )
 
@@ -182,29 +202,28 @@ class WasteFreeResampleMove(SMCStep):
 
         candidate_log_weights = [remaining_log_mass] + proposal_log_weights
 
-        combined_particles = np.concatenate(candidate_particles, axis=0)
-        combined_log_weights = np.concatenate(
-            [log_w.reshape(-1) for log_w in candidate_log_weights],
+        combined_particles = xp.concat(tuple(candidate_particles), axis=0)
+        combined_log_weights = xp.concat(
+            tuple(xp.reshape(log_w, (-1,)) for log_w in candidate_log_weights),
             axis=0,
         )
 
-        max_log = np.max(combined_log_weights)
-        weights = np.exp(combined_log_weights - max_log)
-        weight_sum = np.sum(weights)
-        if not np.isfinite(weight_sum) or weight_sum <= 0.0:
+        max_log = xp.max(combined_log_weights)
+        weights = xp.exp(combined_log_weights - max_log)
+        weight_sum = xp.sum(weights)
+        weight_sum_scalar = float(weight_sum)
+        if not math.isfinite(weight_sum_scalar) or weight_sum_scalar <= 0.0:
             raise RuntimeError(
                 "WasteFreeResampleMove produced invalid candidate weights."
             )
-        weights = (weights / weight_sum).reshape(-1)
+        weights = xp.reshape(weights / weight_sum, (-1,))
 
-        selected = to_numpy(
-            rng.choice(
-                combined_particles.shape[0],
-                size=n,
-                replace=True,
-                p=weights,
-            )
-        ).astype(int)
+        selected = rng.choice(
+            combined_particles.shape[0],
+            size=n,
+            replace=True,
+            p=weights,
+        )
 
         new_particles = combined_particles[selected]
         if squeeze_last:
@@ -213,22 +232,22 @@ class WasteFreeResampleMove(SMCStep):
         metadata = dict(state.metadata)
         metadata["ancestors"] = ancestor_indices
         mean_acceptance = (
-            float(np.mean(np.concatenate(acceptance_history)))
+            float(xp.mean(xp.concat(tuple(acceptance_history), axis=0)))
             if acceptance_history
             else float("nan")
         )
         metadata["waste_free_acceptance"] = mean_acceptance
         acceptance_by_round = [
-            float(np.mean(values)) for values in acceptance_history
+            float(xp.mean(values)) for values in acceptance_history
         ]
         metadata["waste_free_acceptance_by_round"] = acceptance_by_round
-        metadata["waste_free_selected_proposals"] = int(np.sum(selected >= n))
-        metadata["waste_free_selected_parents"] = int(np.sum(selected < n))
+        metadata["waste_free_selected_proposals"] = int(xp.sum(selected >= n))
+        metadata["waste_free_selected_parents"] = int(xp.sum(selected < n))
         proposal_counts = []
         for round_index in range(self._n_proposals):
             low = n * (round_index + 1)
             high = n * (round_index + 2)
-            count = int(np.sum((selected >= low) & (selected < high)))
+            count = int(xp.sum((selected >= low) & (selected < high)))
             proposal_counts.append(count)
         metadata["waste_free_selected_proposals_by_round"] = proposal_counts
         metadata["waste_free_proposal_repeats"] = self._n_proposals
@@ -244,7 +263,14 @@ class WasteFreeResampleMove(SMCStep):
         ]
         context.metadata["waste_free_total_proposals"] = n * self._n_proposals
 
-        log_weights = np.full(n, -np.log(n), dtype=float)
+        log_weight_template = asarray(state.log_weights, xp=xp)
+        log_weights = full(
+            (n,),
+            -math.log(n),
+            xp=xp,
+            dtype=log_weight_template.dtype,
+            like=log_weight_template,
+        )
         return state.with_updates(
             particles=new_particles,
             log_weights=log_weights,
@@ -256,16 +282,17 @@ class WasteFreeResampleMove(SMCStep):
         particles: Array,
         context: StepContext,
     ) -> Array:
+        xp = namespace(particles)
         values = call_with_optional_context(
             self._log_prob_fn,
             (particles,),
             context,
         )
-        arr = np.asarray(values, dtype=float)
+        arr = asarray(values, xp=xp, like=particles)
         if arr.ndim == 0:
-            arr = np.full(particles.shape[0], float(arr))
+            arr = xp.broadcast_to(arr, (particles.shape[0],))
         elif arr.ndim > 1:
-            squeezed = np.squeeze(arr)
+            squeezed = xp.squeeze(arr)
             if squeezed.ndim != 1:
                 raise ValueError(
                     "log_prob_fn must return a scalar or 1-D array per particle."
