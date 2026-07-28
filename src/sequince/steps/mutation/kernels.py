@@ -266,7 +266,7 @@ class MaskedGaussianRandomWalk(SymmetricMutationKernel):
                     "covariance must be positive definite."
                 ) from exc
 
-    def sample(self, particles: Array, rng: ArrayRNG) -> Array:
+    def sample(self, particles: Array, rng: RandomGenerator) -> Array:
         xp = namespace(particles)
         values = asarray(particles, xp=xp)
         if values.ndim != 2:

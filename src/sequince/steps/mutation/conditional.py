@@ -6,7 +6,7 @@ from ..base import SMCStep
 from ..context import StepContext
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ...state import ParticleState
 
@@ -32,7 +32,7 @@ class MutateIfResampled(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         mutation_skipped = not bool(context.metadata.get("resampled", False))
         context.metadata["mutation_skipped"] = mutation_skipped

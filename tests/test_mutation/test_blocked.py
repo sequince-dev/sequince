@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from orng import ArrayRNG
+from orng import RandomGenerator
 
 from sequince._array_api import namespace, to_numpy
 from sequince.state import ParticleState
@@ -74,7 +74,7 @@ def test_masked_gaussian_preserves_backend(
 
     proposals = kernel.sample(
         particles,
-        ArrayRNG(backend=backend, seed=4321),
+        RandomGenerator(backend=backend, seed=4321),
     )
 
     assert namespace(proposals) is namespace(particles)

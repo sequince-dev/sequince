@@ -14,7 +14,7 @@ from .kernels import MutationKernel
 from .metropolis import MetropolisHastingsMutation, MutationKernelFactory
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ...posterior import TemperedPosterior
     from ...state import ParticleState
@@ -106,7 +106,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: ArrayRNG,
+        rng: RandomGenerator,
     ) -> ParticleState:
         updated = state
         acceptance: dict[str, float] = {}

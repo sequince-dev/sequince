@@ -211,7 +211,7 @@ def test_masked_gaussian_uses_block_covariance() -> None:
         scale=0.5,
     )
 
-    proposals = kernel.sample(particles, ArrayRNG(seed=1234))
+    proposals = kernel.sample(particles, RandomGenerator(seed=1234))
 
     empirical = np.cov(proposals[:, (0, 2)], rowvar=False)
     np.testing.assert_allclose(empirical, 0.25 * covariance, rtol=0.04)
