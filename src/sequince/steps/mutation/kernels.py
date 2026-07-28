@@ -5,8 +5,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from ..._array_api import asarray, full, namespace
+import numpy as np
+
+from ..._array_api import asarray, full, namespace, to_numpy
 from ..._typing import Array
+from ..base import StepContext
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -188,6 +191,190 @@ class GaussianRandomWalk(SymmetricMutationKernel):
         norm_const = -0.5 * dim * math.log(2.0 * math.pi * var)
         exponent = -0.5 * xp.sum((diff**2) / var, axis=1)
         return exponent + norm_const
+
+
+def _selection_matrix(
+    indices: tuple[int, ...],
+    n_dimensions: int,
+    *,
+    like: Array,
+) -> Array:
+    """Return a matrix that embeds a parameter block in the full space."""
+    matrix = np.zeros((len(indices), n_dimensions), dtype=float)
+    matrix[np.arange(len(indices)), indices] = 1.0
+    return asarray(matrix, xp=namespace(like), like=like)
+
+
+def _validate_indices(indices: tuple[int, ...], n_dimensions: int) -> None:
+    if not indices:
+        raise ValueError("A parameter block must contain at least one index.")
+    if len(set(indices)) != len(indices):
+        raise ValueError("Parameter-block indices must be unique.")
+    if min(indices) < 0 or max(indices) >= n_dimensions:
+        raise IndexError(
+            "Parameter-block indices must be within the particle dimension."
+        )
+
+
+@dataclass(frozen=True)
+class MaskedGaussianRandomWalk(SymmetricMutationKernel):
+    """Multivariate Gaussian random walk on selected particle coordinates.
+
+    Inactive coordinates are copied without modification. ``covariance`` is the
+    covariance within the active subspace; ``scale`` multiplies its Cholesky
+    factor and therefore acts as a standard-deviation multiplier.
+    """
+
+    indices: tuple[int, ...]
+    covariance: Array | None = None
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "indices", tuple(int(i) for i in self.indices)
+        )
+        if not self.indices:
+            raise ValueError(
+                "MaskedGaussianRandomWalk requires active indices."
+            )
+        if len(set(self.indices)) != len(self.indices):
+            raise ValueError(
+                "MaskedGaussianRandomWalk indices must be unique."
+            )
+        if min(self.indices) < 0:
+            raise ValueError(
+                "MaskedGaussianRandomWalk indices must be non-negative."
+            )
+        if not math.isfinite(self.scale) or self.scale <= 0.0:
+            raise ValueError(
+                "MaskedGaussianRandomWalk.scale must be positive."
+            )
+        if self.covariance is not None:
+            covariance = to_numpy(self.covariance)
+            expected = (len(self.indices), len(self.indices))
+            if covariance.shape != expected:
+                raise ValueError(
+                    f"covariance must have shape {expected}, got "
+                    f"{covariance.shape}."
+                )
+            if not np.allclose(covariance, covariance.T):
+                raise ValueError("covariance must be symmetric.")
+            try:
+                np.linalg.cholesky(covariance)
+            except np.linalg.LinAlgError as exc:
+                raise ValueError(
+                    "covariance must be positive definite."
+                ) from exc
+
+    def sample(self, particles: Array, rng: ArrayRNG) -> Array:
+        xp = namespace(particles)
+        values = asarray(particles, xp=xp)
+        if values.ndim != 2:
+            raise ValueError(
+                "MaskedGaussianRandomWalk requires a 2D particle array."
+            )
+        _validate_indices(self.indices, values.shape[1])
+
+        active_dimension = len(self.indices)
+        noise = asarray(
+            rng.normal(size=(values.shape[0], active_dimension)),
+            xp=xp,
+            like=values,
+        )
+        if self.covariance is not None:
+            covariance = asarray(self.covariance, xp=xp, like=values)
+            cholesky = xp.linalg.cholesky(covariance)
+            noise = xp.matmul(noise, xp.permute_dims(cholesky, (1, 0)))
+        noise = self.scale * noise
+
+        selection = _selection_matrix(
+            self.indices,
+            values.shape[1],
+            like=values,
+        )
+        return values + xp.matmul(noise, selection)
+
+
+@dataclass(frozen=True)
+class AdaptiveMaskedGaussianRandomWalk:
+    """Build a masked Gaussian kernel from the current particle covariance.
+
+    The covariance is estimated once at the beginning of each mutation block,
+    keeping the resulting proposal symmetric throughout that block.
+    """
+
+    indices: tuple[int, ...]
+    scale: float | None = None
+    regularization: float = 1e-6
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "indices", tuple(int(i) for i in self.indices)
+        )
+        if not self.indices:
+            raise ValueError(
+                "AdaptiveMaskedGaussianRandomWalk requires active indices."
+            )
+        if len(set(self.indices)) != len(self.indices):
+            raise ValueError(
+                "AdaptiveMaskedGaussianRandomWalk indices must be unique."
+            )
+        if min(self.indices) < 0:
+            raise ValueError(
+                "AdaptiveMaskedGaussianRandomWalk indices must be non-negative."
+            )
+        if self.scale is not None and (
+            not math.isfinite(self.scale) or self.scale <= 0.0
+        ):
+            raise ValueError(
+                "AdaptiveGaussianRandomWalk.scale must be positive."
+            )
+        if (
+            not math.isfinite(self.regularization)
+            or self.regularization <= 0.0
+        ):
+            raise ValueError(
+                "AdaptiveGaussianRandomWalk.regularization must be positive."
+            )
+
+    def __call__(
+        self,
+        particles: Array,
+        context: StepContext,
+    ) -> MaskedGaussianRandomWalk:
+        del context
+        xp = namespace(particles)
+        values = asarray(particles, xp=xp)
+        if values.ndim != 2:
+            raise ValueError(
+                "AdaptiveGaussianRandomWalk requires a 2D particle array."
+            )
+        _validate_indices(self.indices, values.shape[1])
+
+        selection = _selection_matrix(
+            self.indices,
+            values.shape[1],
+            like=values,
+        )
+        active = xp.matmul(values, xp.permute_dims(selection, (1, 0)))
+        centered = active - xp.mean(active, axis=0)
+        denominator = max(values.shape[0] - 1, 1)
+        covariance = xp.matmul(xp.permute_dims(centered, (1, 0)), centered)
+        covariance = covariance / denominator
+        identity = asarray(
+            np.eye(len(self.indices)),
+            xp=xp,
+            like=values,
+        )
+        covariance = covariance + self.regularization * identity
+        scale = self.scale
+        if scale is None:
+            scale = 2.38 / math.sqrt(len(self.indices))
+        return MaskedGaussianRandomWalk(
+            indices=self.indices,
+            covariance=covariance,
+            scale=scale,
+        )
 
 
 @dataclass

@@ -5,6 +5,11 @@ from .base import (
     MutationStep,
     TransformRefit,
 )
+from .blocked import (
+    BlockedMetropolisHastingsMutation,
+    MetropolisBlock,
+)
+from .conditional import MutateIfResampled
 from .emcee import (
     EMCEE_MOVES,
     EmceeMutation,
@@ -14,8 +19,10 @@ from .emcee import (
 from .factory import get_mutation_step
 from .kernels import (
     MUTATION_KERNELS,
+    AdaptiveMaskedGaussianRandomWalk,
     CallableMutationKernel,
     GaussianRandomWalk,
+    MaskedGaussianRandomWalk,
     MixtureMutationKernel,
     MutationKernel,
     SymmetricMutationKernel,
@@ -26,6 +33,8 @@ from .metropolis import MetropolisHastingsMutation
 from .minipcn import MiniPCNMutation
 
 __all__ = [
+    "AdaptiveMaskedGaussianRandomWalk",
+    "BlockedMetropolisHastingsMutation",
     "CallableMutationKernel",
     "EMCEE_MOVES",
     "EmceeMutation",
@@ -33,9 +42,12 @@ __all__ = [
     "MUTATION_KERNELS",
     "MetropolisHastingsMutation",
     "MiniPCNMutation",
+    "MaskedGaussianRandomWalk",
+    "MetropolisBlock",
     "MixtureMutationKernel",
     "MutationKernel",
     "MutationStep",
+    "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",
     "SymmetricMutationKernel",
     "TransformRefit",
