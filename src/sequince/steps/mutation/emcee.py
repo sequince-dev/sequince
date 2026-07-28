@@ -234,6 +234,10 @@ class EmceeMutation(MutationStep):
             moves=self._move,
             **self._kwargs,
         )
+        emcee_seed = int(
+            float(to_numpy(rng.random((1,)))[0]) * np.iinfo(np.uint32).max
+        )
+        sampler.random_state = np.random.RandomState(emcee_seed).get_state()
 
         state_result = sampler.run_mcmc(
             initial_positions,
