@@ -69,6 +69,10 @@ class BlockedMetropolisHastingsMutation(SMCStep):
     ...         n_steps=3,
     ...     ),
     ... ]
+    ... step = steps.BlockedMetropolisHastingsMutation(
+    ...     log_prob_fn=posterior.log_prob,
+    ...     blocks=blocks,
+    ... )
     """
 
     def __init__(
