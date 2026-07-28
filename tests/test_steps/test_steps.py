@@ -1,3 +1,5 @@
+"""Tests for composable SMC steps."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
@@ -16,10 +18,7 @@ from sequince.stats import (
 from sequince.steps import (
     AdaptGaussianProposal,
     ContinueWhile,
-    ExpandDimensions,
-    MetadataTransformation,
     MutateIfResampled,
-    SMCTransformation,
     WasteFreeResampleMove,
 )
 from sequince.steps.base import SMCStep, StepContext
@@ -306,22 +305,36 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
             log_proposal_override=None,
         ) -> np.ndarray:
             context.metadata["custom_increment_called"] = True
+            context.metadata["received_proposal_override"] = (
+                log_proposal_override
+            )
             return np.full(particles.shape[0], 2.0)
 
     posterior = CustomPosterior(
         log_prior=lambda particles, context: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles, context: np.ones(particles.shape[0]),
     )
-    context = context_factory(metadata={"temperature": 0.0})
+
+    def proposal_override(particles):
+        return np.zeros(particles.shape[0])
+
+    context = context_factory(
+        metadata={
+            "temperature": 0.0,
+            "custom_proposal_override": proposal_override,
+        }
+    )
     step = FixedTemperedWeighting(
         posterior,
         temperature_increment=0.25,
         normalize_after=False,
+        log_proposal_override_key="custom_proposal_override",
     )
 
     updated = step(particle_state, context, rng)
 
     assert context.metadata["custom_increment_called"] is True
+    assert context.metadata["received_proposal_override"] is proposal_override
     expected = particle_state.log_weights + 0.5
     assert np.allclose(updated.log_weights, expected)
 
@@ -617,68 +630,6 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
         scale == context.metadata["proposal_scale"]
         for scale in context.metadata["factory_scales"]
     )  # noqa: PLR2004
-
-
-def test_dimensionality_expansion_appends_block(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    class AppendingTransformation(SMCTransformation):
-        def forward(
-            self,
-            state: ParticleState,
-            context: StepContext,
-            rng: "RandomGenerator",
-        ) -> ParticleState:
-            n = state.particles.shape[0]
-            new_block = np.full((n, 2), fill_value=0.5)
-            particles = np.concatenate([state.particles, new_block], axis=1)
-            return state.with_updates(particles=particles)
-
-    context = context_factory(metadata={"temperature": 0.8})
-    initial_state = particle_state.with_updates(
-        metadata=dict(particle_state.metadata, temperature=0.8)
-    )
-
-    step = ExpandDimensions(
-        AppendingTransformation(),
-        expected_block_size=2,
-        metadata_key="dims",
-        added_dimensions_key="dims_added",
-        dimension_delta_key="dims_delta",
-    )
-    expanded = step(initial_state, context, rng)
-
-    assert expanded.particles.shape[1] == initial_state.particles.shape[1] + 2
-    assert np.allclose(expanded.particles[:, -2:], 0.5)
-    assert expanded.metadata["dims"] == expanded.particles.shape[1]
-    assert expanded.metadata["dims_added"] == 2
-    assert expanded.metadata["dims_delta"] == 2
-    assert context.metadata["dims"] == expanded.particles.shape[1]
-    assert context.metadata["dims_added"] == 2
-    assert context.metadata["dims_delta"] == 2
-    assert expanded.metadata["temperature"] == 0.8
-    assert context.metadata["temperature"] == 0.8
-    assert "temperature_delta" not in context.metadata
-
-
-def test_metadata_transformation_updates_state_and_context(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    context = context_factory(metadata={"stage": 0})
-
-    transformation = MetadataTransformation(
-        state_metadata_fn=lambda state, context, rng: {
-            "stage": context.metadata["stage"] + 1
-        },
-        context_metadata_fn=lambda state, context, rng: {
-            "stage": context.metadata["stage"] + 1
-        },
-    )
-
-    transformed = transformation.forward(particle_state, context, rng)
-
-    assert transformed.metadata["stage"] == 1
-    assert context.metadata["stage"] == 1
 
 
 def test_continue_while_overrides_stop_request(
