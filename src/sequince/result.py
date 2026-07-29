@@ -35,6 +35,7 @@ class SMCResult:
 
     states: Sequence[ParticleState]
     context: StepContext
+    initial_state: ParticleState | None = None
 
     def __post_init__(self) -> None:
         if not self.states:
@@ -51,6 +52,7 @@ class SMCResult:
         return SMCResult(
             states=[*self.states, state],
             context=self.context,
+            initial_state=self.initial_state,
         )
 
     def get_nested_results(
