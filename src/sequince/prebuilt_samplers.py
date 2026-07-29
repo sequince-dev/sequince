@@ -4,12 +4,14 @@ import math
 from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
 from ._typing import MetaData, MutationStrategy
+from .checkpoint import CheckpointWriter
 from .posterior import TemperedPosterior
 from .proposals import ProposalDistribution
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .steps import (
     AdaptiveTemperedWeighting,
+    FixedTemperedWeighting,
     LoggingStep,
     MultinomialResampling,
     StratifiedResampling,
@@ -34,6 +36,9 @@ def make_standard_bayesian_smc(
     target_ess_ratio: TargetESSRatio = 0.7,
     max_temperature: float = 1.0,
     min_delta: float = 1e-8,
+    max_delta: float | None = None,
+    adaptive: bool = True,
+    num_steps: int | None = None,
     weighting_criterion: Literal["ess", "cess"] = "ess",
     weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy = "systematic",
@@ -51,6 +56,7 @@ def make_standard_bayesian_smc(
         Callable[[ParticleState, StepContext, SMCResult], None]
     ]
     | None = None,
+    checkpoint_writers: Sequence[CheckpointWriter] | None = None,
 ) -> Tuple[SequentialMonteCarlo, TemperedPosterior, MetaData]:
     """Return a SequentialMonteCarlo instance configured with standard SMC steps.
 
@@ -76,6 +82,12 @@ def make_standard_bayesian_smc(
         Final tempering temperature; typically ``1.0`` for full posterior.
     min_delta:
         Minimum temperature increment allowed in adaptive tempering.
+    max_delta:
+        Optional maximum temperature increment allowed in adaptive tempering.
+    adaptive:
+        Whether to adapt the temperature schedule using the target ESS.
+    num_steps:
+        Number of fixed temperature steps. Required when ``adaptive=False``.
     weighting_criterion:
         Criterion for adaptive tempering; one of ``"ess"`` (default) or ``"cess"``.
     weighting_kwargs:
@@ -110,6 +122,8 @@ def make_standard_bayesian_smc(
         Normalize log weights after every iteration (default ``True``).
     callbacks:
         Optional (initialised) callbacks to attach to the sampler.
+    checkpoint_writers:
+        Optional checkpoint writers attached to the sampler.
     """
     posterior = TemperedPosterior(
         log_prior=log_prior,
@@ -134,14 +148,25 @@ def make_standard_bayesian_smc(
             "target ESS ratio."
         )
 
-    weighting_step = AdaptiveTemperedWeighting(
-        posterior,
-        target_ess_ratio=target_ess_ratio,
-        max_temperature=max_temperature,
-        min_delta=min_delta,
-        criterion=weighting_criterion,
-        **weighting_kwargs or {},
-    )
+    weighting_step: SMCStep
+    if adaptive:
+        weighting_step = AdaptiveTemperedWeighting(
+            posterior,
+            target_ess_ratio=target_ess_ratio,
+            max_temperature=max_temperature,
+            min_delta=min_delta,
+            max_delta=max_delta,
+            criterion=weighting_criterion,
+            **weighting_kwargs or {},
+        )
+    else:
+        if num_steps is None or num_steps < 1:
+            raise ValueError("num_steps must be positive when adaptive=False.")
+        weighting_step = FixedTemperedWeighting(
+            posterior,
+            temperature_increment=max_temperature / num_steps,
+            **weighting_kwargs or {},
+        )
 
     resampling_map = {
         "systematic": SystematicResampling,
@@ -187,7 +212,7 @@ def make_standard_bayesian_smc(
         mutation_kwargs=mutation_kwargs,
     )
 
-    steps = [weighting_step, resampling_step]
+    steps: list[SMCStep] = [weighting_step, resampling_step]
     if mutation_step is not None:
         steps.append(mutation_step)
 
@@ -208,7 +233,10 @@ def make_standard_bayesian_smc(
         steps.append(logging_step)
 
     sampler = SequentialMonteCarlo(
-        steps=steps, callbacks=callbacks, auto_normalize=auto_normalize
+        steps=steps,
+        callbacks=callbacks,
+        checkpoint_writers=checkpoint_writers,
+        auto_normalize=auto_normalize,
     )
 
     meta_data = dict(

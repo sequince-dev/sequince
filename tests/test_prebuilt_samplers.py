@@ -7,6 +7,7 @@ from sequince import ParticleState, TemperedPosterior
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 from sequince.steps import (
     AdaptiveTemperedWeighting,
+    FixedTemperedWeighting,
     LoggingStep,
     MiniPCNMutation,
     SystematicResampling,
@@ -99,6 +100,27 @@ def test_make_standard_bayesian_smc_accepts_evolving_target(rng) -> None:
     assert result.final_state.metadata["target_ess_ratio"] == pytest.approx(
         0.8
     )
+
+
+def test_make_standard_bayesian_smc_supports_fixed_schedule(rng) -> None:
+    smc, _, metadata = make_standard_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        adaptive=False,
+        num_steps=4,
+        mutation="none",
+    )
+    particles = np.array([[0.0], [1.0], [-1.0], [2.0]], dtype=float)
+
+    result = smc.run(
+        ParticleState(particles),
+        num_steps=4,
+        rng=rng,
+        metadata=metadata,
+    )
+
+    assert isinstance(smc._steps[0], FixedTemperedWeighting)  # noqa: SLF001
+    assert result.final_state.metadata["temperature"] == pytest.approx(1.0)
 
 
 def test_make_standard_bayesian_smc_validates_resampling_name() -> None:
