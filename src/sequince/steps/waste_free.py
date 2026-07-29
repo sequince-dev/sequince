@@ -76,25 +76,14 @@ class WasteFreeResampleMove(SMCStep):
         proposals_per_particle: int = 1,
         log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
-        if hasattr(log_prob_fn, "log_prob"):
-            posterior = log_prob_fn
-
-            def _wrapped_log_prob(
-                particles: Array,
-                context: StepContext,
-            ) -> Any:
-                log_proposal_override = context.metadata.get(
-                    log_proposal_override_key
-                )
-                return posterior.log_prob(
-                    particles,
-                    context,
-                    log_proposal_override=log_proposal_override,
-                )
-
-            self._log_prob_fn = _wrapped_log_prob
-        else:
-            self._log_prob_fn = log_prob_fn
+        self._posterior = (
+            log_prob_fn
+            if hasattr(log_prob_fn, "evaluate")
+            and hasattr(log_prob_fn, "log_prob")
+            else None
+        )
+        self._log_prob_fn = None if self._posterior else log_prob_fn
+        self._log_proposal_override_key = log_proposal_override_key
         has_correction = hasattr(kernel, "log_transition_ratio") or hasattr(
             kernel, "log_density"
         )
@@ -144,8 +133,17 @@ class WasteFreeResampleMove(SMCStep):
             ancestor_indices = arange(n, xp=xp, like=particles)
 
         parent_particles = particles[ancestor_indices]
+        parent_evaluation = (
+            None
+            if state.evaluation is None
+            else state.evaluation.take(ancestor_indices)
+        )
 
-        log_prob_parents = self._evaluate_log_prob(parent_particles, context)
+        log_prob_parents, parent_evaluation = self._evaluate_log_prob(
+            parent_particles,
+            context,
+            parent_evaluation,
+        )
         kernel = self._resolve_kernel(parent_particles, context)
 
         log_base_weight = -math.log(n)
@@ -158,6 +156,9 @@ class WasteFreeResampleMove(SMCStep):
         )
 
         candidate_particles = [parent_particles]
+        candidate_evaluations = (
+            [parent_evaluation] if parent_evaluation is not None else []
+        )
         proposal_log_weights: list[Array] = []
         acceptance_history: list[Array] = []
 
@@ -169,7 +170,11 @@ class WasteFreeResampleMove(SMCStep):
                     "Mutation kernel must return the same shape as the input particles."
                 )
 
-            log_prob_proposals = self._evaluate_log_prob(proposals, context)
+            log_prob_proposals, proposal_evaluation = self._evaluate_log_prob(
+                proposals, context
+            )
+            if proposal_evaluation is not None:
+                candidate_evaluations.append(proposal_evaluation)
             transition_ratio = evaluate_log_transition_ratio(
                 kernel, parent_particles, proposals
             )
@@ -228,6 +233,13 @@ class WasteFreeResampleMove(SMCStep):
         )
 
         new_particles = combined_particles[selected]
+        new_evaluation = None
+        if candidate_evaluations:
+            from ..posterior import PosteriorEvaluation
+
+            new_evaluation = PosteriorEvaluation.concatenate(
+                candidate_evaluations
+            ).take(selected)
         if squeeze_last:
             new_particles = new_particles[:, 0]
 
@@ -273,8 +285,9 @@ class WasteFreeResampleMove(SMCStep):
             dtype=log_weight_template.dtype,
             like=log_weight_template,
         )
-        return state.with_updates(
-            particles=new_particles,
+        return state.replace_particles(
+            new_particles,
+            evaluation=new_evaluation,
             log_weights=log_weights,
             metadata=metadata,
         )
@@ -283,13 +296,33 @@ class WasteFreeResampleMove(SMCStep):
         self,
         particles: Array,
         context: StepContext,
-    ) -> Array:
+        evaluation=None,
+    ):
         xp = namespace(particles)
-        values = call_with_optional_context(
-            self._log_prob_fn,
-            (particles,),
-            context,
-        )
+        if self._posterior is None:
+            if self._log_prob_fn is None:  # pragma: no cover
+                raise RuntimeError(
+                    "Mutation log probability is not configured."
+                )
+            values = call_with_optional_context(
+                self._log_prob_fn,
+                (particles,),
+                context,
+            )
+        else:
+            override = context.metadata.get(self._log_proposal_override_key)
+            if evaluation is None:
+                evaluation = self._posterior.evaluate(
+                    particles,
+                    context,
+                    log_proposal_override=override,
+                )
+            values = self._posterior.log_prob(
+                particles,
+                evaluation,
+                context,
+                log_proposal_override=override,
+            )
         arr = asarray(values, xp=xp, like=particles)
         if arr.ndim == 0:
             arr = xp.broadcast_to(arr, (particles.shape[0],))
@@ -302,7 +335,7 @@ class WasteFreeResampleMove(SMCStep):
             arr = squeezed
         if arr.shape[0] != particles.shape[0]:
             raise ValueError("log_prob_fn must return one value per particle.")
-        return arr
+        return arr, evaluation
 
     def _resolve_kernel(
         self,

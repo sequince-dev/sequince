@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ...transforms import ParticleTransform
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 
 def get_mutation_step(
     mutation: str | SMCStep | None,
-    posterior: "TemperedPosterior",
+    posterior: "TemperedPosterior | Callable[..., Any]",
     transform: ParticleTransform | None = None,
     mutation_n_steps: int = 10,
     mutation_kwargs: dict[str, Any] | None = None,
