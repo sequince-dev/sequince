@@ -13,7 +13,6 @@ dependencies = [
     "scipy>=1.8",
     "matplotlib>=3.5",
     "numpy>=1.22",
-    "h5py>=3",
     "minipcn[array-api]>=0.2.0a4",
     "array-api-compat>=1.5",
     "array-api-extra",
@@ -44,6 +43,9 @@ emcee = [
 corner = [
     "corner",
 ]
+hdf5 = [
+    "h5py>=3",
+]
 
 [dependency-groups]
 test = [
@@ -51,6 +53,7 @@ test = [
     "pytest-cov>=4.0",
     "corner",
     "emcee>=3.0",
+    "h5py>=3",
 ]
 dev = [
     "pre-commit",

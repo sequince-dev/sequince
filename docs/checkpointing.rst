@@ -43,7 +43,8 @@ The available writers are:
 ``HDF5CheckpointWriter``
    Stores arrays and supported values as native HDF5 datasets, and mappings and
    sequences as groups. This format is suitable when the checkpoint should be
-   inspectable or when its arrays may be useful independently.
+   inspectable or when its arrays may be useful independently. Install the
+   optional dependency with ``pip install "sequince[hdf5]"``.
 
 ``PickleCheckpointWriter``
    Stores the checkpoint as one opaque pickle payload. This is the simpler
@@ -63,6 +64,7 @@ An :class:`~sequince.checkpoint.SMCCheckpoint` contains:
   log-weights, log-evidence, and metadata;
 * the next iteration and observation indices;
 * mutable context metadata and recorded outputs;
+* the observation from the most recently completed iteration;
 * optional state supplied by each configured step;
 * the random-number-generator state, unless ``save_rng=False``;
 * the particle-state history, unless ``include_history=False``.
@@ -71,7 +73,7 @@ A checkpoint deliberately does not contain:
 
 * the configured steps, callbacks, or their callable dependencies;
 * immutable ``shared_context`` values;
-* the observation sequence itself.
+* the complete observation sequence.
 
 The sampler must therefore be reconstructed with the same ordered step
 pipeline before loading a checkpoint. Shared inputs and observations must also

@@ -297,6 +297,7 @@ class SMCCheckpoint:
     step_states: tuple[StepState, ...]
     rng_state: dict[str, Any] | None = None
     history: tuple[ParticleState, ...] | None = None
+    observation: Any = None
     version: int = CHECKPOINT_VERSION
 
     @classmethod
@@ -330,6 +331,7 @@ class SMCCheckpoint:
             step_states=capture_step_states(steps),
             rng_state=None if rng is None else resolve_rng(rng).state_dict(),
             history=history,
+            observation=copy.deepcopy(context.observation),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -348,6 +350,7 @@ class SMCCheckpoint:
                 if self.history is None
                 else [item.to_dict() for item in self.history]
             ),
+            "observation": copy.deepcopy(self.observation),
         }
 
     @classmethod
@@ -424,6 +427,7 @@ class SMCCheckpoint:
                     for item in history_payload
                 )
             ),
+            observation=copy.deepcopy(payload.get("observation")),
             version=version,
         )
 
@@ -441,6 +445,7 @@ class SMCCheckpoint:
         context = StepContext(
             t=self.next_iteration - 1,
             next_observation_index=self.next_observation_index,
+            observation=copy.deepcopy(self.observation),
             shared=dict(shared_context or {}),
             metadata=copy.deepcopy(self.metadata),
             outputs=copy.deepcopy(self.outputs),
@@ -558,21 +563,25 @@ class HDF5CheckpointWriter(CheckpointWriter):
         self.file_path = file_path
         self.path = path
         self.dsetname = dsetname
-        self._has_written = False
+        self._last_iteration: int | None = None
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _write(self, checkpoint: SMCCheckpoint) -> None:
         """Write a committed checkpoint to the configured HDF5 location."""
         import h5py
 
+        replace_history = (
+            self._last_iteration is None
+            or checkpoint.next_iteration <= self._last_iteration
+        )
         with h5py.File(self.file_path, "a") as h5_file:
             checkpoint.save_hdf5(
                 h5_file,
                 path=self.path,
                 dsetname=self.dsetname,
-                replace_history=not self._has_written,
+                replace_history=replace_history,
             )
-        self._has_written = True
+        self._last_iteration = checkpoint.next_iteration
 
 
 class PickleCheckpointWriter(CheckpointWriter):
