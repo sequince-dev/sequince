@@ -5,8 +5,12 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from sequince.posterior import TemperedPosterior, draw_additional_samples
-from sequince.proposals import FlowProposal
+from sequince.posterior import (
+    PosteriorEvaluation,
+    TemperedPosterior,
+    draw_additional_samples,
+)
+from sequince.proposals import FlowProposal, draw_initial_state
 from sequince.result import SMCResult
 from sequince.state import ParticleState
 
@@ -38,10 +42,64 @@ def test_tempered_posterior_accepts_proposal_distribution_object(
     particles = np.array([[0.0], [2.0]], dtype=float)
     context = context_factory(metadata={"temperature": 0.25})
 
-    values = posterior.log_prob(particles, context)
+    evaluation = posterior.evaluate(particles, context)
+    values = posterior.log_prob(particles, evaluation, context)
 
     expected = 0.75 * np.array([0.0, -1.0]) + 0.25 * np.array([1.0, 1.0])
     assert np.allclose(values, expected)
+
+
+def test_posterior_evaluation_refreshes_only_requested_components(
+    context_factory,
+) -> None:
+    calls = {"prior": 0, "likelihood": 0, "proposal": 0}
+
+    def component(name, value):
+        def evaluate(particles, context):
+            calls[name] += 1
+            return np.full(particles.shape[0], value)
+
+        return evaluate
+
+    posterior = TemperedPosterior(
+        log_prior=component("prior", -1.0),
+        log_likelihood=component("likelihood", -2.0),
+        log_proposal=component("proposal", -3.0),
+    )
+    particles = np.zeros((4, 2))
+    context = context_factory(metadata={"temperature": 0.5})
+
+    evaluation = posterior.evaluate(particles, context)
+    refreshed = posterior.refresh(
+        particles,
+        evaluation,
+        context,
+        components={"log_likelihood"},
+    )
+    posterior.log_increment(particles, refreshed, context)
+    posterior.log_prob(particles, refreshed, context)
+
+    assert calls == {"prior": 1, "likelihood": 2, "proposal": 1}
+
+
+def test_posterior_evaluation_selects_and_serializes() -> None:
+    current = PosteriorEvaluation(
+        log_prior=np.array([1.0, 2.0]),
+        log_likelihood=np.array([3.0, 4.0]),
+        auxiliary={"score": np.array([5.0, 6.0])},
+    )
+    proposed = PosteriorEvaluation(
+        log_prior=np.array([10.0, 20.0]),
+        log_likelihood=np.array([30.0, 40.0]),
+        auxiliary={"score": np.array([50.0, 60.0])},
+    )
+
+    selected = current.select(proposed, np.array([True, False]))
+    restored = PosteriorEvaluation.from_dict(selected.to_dict())
+
+    np.testing.assert_allclose(restored.log_prior, [10.0, 2.0])
+    np.testing.assert_allclose(restored.log_likelihood, [30.0, 4.0])
+    np.testing.assert_allclose(restored.auxiliary["score"], [50.0, 6.0])
 
 
 def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
@@ -100,6 +158,58 @@ def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
     np.testing.assert_allclose(
         getattr(restored_proposal.flow, "fitted_particles"), training_particles
     )
+
+
+def test_draw_initial_state_rejects_non_finite_particles() -> None:
+    class Proposal:
+        calls = 0
+
+        def sample_and_log_prob(self, n_samples, context=None):
+            self.calls += 1
+            offset = 0 if self.calls == 1 else n_samples
+            particles = np.arange(offset, offset + n_samples)[:, None].astype(
+                float
+            )
+            return particles, np.zeros(n_samples)
+
+    proposal = Proposal()
+    state = draw_initial_state(
+        proposal,
+        4,
+        validation_fns=(
+            lambda particles: np.where(particles[:, 0] % 2, 0.0, -np.inf),
+        ),
+    )
+
+    np.testing.assert_array_equal(state.particles[:, 0], [1.0, 3.0, 5.0, 7.0])
+    assert proposal.calls == 2
+
+
+def test_draw_initial_state_retains_posterior_evaluation() -> None:
+    class Proposal:
+        def log_prob(self, particles, context=None):
+            raise AssertionError(
+                "Precomputed proposal density was not reused."
+            )
+
+        def sample_and_log_prob(self, n_samples, context=None):
+            particles = np.arange(n_samples, dtype=float)[:, None]
+            return particles, np.full(n_samples, -3.0)
+
+    posterior = TemperedPosterior(
+        log_prior=lambda particles, context: np.full(particles.shape[0], -1.0),
+        log_likelihood=lambda particles, context: np.full(
+            particles.shape[0], -2.0
+        ),
+        log_proposal=Proposal(),
+    )
+
+    state = draw_initial_state(Proposal(), 4, posterior=posterior)
+
+    assert state.evaluation is not None
+    np.testing.assert_allclose(state.evaluation.log_prior, -1.0)
+    np.testing.assert_allclose(state.evaluation.log_likelihood, -2.0)
+    np.testing.assert_allclose(state.evaluation.log_proposal, -3.0)
 
 
 def test_draw_additional_samples_respects_terminal_weights(

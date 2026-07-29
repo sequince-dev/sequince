@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Literal
+import math
+from collections.abc import Collection
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
-from .._array_api import asarray, namespace, to_numpy
+from .._array_api import asarray, logsumexp, namespace, to_numpy
 from .._typing import Array
 from ..stats import (
     cess_ratio_from_log_weights_and_increments,
+    ess_from_log_weights,
     ess_ratio_from_log_weights,
 )
 from ..utils import call_with_optional_context
@@ -24,6 +27,52 @@ TemperatureSchedule = Callable[..., float]
 TargetESSRatio = float | Callable[..., float]
 
 logger = logging.getLogger(__name__)
+
+
+def _tempering_diagnostics(
+    base_log_weights: Array,
+    log_increments: Array,
+    *,
+    delta: float,
+    terminal_delta: float,
+) -> dict[str, float]:
+    """Return diagnostics available while applying a tempering increment."""
+    xp = namespace(base_log_weights, log_increments)
+    base_log_norm = logsumexp(base_log_weights, xp=xp)
+    normalized_base_log_weights = base_log_weights - base_log_norm
+    updated_log_weights = base_log_weights + delta * log_increments
+
+    log_evidence_increment = float(
+        logsumexp(updated_log_weights, xp=xp) - base_log_norm
+    )
+    ess = ess_from_log_weights(updated_log_weights)
+    terminal_ess = ess_from_log_weights(
+        base_log_weights + terminal_delta * log_increments
+    )
+
+    scaled_log_ratios = delta * log_increments
+    max_log_ratio = xp.max(scaled_log_ratios)
+    scaled_ratios = xp.exp(scaled_log_ratios - max_log_ratio)
+    base_weights = xp.exp(normalized_base_log_weights)
+    mean_ratio = xp.sum(base_weights * scaled_ratios)
+    mean_ratio_scalar = float(to_numpy(mean_ratio))
+    if mean_ratio_scalar == 0.0 or not math.isfinite(mean_ratio_scalar):
+        log_evidence_increment_variance = math.nan
+    else:
+        centered = scaled_ratios - mean_ratio
+        log_evidence_increment_variance = float(
+            to_numpy(
+                xp.sum(xp.square(base_weights) * xp.square(centered))
+                / xp.square(mean_ratio)
+            )
+        )
+
+    return {
+        "log_evidence_increment": log_evidence_increment,
+        "log_evidence_increment_variance": (log_evidence_increment_variance),
+        "ess_before_resampling": ess,
+        "ess_at_max_temperature": terminal_ess,
+    }
 
 
 def evolving_target_ess_ratio(
@@ -88,24 +137,9 @@ def _weights_as_1d_array(
 def _resolve_increment_fn(
     increment: IncrementFn | "TemperedPosterior",
 ) -> IncrementFn:
-    if hasattr(increment, "log_increment"):
-        posterior = increment  # type: ignore[assignment]
-
-        def _wrapped(particles: Array, context: StepContext) -> Array | float:
-            log_proposal_override = context.metadata.get(
-                "log_proposal_override"
-            )
-            # type: ignore[attr-defined]
-            return posterior.log_increment(  # type: ignore[union-attr]
-                particles,
-                context,
-                log_proposal_override=log_proposal_override,
-            )
-
-        return _wrapped
     if callable(increment):
         return increment
-    raise TypeError("log_increment_fn must be callable or TemperedPosterior.")
+    raise TypeError("log_increment_fn must be callable.")
 
 
 class LogLikelihoodWeighting(SMCStep):
@@ -172,9 +206,66 @@ class BaseTemperedStep(SMCStep):
         log_increment_fn: IncrementFn | "TemperedPosterior",
         *,
         normalize_after: bool = True,
+        refresh_components: Collection[str] = (),
     ):
-        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
+        self._posterior: TemperedPosterior | None = (
+            cast("TemperedPosterior", log_increment_fn)
+            if hasattr(log_increment_fn, "evaluate")
+            and hasattr(log_increment_fn, "log_increment")
+            else None
+        )
+        self._log_increment_fn = (
+            None
+            if self._posterior is not None
+            else _resolve_increment_fn(log_increment_fn)
+        )
         self._normalize_after = normalize_after
+        self._refresh_components = frozenset(refresh_components)
+
+    def evaluate_log_increment(
+        self,
+        state: ParticleState,
+        context: StepContext,
+    ) -> tuple[Array | float, ParticleState]:
+        """Return increments and attach a missing posterior evaluation."""
+        if self._posterior is None:
+            if self._log_increment_fn is None:  # pragma: no cover
+                raise RuntimeError("Tempering increment is not configured.")
+            return (
+                call_with_optional_context(
+                    self._log_increment_fn,
+                    (state.particles,),
+                    context,
+                ),
+                state,
+            )
+        log_proposal_override = context.metadata.get("log_proposal_override")
+        evaluation = state.evaluation
+        if evaluation is None:
+            evaluation = self._posterior.evaluate(
+                state.particles,
+                context,
+                log_proposal_override=log_proposal_override,
+            )
+            state = state.with_updates(evaluation=evaluation)
+        elif self._refresh_components:
+            evaluation = self._posterior.refresh(
+                state.particles,
+                evaluation,
+                context,
+                components=self._refresh_components,
+                log_proposal_override=log_proposal_override,
+            )
+            state = state.with_updates(evaluation=evaluation)
+        return (
+            self._posterior.log_increment(
+                state.particles,
+                evaluation,
+                context,
+                log_proposal_override=log_proposal_override,
+            ),
+            state,
+        )
 
     def initialize_metadata(
         self, state: ParticleState, context: StepContext
@@ -214,8 +305,13 @@ class TemperedWeighting(BaseTemperedStep):
         *,
         normalize_after: bool = True,
         clip_temperature: tuple[float, float] | None = None,
+        refresh_components: Collection[str] = (),
     ):
-        super().__init__(log_increment_fn, normalize_after=normalize_after)
+        super().__init__(
+            log_increment_fn,
+            normalize_after=normalize_after,
+            refresh_components=refresh_components,
+        )
         self._schedule = temperature_schedule
         self._clip = clip_temperature
 
@@ -244,11 +340,7 @@ class TemperedWeighting(BaseTemperedStep):
             )
         temperature_delta = target_temperature - current_temperature
 
-        log_increments = call_with_optional_context(
-            self._log_increment_fn,
-            (state.particles,),
-            context,
-        )
+        log_increments, state = self.evaluate_log_increment(state, context)
         xp = namespace(state.log_weights)
         increments = (
             _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
@@ -287,10 +379,15 @@ class FixedTemperedWeighting(BaseTemperedStep):
         *,
         temperature_increment: float,
         normalize_after: bool = True,
+        refresh_components: Collection[str] = (),
     ):
         if temperature_increment < 0.0:
             raise ValueError("temperature_increment must be non-negative.")
-        super().__init__(log_increment_fn, normalize_after=normalize_after)
+        super().__init__(
+            log_increment_fn,
+            normalize_after=normalize_after,
+            refresh_components=refresh_components,
+        )
         self._temperature_increment = temperature_increment
 
     def apply(
@@ -300,11 +397,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
         rng: "RandomGenerator",
     ) -> ParticleState:
         state = self.initialize_metadata(state, context)
-        log_increments = call_with_optional_context(
-            self._log_increment_fn,
-            (state.particles,),
-            context,
-        )
+        log_increments, state = self.evaluate_log_increment(state, context)
         xp = namespace(state.log_weights)
         increments = (
             _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
@@ -316,7 +409,20 @@ class FixedTemperedWeighting(BaseTemperedStep):
             )
         metadata = dict(state.metadata)
         current_temp = metadata.get("temperature", 0.0)
-        metadata["temperature"] = current_temp + self._temperature_increment
+        target_temperature = current_temp + self._temperature_increment
+        max_temperature = float(context.metadata.get("max_temperature", 1.0))
+        metadata.update(
+            _tempering_diagnostics(
+                state.log_weights,
+                _weights_as_1d_array(
+                    log_increments, xp=xp, like=state.log_weights
+                ),
+                delta=self._temperature_increment,
+                terminal_delta=max(max_temperature - current_temp, 0.0),
+            )
+        )
+        metadata["temperature"] = target_temperature
+        metadata["temperature_delta"] = self._temperature_increment
         updated_state = state.with_updates(
             log_weights=state.log_weights + increments, metadata=metadata
         )
@@ -357,6 +463,8 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         the SMC run is requested to stop after the current iteration.
     min_delta:
         The minimum temperature increment to apply at each step.
+    max_delta:
+        Optional maximum temperature increment to apply at each step.
     normalize_after:
         Whether to normalize the particle weights after updating.
     max_bisection_iter:
@@ -375,9 +483,11 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         target_ess_ratio: TargetESSRatio = 0.7,
         max_temperature: float = 1.0,
         min_delta: float = 1e-4,
+        max_delta: float | None = None,
         normalize_after: bool = True,
         max_bisection_iter: int = 30,
         criterion: Literal["ess", "cess"] = "ess",
+        refresh_components: Collection[str] = (),
     ):
         if not callable(target_ess_ratio) and not (
             0.0 < target_ess_ratio <= 1.0
@@ -385,14 +495,27 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             raise ValueError("target_ess_ratio must be in (0, 1].")
         if max_temperature <= 0.0:
             raise ValueError("max_temperature must be positive.")
+        if min_delta < 0.0:
+            raise ValueError("min_delta must be non-negative.")
+        if max_delta is not None and max_delta <= 0.0:
+            raise ValueError("max_delta must be positive.")
+        if max_delta is not None and max_delta < min_delta:
+            raise ValueError(
+                "max_delta must be greater than or equal to min_delta."
+            )
         if criterion not in {"ess", "cess"}:
             raise ValueError("criterion must be either 'ess' or 'cess'.")
 
-        super().__init__(log_increment_fn, normalize_after=normalize_after)
+        super().__init__(
+            log_increment_fn,
+            normalize_after=normalize_after,
+            refresh_components=refresh_components,
+        )
 
         self._target_ess_ratio = target_ess_ratio
         self._max_temperature = max_temperature
         self._min_delta = min_delta
+        self._max_delta = max_delta
         self._max_bisection_iter = max_bisection_iter
         self._criterion = criterion
 
@@ -414,13 +537,14 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             )
             context.request_stop_immediately()
             return state
+        allowed_delta = (
+            remaining
+            if self._max_delta is None
+            else min(remaining, self._max_delta)
+        )
 
         xp = namespace(state.log_weights)
-        log_increments = call_with_optional_context(
-            self._log_increment_fn,
-            (state.particles,),
-            context,
-        )
+        log_increments, state = self.evaluate_log_increment(state, context)
         increments = _weights_as_1d_array(
             log_increments, xp=xp, like=state.log_weights
         )
@@ -429,18 +553,27 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         )
 
         if _max_abs(increments, xp=xp) <= 1e-12:
-            delta = remaining
+            delta = allowed_delta
         else:
             delta = self._find_delta(
                 state.log_weights,
                 increments,
-                remaining,
+                allowed_delta,
                 target_ess_ratio=target_ess_ratio,
             )
 
         new_log_weights = state.log_weights + delta * increments
         metadata = dict(state.metadata)
+        metadata.update(
+            _tempering_diagnostics(
+                state.log_weights,
+                increments,
+                delta=delta,
+                terminal_delta=remaining,
+            )
+        )
         metadata["temperature"] = current_temp + delta
+        metadata["temperature_delta"] = delta
         metadata["target_ess_ratio"] = target_ess_ratio
 
         updated_state = state.with_updates(

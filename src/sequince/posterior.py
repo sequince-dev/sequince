@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 from ._array_api import asarray, full, namespace
+from ._array_api import copy as array_copy
 from ._typing import Array
 from .proposals import ProposalDistribution
 from .state import ParticleState
@@ -23,6 +25,154 @@ ArrayLikeFn = Callable[..., Array | float]
 LogProposalLike = ArrayLikeFn | ProposalDistribution
 
 
+@dataclass(frozen=True)
+class PosteriorEvaluation:
+    """Particle-aligned values evaluated by a :class:`TemperedPosterior`."""
+
+    log_prior: Array
+    log_likelihood: Array
+    log_proposal: Array | None = None
+    auxiliary: Mapping[str, Array] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        arrays = [self.log_prior, self.log_likelihood]
+        if self.log_proposal is not None:
+            arrays.append(self.log_proposal)
+        arrays.extend(self.auxiliary.values())
+        if any(array.ndim == 0 for array in arrays):
+            raise ValueError(
+                "Posterior evaluation arrays must be particle-aligned."
+            )
+        n_particles = self.log_prior.shape[0]
+        if any(array.shape[0] != n_particles for array in arrays):
+            raise ValueError(
+                "Posterior evaluation arrays must have the same leading dimension."
+            )
+
+    def copy(self) -> "PosteriorEvaluation":
+        """Return a detached copy preserving array backends."""
+        xp = namespace(self.log_prior)
+        return PosteriorEvaluation(
+            log_prior=array_copy(self.log_prior, xp=xp),
+            log_likelihood=array_copy(self.log_likelihood, xp=xp),
+            log_proposal=(
+                None
+                if self.log_proposal is None
+                else array_copy(self.log_proposal, xp=xp)
+            ),
+            auxiliary={
+                key: array_copy(value, xp=xp)
+                for key, value in self.auxiliary.items()
+            },
+        )
+
+    def take(self, indices: Array) -> "PosteriorEvaluation":
+        """Select particle evaluations using ancestor indices."""
+        return PosteriorEvaluation(
+            log_prior=self.log_prior[indices],
+            log_likelihood=self.log_likelihood[indices],
+            log_proposal=(
+                None
+                if self.log_proposal is None
+                else self.log_proposal[indices]
+            ),
+            auxiliary={
+                key: value[indices] for key, value in self.auxiliary.items()
+            },
+        )
+
+    @classmethod
+    def concatenate(
+        cls, evaluations: Collection["PosteriorEvaluation"]
+    ) -> "PosteriorEvaluation":
+        """Concatenate evaluations from multiple particle batches."""
+        items = list(evaluations)
+        if not items:
+            raise ValueError("No posterior evaluations to concatenate.")
+        xp = namespace(items[0].log_prior)
+        auxiliary_keys = items[0].auxiliary.keys()
+        if any(item.auxiliary.keys() != auxiliary_keys for item in items[1:]):
+            raise ValueError(
+                "Posterior evaluations have different auxiliary fields."
+            )
+        has_proposal = items[0].log_proposal is not None
+        if any(
+            (item.log_proposal is not None) != has_proposal for item in items
+        ):
+            raise ValueError("Posterior evaluations disagree on log_proposal.")
+        return cls(
+            log_prior=xp.concat(tuple(item.log_prior for item in items)),
+            log_likelihood=xp.concat(
+                tuple(item.log_likelihood for item in items)
+            ),
+            log_proposal=(
+                None
+                if not has_proposal
+                else xp.concat(tuple(item.log_proposal for item in items))
+            ),
+            auxiliary={
+                key: xp.concat(tuple(item.auxiliary[key] for item in items))
+                for key in auxiliary_keys
+            },
+        )
+
+    def select(
+        self,
+        proposed: "PosteriorEvaluation",
+        accepted: Array,
+    ) -> "PosteriorEvaluation":
+        """Select proposed values for accepted particles."""
+        if self.auxiliary.keys() != proposed.auxiliary.keys():
+            raise ValueError(
+                "Posterior evaluations have different auxiliary fields."
+            )
+        if (self.log_proposal is None) != (proposed.log_proposal is None):
+            raise ValueError("Posterior evaluations disagree on log_proposal.")
+
+        def choose(current: Array, candidate: Array) -> Array:
+            xp = namespace(current, candidate, accepted)
+            mask = accepted
+            if current.ndim > 1:
+                mask = xp.reshape(
+                    accepted,
+                    (accepted.shape[0],) + (1,) * (current.ndim - 1),
+                )
+            return xp.where(mask, candidate, current)
+
+        return PosteriorEvaluation(
+            log_prior=choose(self.log_prior, proposed.log_prior),
+            log_likelihood=choose(
+                self.log_likelihood, proposed.log_likelihood
+            ),
+            log_proposal=(
+                None
+                if self.log_proposal is None
+                else choose(self.log_proposal, proposed.log_proposal)
+            ),
+            auxiliary={
+                key: choose(value, proposed.auxiliary[key])
+                for key, value in self.auxiliary.items()
+            },
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "log_prior": self.log_prior,
+            "log_likelihood": self.log_likelihood,
+            "log_proposal": self.log_proposal,
+            "auxiliary": dict(self.auxiliary),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "PosteriorEvaluation":
+        return cls(
+            log_prior=payload["log_prior"],
+            log_likelihood=payload["log_likelihood"],
+            log_proposal=payload.get("log_proposal"),
+            auxiliary=dict(payload.get("auxiliary", {})),
+        )
+
+
 def _evaluate(
     fn: ArrayLikeFn,
     particles: Array,
@@ -33,8 +183,9 @@ def _evaluate(
     xp = namespace(particles, values)
     array = asarray(values, xp=xp, like=particles)
     if array.ndim == 0:
+        n_particles = 1 if particles.ndim == 1 else particles.shape[0]
         array = full(
-            (particles.shape[0],),
+            (n_particles,),
             float(array),
             xp=xp,
             dtype=array.dtype,
@@ -93,20 +244,24 @@ class TemperedPosterior:
     def log_increment(
         self,
         particles: Array,
+        evaluation: PosteriorEvaluation,
         context: "StepContext",
         *,
         log_proposal_override: LogProposalLike | None = None,
     ) -> float | Any:
         """Return the log-weight increment required by the tempering step."""
-        log_like = _evaluate(self.log_likelihood, particles, context)
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             if particles.ndim == 1:
-                return float(log_like[0])
-            return log_like
-        log_prior = _evaluate(self.log_prior, particles, context)
-        log_prop = _evaluate(log_proposal, particles, context)
-        bridge = log_prior + log_like - log_prop
+                return float(evaluation.log_likelihood[0])
+            return evaluation.log_likelihood
+        if evaluation.log_proposal is None:
+            raise ValueError("Evaluation does not contain log_proposal.")
+        bridge = (
+            evaluation.log_prior
+            + evaluation.log_likelihood
+            - evaluation.log_proposal
+        )
         if particles.ndim == 1:
             return float(bridge[0])
         return bridge
@@ -114,30 +269,95 @@ class TemperedPosterior:
     def log_prob(
         self,
         particles: Array,
+        evaluation: PosteriorEvaluation,
         context: "StepContext",
         *,
         log_proposal_override: LogProposalLike | None = None,
     ) -> float | Any:
         """Return the tempered log posterior evaluated at the current β."""
         beta = float(context.metadata.get("temperature", 0.0))
-        log_prior = _evaluate(self.log_prior, particles, context)
-        log_like = _evaluate(self.log_likelihood, particles, context)
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
-            posterior = log_prior + beta * log_like
+            posterior = evaluation.log_prior + beta * evaluation.log_likelihood
         else:
-            log_prop = _evaluate(log_proposal, particles, context)
+            if evaluation.log_proposal is None:
+                raise ValueError("Evaluation does not contain log_proposal.")
             if beta == 0.0:
-                posterior = log_prop
+                posterior = evaluation.log_proposal
             elif beta == 1.0:
-                posterior = log_prior + log_like
+                posterior = evaluation.log_prior + evaluation.log_likelihood
             else:
-                posterior = (1.0 - beta) * log_prop + beta * (
-                    log_prior + log_like
+                posterior = (1.0 - beta) * evaluation.log_proposal + beta * (
+                    evaluation.log_prior + evaluation.log_likelihood
                 )
         if particles.ndim == 1:
             return float(posterior[0])
         return posterior
+
+    def evaluate(
+        self,
+        particles: Array,
+        context: "StepContext",
+        *,
+        log_proposal_override: LogProposalLike | None = None,
+        log_proposal_values: Array | None = None,
+    ) -> PosteriorEvaluation:
+        """Evaluate every posterior component for a particle population."""
+        log_proposal = self.resolve_log_proposal(log_proposal_override)
+        if log_proposal_values is not None and log_proposal is None:
+            raise ValueError(
+                "log_proposal_values were supplied without a proposal."
+            )
+        return PosteriorEvaluation(
+            log_prior=_evaluate(self.log_prior, particles, context),
+            log_likelihood=_evaluate(self.log_likelihood, particles, context),
+            log_proposal=(
+                log_proposal_values
+                if log_proposal_values is not None
+                else (
+                    None
+                    if log_proposal is None
+                    else _evaluate(log_proposal, particles, context)
+                )
+            ),
+        )
+
+    def refresh(
+        self,
+        particles: Array,
+        evaluation: PosteriorEvaluation,
+        context: "StepContext",
+        *,
+        components: Collection[str],
+        log_proposal_override: LogProposalLike | None = None,
+    ) -> PosteriorEvaluation:
+        """Reevaluate selected components for unchanged particles."""
+        allowed = {"log_prior", "log_likelihood", "log_proposal"}
+        unknown = set(components).difference(allowed)
+        if unknown:
+            raise ValueError(
+                f"Unknown evaluation components: {sorted(unknown)}"
+            )
+        log_prior = evaluation.log_prior
+        log_likelihood = evaluation.log_likelihood
+        log_proposal = evaluation.log_proposal
+        if "log_prior" in components:
+            log_prior = _evaluate(self.log_prior, particles, context)
+        if "log_likelihood" in components:
+            log_likelihood = _evaluate(self.log_likelihood, particles, context)
+        if "log_proposal" in components:
+            proposal_fn = self.resolve_log_proposal(log_proposal_override)
+            log_proposal = (
+                None
+                if proposal_fn is None
+                else _evaluate(proposal_fn, particles, context)
+            )
+        return PosteriorEvaluation(
+            log_prior=log_prior,
+            log_likelihood=log_likelihood,
+            log_proposal=log_proposal,
+            auxiliary=evaluation.auxiliary,
+        )
 
     def freeze_log_prob(
         self,
@@ -156,32 +376,23 @@ class TemperedPosterior:
         log_proposal = self.resolve_log_proposal(log_proposal_override)
 
         def _frozen_log_prob(particles):
-            beta = float(frozen_context.metadata.get("temperature", 0.0))
-            frozen_log_prior = _evaluate(log_prior, particles, frozen_context)
-            frozen_log_like = _evaluate(
-                log_likelihood,
-                particles,
-                frozen_context,
+            evaluation = PosteriorEvaluation(
+                log_prior=_evaluate(log_prior, particles, frozen_context),
+                log_likelihood=_evaluate(
+                    log_likelihood, particles, frozen_context
+                ),
+                log_proposal=(
+                    None
+                    if log_proposal is None
+                    else _evaluate(log_proposal, particles, frozen_context)
+                ),
             )
-            if log_proposal is None:
-                posterior = frozen_log_prior + beta * frozen_log_like
-            else:
-                frozen_log_prop = _evaluate(
-                    log_proposal,
-                    particles,
-                    frozen_context,
-                )
-                if beta == 0.0:
-                    posterior = frozen_log_prop
-                elif beta == 1.0:
-                    posterior = frozen_log_prior + frozen_log_like
-                else:
-                    posterior = (1.0 - beta) * frozen_log_prop + beta * (
-                        frozen_log_prior + frozen_log_like
-                    )
-            if particles.ndim == 1:
-                return float(posterior[0])
-            return posterior
+            return self.log_prob(
+                particles,
+                evaluation,
+                frozen_context,
+                log_proposal_override=log_proposal_override,
+            )
 
         return _frozen_log_prob
 
@@ -264,6 +475,11 @@ def draw_additional_samples(
     resampled_state = ParticleState(
         particles=resampled_particles,
         log_evidence=state.log_evidence,
+        evaluation=(
+            None
+            if state.evaluation is None
+            else state.evaluation.take(indices)
+        ),
         metadata=copy.deepcopy(state.metadata),
     )
 

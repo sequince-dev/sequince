@@ -5,7 +5,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import Any, MutableMapping
+from typing import TYPE_CHECKING, Any, MutableMapping
 
 from ._array_api import (
     asarray,
@@ -20,6 +20,9 @@ from ._array_api import (
 )
 from ._typing import Array
 
+if TYPE_CHECKING:
+    from .posterior import PosteriorEvaluation
+
 
 @dataclass(init=False)
 class ParticleState:
@@ -28,6 +31,7 @@ class ParticleState:
     particles: Array
     log_weights: Array
     log_evidence: float = 0.0
+    evaluation: PosteriorEvaluation | None = None
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
 
     def __init__(
@@ -35,6 +39,7 @@ class ParticleState:
         particles: Array,
         log_weights: Array | Real | None = None,
         log_evidence: float = 0.0,
+        evaluation: PosteriorEvaluation | None = None,
         metadata: MutableMapping[str, Any] | None = None,
     ) -> None:
         if len(particles) == 0:
@@ -42,7 +47,15 @@ class ParticleState:
 
         self.particles = particles
         self.log_evidence = log_evidence
+        self.evaluation = evaluation
         self.metadata = dict(metadata or {})
+        if (
+            evaluation is not None
+            and evaluation.log_prior.shape[0] != particles.shape[0]
+        ):
+            raise ValueError(
+                "Posterior evaluation must match the particle population."
+            )
 
         if log_weights is None or isinstance(log_weights, Real):
             xp = namespace(self.particles)
@@ -62,6 +75,9 @@ class ParticleState:
             particles=array_copy(self.particles, xp=xp),
             log_weights=array_copy(self.log_weights, xp=xp),
             log_evidence=float(self.log_evidence),
+            evaluation=(
+                None if self.evaluation is None else self.evaluation.copy()
+            ),
             metadata=copy.deepcopy(self.metadata),
         )
 
@@ -109,9 +125,25 @@ class ParticleState:
     def with_updates(self, **kwargs: Any) -> "ParticleState":
         """Return a copy of the state with selective updates applied."""
         updated = self.copy()
+        if "particles" in kwargs and "evaluation" not in kwargs:
+            updated.evaluation = None
         for key, value in kwargs.items():
             setattr(updated, key, value)
         return updated
+
+    def replace_particles(
+        self,
+        particles: Array,
+        *,
+        evaluation: PosteriorEvaluation | None = None,
+        **updates: Any,
+    ) -> "ParticleState":
+        """Replace particles and explicitly provide their evaluation."""
+        return self.with_updates(
+            particles=particles,
+            evaluation=evaluation,
+            **updates,
+        )
 
     def resample(self, indices: Array) -> "ParticleState":
         """Return a resampled state using the provided ancestor indices."""
@@ -131,6 +163,11 @@ class ParticleState:
             particles=new_particles,
             log_weights=log_weights,
             log_evidence=self.log_evidence,
+            evaluation=(
+                None
+                if self.evaluation is None
+                else self.evaluation.take(indices)
+            ),
             metadata=dict(self.metadata, ancestors=indices),
         )
 
@@ -141,6 +178,11 @@ class ParticleState:
             "particles": copied.particles,
             "log_weights": copied.log_weights,
             "log_evidence": copied.log_evidence,
+            "evaluation": (
+                None
+                if copied.evaluation is None
+                else copied.evaluation.to_dict()
+            ),
             "metadata": copied.metadata,
         }
 
@@ -159,9 +201,17 @@ class ParticleState:
                 "ParticleState payload is missing required keys: "
                 + ", ".join(sorted(missing))
             )
+        evaluation_payload = payload.get("evaluation")
+        if evaluation_payload is not None:
+            from .posterior import PosteriorEvaluation
+
+            evaluation = PosteriorEvaluation.from_dict(evaluation_payload)
+        else:
+            evaluation = None
         return cls(
             particles=payload["particles"],
             log_weights=payload["log_weights"],
             log_evidence=float(payload["log_evidence"]),
+            evaluation=evaluation,
             metadata=copy.deepcopy(payload["metadata"]),
         )

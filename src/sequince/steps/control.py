@@ -220,9 +220,7 @@ class SequentialStep(SMCStep):
             raise ValueError(
                 "SequentialStep state does not match the configured steps."
             )
-        for step, nested_state in zip(
-            self.steps, nested_states, strict=True
-        ):
+        for step, nested_state in zip(self.steps, nested_states, strict=True):
             if not isinstance(nested_state, Mapping):
                 raise TypeError(
                     "SequentialStep nested states must be mappings."

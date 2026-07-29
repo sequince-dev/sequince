@@ -10,14 +10,13 @@ from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
-    call_log_prob,
 )
 from .kernels import MutationKernel, evaluate_log_transition_ratio
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import TemperedPosterior
+    from ...posterior import PosteriorEvaluation, TemperedPosterior
     from ...state import ParticleState
 
 logger = logging.getLogger(__name__)
@@ -92,12 +91,17 @@ class MetropolisHastingsMutation(MutationStep):
         latent_particles: Array,
         transform: ParticleTransform | None,
         context: StepContext,
-    ) -> Array:
+        evaluation: "PosteriorEvaluation | None" = None,
+    ) -> tuple[Array, "PosteriorEvaluation | None"]:
         xp = namespace(latent_particles)
         original, log_det = self._inverse_transform(
             latent_particles, transform, context
         )
-        result = call_log_prob(self._log_prob_fn, original, context)
+        result, evaluation = self._evaluate_target(
+            original,
+            context,
+            evaluation=evaluation,
+        )
         result = self._combine_with_log_det(result, log_det)
         values = asarray(result, xp=xp, like=latent_particles)
         n_particles = latent_particles.shape[0]
@@ -109,7 +113,7 @@ class MetropolisHastingsMutation(MutationStep):
             raise ValueError(
                 "log_prob_fn must return a scalar or one value per particle."
             )
-        return values
+        return values, evaluation
 
     def apply(
         self,
@@ -126,7 +130,12 @@ class MetropolisHastingsMutation(MutationStep):
         )
         n_particles = current.shape[0]
         kernel = self._resolve_kernel(current, context)
-        current_log_prob = self._evaluate_log_prob(current, transform, context)
+        current_log_prob, current_evaluation = self._evaluate_log_prob(
+            current,
+            transform,
+            context,
+            state.evaluation,
+        )
 
         accepted_total = 0
         acceptance_by_step: list[float] = []
@@ -139,7 +148,7 @@ class MetropolisHastingsMutation(MutationStep):
                 raise ValueError(
                     "Mutation kernel must return the same shape as its input."
                 )
-            proposed_log_prob = self._evaluate_log_prob(
+            proposed_log_prob, proposed_evaluation = self._evaluate_log_prob(
                 proposals, transform, context
             )
             transition_ratio = asarray(
@@ -171,6 +180,14 @@ class MetropolisHastingsMutation(MutationStep):
             current_log_prob = xp.where(
                 accepted, proposed_log_prob, current_log_prob
             )
+            if (
+                current_evaluation is not None
+                and proposed_evaluation is not None
+            ):
+                current_evaluation = current_evaluation.select(
+                    proposed_evaluation,
+                    accepted,
+                )
 
             accepted_count = int(to_numpy(xp.sum(accepted)))
             accepted_total += accepted_count
@@ -185,7 +202,12 @@ class MetropolisHastingsMutation(MutationStep):
         metadata["metropolis_hastings_acceptance_by_step"] = acceptance_by_step
         metadata["metropolis_hastings_steps"] = self._n_steps
         if self._store_chains:
-            metadata["mutation_chains"] = xp.stack(chain, axis=0)
+            metadata["mutation_chains"] = self._inverse_chain(
+                xp.stack(chain, axis=0),
+                transform,
+                context,
+                like=state.particles,
+            )
 
         context.metadata["metropolis_hastings_acceptance"] = acceptance
         context.metadata["metropolis_hastings_acceptance_by_step"] = (
@@ -197,4 +219,8 @@ class MetropolisHastingsMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.with_updates(particles=new_particles, metadata=metadata)
+        return state.replace_particles(
+            new_particles,
+            evaluation=current_evaluation,
+            metadata=metadata,
+        )

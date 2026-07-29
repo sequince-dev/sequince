@@ -115,7 +115,41 @@ def _assert_states_equal(left: ParticleState, right: ParticleState) -> None:
     np.testing.assert_allclose(left.particles, right.particles)
     np.testing.assert_allclose(left.log_weights, right.log_weights)
     assert left.log_evidence == pytest.approx(right.log_evidence)
-    assert left.metadata == right.metadata
+    assert (left.evaluation is None) == (right.evaluation is None)
+    if left.evaluation is not None and right.evaluation is not None:
+        np.testing.assert_allclose(
+            left.evaluation.log_prior,
+            right.evaluation.log_prior,
+        )
+        np.testing.assert_allclose(
+            left.evaluation.log_likelihood,
+            right.evaluation.log_likelihood,
+        )
+        assert (left.evaluation.log_proposal is None) == (
+            right.evaluation.log_proposal is None
+        )
+        if (
+            left.evaluation.log_proposal is not None
+            and right.evaluation.log_proposal is not None
+        ):
+            np.testing.assert_allclose(
+                left.evaluation.log_proposal,
+                right.evaluation.log_proposal,
+            )
+    assert left.metadata.keys() == right.metadata.keys()
+    for key in left.metadata:
+        left_value = left.metadata[key]
+        right_value = right.metadata[key]
+        if isinstance(left_value, np.ndarray) or isinstance(
+            right_value, np.ndarray
+        ):
+            np.testing.assert_allclose(
+                left_value,
+                right_value,
+                equal_nan=True,
+            )
+        else:
+            assert left_value == right_value
 
 
 def _assert_results_equal(

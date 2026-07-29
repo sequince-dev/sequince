@@ -14,7 +14,7 @@ dependencies = [
     "matplotlib>=3.5",
     "numpy>=1.22",
     "h5py>=3",
-    "minipcn[array-api]>=0.2.0a4",
+    "minipcn>=0.2.0a4",
     "array-api-compat>=1.5",
     "array-api-extra",
     "orng>=0.2.0a1",

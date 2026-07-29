@@ -3,8 +3,9 @@
 import importlib.metadata
 import logging
 
-from .posterior import TemperedPosterior
+from .posterior import PosteriorEvaluation, TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
+from .proposals import draw_initial_state
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .state import ParticleState
@@ -22,5 +23,7 @@ __all__ = [
     "MetaSequentialMonteCarlo",
     "SMCResult",
     "TemperedPosterior",
+    "PosteriorEvaluation",
     "make_standard_bayesian_smc",
+    "draw_initial_state",
 ]
