@@ -89,6 +89,11 @@ def test_smc_respects_stop_request(particle_state: ParticleState, rng) -> None:
 
     assert len(states) == 3
     assert states[-1].metadata["calls"] == 3
+    assert states.initial_state is not particle_state
+    np.testing.assert_allclose(
+        states.initial_state.particles,
+        particle_state.particles,
+    )
 
 
 def test_smc_processes_observations_in_order(
