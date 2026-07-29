@@ -5,6 +5,7 @@ from sequince import ParticleState
 from sequince.log import configure_logging
 from sequince.posterior import draw_additional_samples
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
+from sequince.steps.weighting import evolving_target_ess_ratio
 
 # Number of dimensions in the multivariate normal model
 dims = 4
@@ -41,7 +42,7 @@ def main() -> None:
 
     # Prior over the static mean parameter
     lower_bound, upper_bound = bounds
-    n_particles = 50
+    n_particles = 500
     initial_particles = rng.uniform(
         low=lower_bound, high=upper_bound, size=(n_particles, dims)
     )
@@ -54,7 +55,7 @@ def main() -> None:
     smc, posterior, metadata = make_standard_bayesian_smc(
         log_prior=log_prior,
         log_likelihood=log_likelihood,
-        target_ess_ratio=0.7,
+        target_ess_ratio=evolving_target_ess_ratio(0.4, 0.9),
         max_temperature=1.0,
         min_delta=1e-8,
         always_resample=True,
@@ -83,7 +84,7 @@ def main() -> None:
 
     # Draw additional posterior samples
     print("Drawing additional posterior samples...")
-    posterior_state = draw_additional_samples(
+    posterior_state, result = draw_additional_samples(
         log_prior=log_prior,
         log_likelihood=log_likelihood,
         result=result,
@@ -101,8 +102,9 @@ def main() -> None:
     print(f"Posterior covariance estimate:\n{cov_estimate}")
 
     fig, axes = plt.subplots(3, 1)
-    result.plot_log_evidence(ax=axes[1])
-    result.plot_metadata_history("temperature", ax=axes[0])
+    result.plot_log_evidence(ax=axes[0])
+    result.plot_metadata_history("temperature", ax=axes[1])
+    result.plot_metadata_history("target_ess_ratio", ax=axes[2])
     fig.savefig("adaptive_temperature_history.png")
 
     fig, ax = plt.subplots(2, 1)

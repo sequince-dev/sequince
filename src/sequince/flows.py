@@ -21,6 +21,7 @@ class NormalizingFlow(Protocol):
         self,
         particles: Array,
         context: StepContext | None = None,
+        **kwargs: Any,
     ) -> "NormalizingFlow": ...
 
     def forward(

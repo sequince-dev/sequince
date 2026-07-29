@@ -17,7 +17,7 @@ from .steps.nested import NESTED_SMC_OUTPUT_KEY
 from .utils import resolve_rng
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
 
 def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
@@ -131,7 +131,7 @@ class SMCResult:
         self,
         n_samples: int | None = None,
         *,
-        rng: "ArrayRNG" | NumPyGenerator | int | None = None,
+        rng: "RandomGenerator" | NumPyGenerator | int | None = None,
         with_replacement: bool = True,
     ) -> Array:
         """Draw samples from the weighted posterior represented by the final state."""
@@ -142,7 +142,7 @@ class SMCResult:
             n_samples = particles.shape[0]
         if n_samples <= 0:
             raise ValueError("n_samples must be positive.")
-        rng_obj: ArrayRNG = resolve_rng(rng)
+        rng_obj: RandomGenerator = resolve_rng(rng)
         weights = asarray(final_state.weights, xp=xp)
         indices = asarray(
             rng_obj.choice(

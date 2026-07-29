@@ -13,7 +13,7 @@ from .transforms import ParticleTransform, get_prebuilt_transform
 from .utils import call_with_optional_context
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ._typing import MutationStrategy
     from .result import SMCResult
@@ -193,7 +193,7 @@ def draw_additional_samples(
     log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
     posterior: TemperedPosterior | None = None,
     result: SMCResult,
-    rng: "ArrayRNG",
+    rng: "RandomGenerator",
     n_particles: int,
     mutation: MutationStrategy | None = "minipcn",
     mutation_n_steps: int = 10,

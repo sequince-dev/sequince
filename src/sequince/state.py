@@ -117,9 +117,8 @@ class ParticleState:
         """Return a resampled state using the provided ancestor indices."""
         xp = namespace(self.particles, indices)
         particles = asarray(self.particles, xp=xp)
-        idx = asarray(indices, xp=xp, like=particles)
-        new_particles = particles[idx]
-        n = idx.shape[0]
+        new_particles = particles[indices]
+        n = indices.shape[0]
         log_weight_template = asarray(self.log_weights, xp=xp)
         log_weights = full(
             (n,),
@@ -132,7 +131,7 @@ class ParticleState:
             particles=new_particles,
             log_weights=log_weights,
             log_evidence=self.log_evidence,
-            metadata=dict(self.metadata, ancestors=idx),
+            metadata=dict(self.metadata, ancestors=indices),
         )
 
     def to_dict(self) -> dict[str, Any]:

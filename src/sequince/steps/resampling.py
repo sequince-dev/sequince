@@ -10,7 +10,7 @@ from .._typing import Array
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
 
@@ -44,7 +44,7 @@ class ResamplingStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> ParticleState:
         ess = state.effective_sample_size()
         n = state.log_weights.shape[0]
@@ -68,7 +68,9 @@ class ResamplingStep(SMCStep):
         context.metadata["resampled"] = True
         return state.resample(indices)
 
-    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
+    def _choose_ancestors(
+        self, weights: Array, rng: "RandomGenerator"
+    ) -> Array:
         raise NotImplementedError
 
     def _should_resample(self, state: ParticleState) -> bool:
@@ -84,23 +86,26 @@ class ResamplingStep(SMCStep):
 class MultinomialResampling(ResamplingStep):
     """Draw ancestors with replacement according to the weights."""
 
-    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
+    def _choose_ancestors(
+        self, weights: Array, rng: "RandomGenerator"
+    ) -> Array:
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
-        draws = rng.choice(n, size=n, p=probs)
-        return asarray(draws, xp=xp, like=probs)
+        return rng.choice(n, size=n, p=probs)
 
 
 class StratifiedResampling(ResamplingStep):
     """Stratified resampling for reduced variance."""
 
-    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
+    def _choose_ancestors(
+        self, weights: Array, rng: "RandomGenerator"
+    ) -> Array:
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
         offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
-        jitter = asarray(rng.random((n,)), xp=xp, like=probs)
+        jitter = rng.random((n,))
         positions = (offsets + jitter) / n
         cumulative = xp.cumulative_sum(probs)
         return xpx.searchsorted(cumulative, positions, side="right", xp=xp)
@@ -109,11 +114,13 @@ class StratifiedResampling(ResamplingStep):
 class SystematicResampling(ResamplingStep):
     """Systematic resampling for reduced variance."""
 
-    def _choose_ancestors(self, weights: Array, rng: "ArrayRNG") -> Array:
+    def _choose_ancestors(
+        self, weights: Array, rng: "RandomGenerator"
+    ) -> Array:
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
-        start = asarray(rng.random(), xp=xp, like=probs)
+        start = rng.random()
         offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
         positions = (start + offsets) / n
         cumulative = xp.cumulative_sum(probs)

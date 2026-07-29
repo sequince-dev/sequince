@@ -7,7 +7,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from orng import ArrayRNG
+from orng import RandomGenerator
 
 from ..state import ParticleState
 from .base import SMCStep
@@ -42,7 +42,7 @@ class NestedSMCStep(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if self.runner is None:
             raise ValueError("NestedSMCStep requires an SMC runner.")

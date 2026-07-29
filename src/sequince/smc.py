@@ -50,7 +50,7 @@ class SequentialMonteCarlo:
     steps:
         A sequence of callables implementing SMC steps.  Each callable should accept
         three arguments: the current ``ParticleState``, the current ``StepContext``,
-        and an ``orng.ArrayRNG`` instance, and return a new ``ParticleState``.
+        and an ``orng.RandomGenerator`` instance, and return a new ``ParticleState``.
     callbacks:
         Optional sequence of callables that will be invoked at the end of each iteration
         with the current state, context, and an ``SMCResult`` containing all states

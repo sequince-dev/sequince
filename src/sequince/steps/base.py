@@ -7,7 +7,7 @@ from ..utils import resolve_rng
 from .context import StepContext
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
 
@@ -19,7 +19,7 @@ class SMCStep:
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG" | int | None = None,
+        rng: "RandomGenerator" | int | None = None,
     ) -> "ParticleState":
         return self.apply(state, context, resolve_rng(rng))
 
@@ -27,7 +27,7 @@ class SMCStep:
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         raise NotImplementedError("SMCStep subclasses must implement apply().")
 

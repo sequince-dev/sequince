@@ -14,7 +14,7 @@ from typing import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
-from orng import ArrayRNG
+from orng import RandomGenerator
 from scipy.special import gammaln, logsumexp, softmax
 
 from sequince import (
@@ -142,7 +142,7 @@ class GMMExpansionTransformation(SMCTransformation):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: ArrayRNG,
+        rng: RandomGenerator,
     ) -> ParticleState:
         current_components = int(context.metadata["active_components"])
         particles = np.asarray(state.particles)
@@ -425,7 +425,7 @@ class ExpandComponents(TransformationStep):
         self,
         state: ParticleState,
         context: StepContext,
-        rng: ArrayRNG,
+        rng: RandomGenerator,
     ) -> ParticleState:
         current_components = int(context.metadata["active_components"])
 

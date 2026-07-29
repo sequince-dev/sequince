@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Any, Callable, Dict
 
 import numpy as np
 import pytest
@@ -9,10 +9,78 @@ from sequince.state import ParticleState
 from sequince.steps.base import StepContext
 from sequince.utils import resolve_rng
 
+BackendFactoryReturn = tuple[Any, Any, Any, Callable[[Any], Any]]
+
+
+def _backend_factory(backend: str) -> BackendFactoryReturn:
+    if backend == "numpy":
+        np = pytest.importorskip("numpy")
+        particles = np.array(
+            [[0.0, 1.0], [1.0, 2.0], [2.0, 0.5], [-1.0, 1.5]],
+            dtype=np.float64,
+        )
+        log_weights = np.zeros(particles.shape[0], dtype=np.float64)
+
+        def row_sum(arr: Any) -> Any:
+            return np.sum(arr, axis=1)
+
+        return np, particles, log_weights, row_sum
+
+    if backend == "torch":
+        torch = pytest.importorskip("torch")
+        particles = torch.tensor(
+            [[0.0, 1.0], [1.0, 2.0], [2.0, 0.5], [-1.0, 1.5]],
+            dtype=torch.float32,
+        )
+        log_weights = torch.zeros(particles.shape[0], dtype=torch.float32)
+
+        def row_sum(arr: Any) -> Any:
+            return torch.sum(arr, dim=1)
+
+        return torch, particles, log_weights, row_sum
+
+    if backend == "jax":
+        jnp = pytest.importorskip("jax.numpy")
+        particles = jnp.array(
+            [[0.0, 1.0], [1.0, 2.0], [2.0, 0.5], [-1.0, 1.5]],
+            dtype=jnp.float32,
+        )
+        log_weights = jnp.zeros(particles.shape[0], dtype=jnp.float32)
+
+        def row_sum(arr: Any) -> Any:
+            return jnp.sum(arr, axis=1)
+
+        return jnp, particles, log_weights, row_sum
+
+    if backend == "cupy":
+        cupy = pytest.importorskip("cupy")
+        try:
+            cupy.cuda.runtime.getDeviceCount()
+        except cupy.cuda.runtime.CUDARuntimeError as exc:
+            pytest.skip(f"CuPy runtime unavailable: {exc}")
+        particles = cupy.array(
+            [[0.0, 1.0], [1.0, 2.0], [2.0, 0.5], [-1.0, 1.5]],
+            dtype=cupy.float32,
+        )
+        log_weights = cupy.zeros(particles.shape[0], dtype=cupy.float32)
+
+        def row_sum(arr: Any) -> Any:
+            return cupy.sum(arr, axis=1)
+
+        return cupy, particles, log_weights, row_sum
+
+    raise ValueError(f"Unsupported backend '{backend}'.")
+
+
+@pytest.fixture
+def backend_factory() -> Callable[[str], BackendFactoryReturn]:
+    """Return the shared Array API backend constructor."""
+    return _backend_factory
+
 
 @pytest.fixture
 def rng():
-    """Seeded ArrayRNG for deterministic tests."""
+    """Seeded RandomGenerator for deterministic tests."""
     return resolve_rng(12345)
 
 

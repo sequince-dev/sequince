@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
-    from orng import ArrayRNG
+    from orng import RandomGenerator
 
     from ..state import ParticleState
 
@@ -39,7 +39,7 @@ class ContinueWhile(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if self._predicate(state, context):
             context.clear_stop_request()
@@ -85,7 +85,7 @@ class StopIf(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if self._predicate(state, context):
             if self._immediate:
@@ -132,7 +132,7 @@ class PeriodicStep(SMCStep):
         self,
         state: "ParticleState",
         context: StepContext,
-        rng: "ArrayRNG",
+        rng: "RandomGenerator",
     ) -> "ParticleState":
         if (context.t - self.offset) % self.n == 0:
             logger.debug(
@@ -159,3 +159,72 @@ class PeriodicStep(SMCStep):
         if not isinstance(nested_state, Mapping):
             raise TypeError("PeriodicStep state 'step' must be a mapping.")
         self.step.load_state_dict(nested_state)
+
+
+class RepeatStep(SMCStep):
+    """Repeat a step or sequence of steps a fixed number of times."""
+
+    def __init__(self, step: SMCStep, n: int):
+        if n < 1:
+            raise ValueError("n must be at least one.")
+        self.step = step
+        self.n = int(n)
+
+    def apply(self, state, context, rng):
+        for _ in range(self.n):
+            state = self.step(state, context, rng)
+
+            if context.metadata.get("stop_immediately", False):
+                break
+
+        return state
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"step": self.step.state_dict()}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        nested_state = state.get("step", {})
+        if not isinstance(nested_state, Mapping):
+            raise TypeError("RepeatStep state 'step' must be a mapping.")
+        self.step.load_state_dict(nested_state)
+
+
+class SequentialStep(SMCStep):
+    """Apply several SMC steps in order.
+
+    This is useful for grouping multiple steps together into a single step,
+    which can then be used in other contexts (e.g., as part of a
+    `RepeatStep` or `PeriodicStep`).
+    """
+
+    def __init__(self, steps: Sequence[SMCStep]):
+        self.steps = tuple(steps)
+
+    def apply(self, state, context, rng):
+        for step in self.steps:
+            state = step(state, context, rng)
+
+            if context.metadata.get("stop_immediately", False):
+                break
+
+        return state
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"steps": [step.state_dict() for step in self.steps]}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        nested_states = state.get("steps", [])
+        if not isinstance(nested_states, Sequence):
+            raise TypeError("SequentialStep state 'steps' must be a sequence.")
+        if len(nested_states) != len(self.steps):
+            raise ValueError(
+                "SequentialStep state does not match the configured steps."
+            )
+        for step, nested_state in zip(
+            self.steps, nested_states, strict=True
+        ):
+            if not isinstance(nested_state, Mapping):
+                raise TypeError(
+                    "SequentialStep nested states must be mappings."
+                )
+            step.load_state_dict(nested_state)
