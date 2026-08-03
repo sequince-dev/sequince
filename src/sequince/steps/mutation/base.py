@@ -6,12 +6,13 @@ import numpy as np
 
 from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
+from ...target import SequentialTarget
 from ...transforms import ParticleTransform
 from ..base import SMCStep
-from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from ..context import StepContext
 
 if TYPE_CHECKING:
-    from ...posterior import TemperedPosterior
+    from ...target import TargetEvaluation
 
 LogProbFn = Callable[..., Array | float]
 PARTICLE_TRANSFORM_KEY = "particle_transform"
@@ -61,33 +62,19 @@ class MutationStep(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         *,
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__()
-        if hasattr(log_prob_fn, "log_prob"):
-            posterior = log_prob_fn
-
-            def _wrapped_log_prob(
-                particles: Array,
-                context: StepContext,
-            ) -> Array | float:
-                log_proposal_override = context.metadata.get(
-                    log_proposal_override_key
-                )
-                return posterior.log_prob(
-                    particles,
-                    context,
-                    log_proposal_override=log_proposal_override,
-                )
-
-            self._log_prob_fn = cast(LogProbFn, _wrapped_log_prob)
-        else:
-            self._log_prob_fn = cast(LogProbFn, log_prob_fn)
+        self._target = (
+            log_prob_fn if isinstance(log_prob_fn, SequentialTarget) else None
+        )
+        self._log_prob_fn = (
+            None if self._target is not None else cast(LogProbFn, log_prob_fn)
+        )
         if not callable(transform_refit) and not isinstance(
             transform_refit, str
         ):
@@ -107,6 +94,31 @@ class MutationStep(SMCStep):
         self._prepared_context: StepContext | None = None
         self._store_chains = store_chains
         self._chain: Array | None = None
+
+    def _evaluate_target(
+        self,
+        particles: Array,
+        context: StepContext,
+        *,
+        evaluation: "TargetEvaluation | None" = None,
+    ) -> tuple[Any, "TargetEvaluation | None"]:
+        if self._target is None:
+            if self._log_prob_fn is None:  # pragma: no cover
+                raise RuntimeError("Mutation target is not configured.")
+            return call_log_prob(self._log_prob_fn, particles, context), None
+        evaluation = self._target.prepare_evaluation(
+            particles,
+            context,
+            evaluation=evaluation,
+        )
+        return (
+            self._target.log_prob(
+                particles,
+                context,
+                evaluation=evaluation,
+            ),
+            evaluation,
+        )
 
     def _prepare_transform(
         self, particles: Array, context: StepContext

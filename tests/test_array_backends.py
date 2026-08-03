@@ -80,5 +80,8 @@ def test_torch_gpu_particles_remain_on_device() -> None:
         log_prior=lambda x, ctx: torch.sum(x, dim=1),
         log_likelihood=lambda x, ctx: torch.sum(x, dim=1),
     )
-    log_inc: Any = posterior.log_increment(state.particles, context)
+    evaluation = posterior.evaluate(state.particles, context)
+    log_inc: Any = posterior.log_increment(
+        state.particles, context, evaluation=evaluation
+    )
     assert log_inc.device == device

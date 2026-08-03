@@ -10,7 +10,7 @@ distributions to encourage efficient exploration.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Collection, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,6 +20,7 @@ from scipy.special import gammaln, logsumexp, softmax
 from sequince import (
     ParticleState,
     SequentialMonteCarlo,
+    TargetEvaluation,
     TemperedPosterior,
 )
 from sequince.log import configure_logging
@@ -96,6 +97,67 @@ def log_prior(position: np.ndarray, context: StepContext) -> np.ndarray:
     return log_prior_vals
 
 
+def _blocked_gmm_log_likelihoods(
+    particles: np.ndarray,
+    context: StepContext,
+    component_counts: Sequence[int],
+) -> dict[int, np.ndarray]:
+    """Evaluate mixture likelihoods using bounded observation blocks."""
+    points = np.atleast_2d(np.asarray(particles, dtype=float))
+    n_particles, param_dim = points.shape
+    if param_dim % 2 != 0:
+        raise ValueError(
+            "Particle array must contain logits followed by means."
+        )
+
+    available_components = param_dim // 2
+    counts = tuple(dict.fromkeys(int(count) for count in component_counts))
+    if not counts:
+        raise ValueError("At least one component count must be requested.")
+    if any(count < 1 or count > available_components for count in counts):
+        raise ValueError(
+            "Requested component counts must be between one and the number "
+            "of components represented by the particle array."
+        )
+
+    data = np.asarray(context.shared["data"], dtype=float)
+    std = float(context.shared["component_std"])
+    variance = std**2
+    if variance <= 0.0:
+        raise ValueError("component_std must be positive.")
+    block_size = int(context.shared.get("likelihood_block_size", 64))
+    if block_size < 1:
+        raise ValueError("likelihood_block_size must be positive.")
+
+    max_components = max(counts)
+    # Every particle is laid out as [all logits, all component means].
+    logits = points[:, :max_components]
+    means = points[
+        :, available_components : available_components + max_components
+    ]
+    log_normalizers = {
+        count: logsumexp(logits[:, :count], axis=1) for count in counts
+    }
+    totals = {count: np.zeros(n_particles, dtype=float) for count in counts}
+    log_gaussian_normalizer = 0.5 * np.log(2.0 * np.pi * variance)
+
+    # Reuse each bounded data block for every requested mixture order.
+    for start in range(0, data.size, block_size):
+        block = data[start : start + block_size]
+        log_terms = block[np.newaxis, :, np.newaxis] - means[:, np.newaxis, :]
+        np.square(log_terms, out=log_terms)
+        log_terms *= -0.5 / variance
+        log_terms -= log_gaussian_normalizer
+        log_terms += logits[:, np.newaxis, :]
+
+        for count in counts:
+            log_mix = logsumexp(log_terms[:, :, :count], axis=2)
+            log_mix -= log_normalizers[count][:, np.newaxis]
+            totals[count] += np.sum(log_mix, axis=1)
+
+    return totals
+
+
 def gmm_log_likelihood(
     particles: np.ndarray,
     context: StepContext,
@@ -103,11 +165,7 @@ def gmm_log_likelihood(
     active_components: int | None = None,
 ) -> np.ndarray:
     """Log likelihood of the dataset under a shared-variance mixture."""
-    data = context.shared["data"]
-    std = context.shared["component_std"]
-    variance = std**2
-
-    n_particles, param_dim = particles.shape
+    param_dim = particles.shape[1]
     if active_components is None:
         n_components = int(context.metadata.get("active_components", 0))
         if n_components <= 0:
@@ -118,21 +176,9 @@ def gmm_log_likelihood(
             n_components = param_dim // 2
     else:
         n_components = active_components
-    if param_dim < 2 * n_components:
-        raise ValueError(
-            "Particle array has fewer dimensions than requested components."
-        )
-
-    logits = particles[:, :n_components]
-    means = particles[:, n_components:]
-    log_weights = logits - logsumexp(logits, axis=1, keepdims=True)
-
-    residual = data[np.newaxis, :, np.newaxis] - means[:, np.newaxis, :]
-    log_component = -0.5 * (residual**2) / variance - 0.5 * np.log(
-        2.0 * np.pi * variance
-    )
-    log_mix = logsumexp(log_weights[:, np.newaxis, :] + log_component, axis=2)
-    return np.sum(log_mix, axis=1)
+    return _blocked_gmm_log_likelihoods(particles, context, (n_components,))[
+        n_components
+    ]
 
 
 class GMMExpansionTransformation(SMCTransformation):
@@ -153,9 +199,12 @@ class GMMExpansionTransformation(SMCTransformation):
         bounds: tuple[float, float] = context.shared["mean_bounds"]
         logit_prior_scale = float(context.shared["logit_prior_scale"])
 
+        # Drawing the added parameters from their priors makes their prior and
+        # auxiliary-proposal terms cancel in the subsequent weight update.
         new_logits = rng.normal(loc=0.0, scale=logit_prior_scale, size=(n, 1))
         new_means = rng.uniform(low=bounds[0], high=bounds[1], size=(n, 1))
 
+        # Restore the [all logits, all means] layout after appending the pair.
         existing_logits = particles[:, :current_components]
         existing_means = particles[:, current_components:]
         logits = np.concatenate([existing_logits, new_logits], axis=1)
@@ -163,6 +212,7 @@ class GMMExpansionTransformation(SMCTransformation):
         expanded_particles = np.concatenate([logits, means], axis=1)
 
         next_components = current_components + 1
+        # The nested SMC run anneals from the old posterior to this larger model.
         metadata = dict(state.metadata)
         metadata["previous_active_components"] = current_components
         metadata["active_components"] = next_components
@@ -191,6 +241,8 @@ class GMMExpansionTransformation(SMCTransformation):
                 "previous_active_components", current_components
             )
         )
+        # Removing the appended pair maps an expanded particle back to the
+        # particle on which the previous posterior is evaluated.
         logits = pts[:, :current_components]
         means = pts[:, current_components : 2 * current_components]
         old_logits = logits[:, :previous_components]
@@ -205,6 +257,7 @@ class GMMExpansionTransformation(SMCTransformation):
         particles: np.ndarray,
         context: StepContext,
     ) -> np.ndarray:
+        """The log density for the new component parameters."""
         pts = np.atleast_2d(particles)
         current_components = int(context.metadata["active_components"])
         previous_components = int(
@@ -225,6 +278,7 @@ class GMMExpansionTransformation(SMCTransformation):
 
         logits = pts[:, :current_components]
         means = pts[:, current_components : 2 * current_components]
+        # These are exactly the random variables introduced by forward().
         new_logits = logits[:, previous_components]
         new_means = means[:, previous_components]
 
@@ -250,54 +304,107 @@ class GMMTemperedPosterior(TemperedPosterior):
     over the component log densities.
     """
 
+    def _expansion_component_counts(
+        self, context: StepContext
+    ) -> tuple[int, int] | None:
+        # A transformed proposal marks the bridge between adjacent model sizes.
+        if context.metadata.get(self.log_proposal_override_key) is None:
+            return None
+        previous_components = context.metadata.get(
+            "previous_active_components"
+        )
+        current_components = int(context.metadata.get("active_components", 0))
+        if (
+            previous_components is None
+            or int(previous_components) != current_components - 1
+            or current_components <= 1
+        ):
+            return None
+        return int(previous_components), current_components
+
+    def evaluate(
+        self,
+        particles: np.ndarray,
+        context: StepContext,
+        *,
+        components: Collection[str] | None = None,
+        evaluation: TargetEvaluation | None = None,
+    ) -> TargetEvaluation:
+        component_counts = self._expansion_component_counts(context)
+        if component_counts is None:
+            # The first model uses ordinary prior-to-posterior tempering.
+            return super().evaluate(
+                particles,
+                context,
+                components=components,
+                evaluation=evaluation,
+            )
+
+        if evaluation is not None:
+            self.validate_evaluation(evaluation, particles, context)
+        allowed = {
+            "log_prior",
+            "previous_log_likelihood",
+            "log_likelihood",
+        }
+        requested = allowed if components is None else set(components)
+        unknown = requested.difference(allowed)
+        if unknown:
+            raise ValueError(
+                f"Unknown expansion evaluation components: {sorted(unknown)}"
+            )
+
+        values = {} if evaluation is None else dict(evaluation.components)
+        points = np.atleast_2d(particles)
+        if "log_prior" in requested:
+            values["log_prior"] = log_prior(points, context)
+
+        # Cache both endpoints so weighting and mutation share one likelihood pass.
+        previous_components, current_components = component_counts
+        likelihood_counts = []
+        if "previous_log_likelihood" in requested:
+            likelihood_counts.append(previous_components)
+        if "log_likelihood" in requested:
+            likelihood_counts.append(current_components)
+        if likelihood_counts:
+            log_likelihoods = _blocked_gmm_log_likelihoods(
+                points,
+                context,
+                likelihood_counts,
+            )
+            if "previous_log_likelihood" in requested:
+                values["previous_log_likelihood"] = log_likelihoods[
+                    previous_components
+                ]
+            if "log_likelihood" in requested:
+                values["log_likelihood"] = log_likelihoods[current_components]
+
+        return self.bind_evaluation(
+            TargetEvaluation(components=values), context
+        )
+
     def log_increment(
         self,
         particles: np.ndarray,
         context: StepContext,
         *,
-        log_proposal_override=None,
+        evaluation=None,
     ) -> np.ndarray:
-        previous_components = context.metadata.get(
-            "previous_active_components"
-        )
-        current_components = int(context.metadata.get("active_components", 0))
-
-        if (
-            log_proposal_override is None
-            or previous_components is None
-            or int(previous_components) != current_components - 1
-            or current_components <= 1
-        ):
+        if self._expansion_component_counts(context) is None:
             return super().log_increment(
                 particles,
                 context,
-                log_proposal_override=log_proposal_override,
+                evaluation=evaluation,
             )
 
-        data = context.shared["data"]
-        std = float(context.shared["component_std"])
-        variance = std**2
-
-        pts = np.atleast_2d(particles)
-        logits = pts[:, :current_components]
-        means = pts[:, current_components : 2 * current_components]
-        log_weights = logits - logsumexp(logits, axis=1, keepdims=True)
-
-        residual = data[np.newaxis, :, np.newaxis] - means[:, np.newaxis, :]
-        log_component = -0.5 * (residual**2) / variance - 0.5 * np.log(
-            2.0 * np.pi * variance
+        if evaluation is None:
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
+        # The added-parameter prior has cancelled, leaving only L_new / L_old.
+        increments = (
+            evaluation["log_likelihood"]
+            - evaluation["previous_log_likelihood"]
         )
-
-        old_log_mix = logsumexp(
-            log_weights[:, np.newaxis, :previous_components]
-            + log_component[:, :, :previous_components],
-            axis=2,
-        )
-        new_log_mix = logsumexp(
-            log_weights[:, np.newaxis, :] + log_component,
-            axis=2,
-        )
-        increments = np.sum(new_log_mix - old_log_mix, axis=1)
 
         if particles.ndim == 1:
             return np.array(increments[0], ndmin=1)
@@ -308,54 +415,24 @@ class GMMTemperedPosterior(TemperedPosterior):
         particles: np.ndarray,
         context: StepContext,
         *,
-        log_proposal_override=None,
+        evaluation=None,
     ) -> np.ndarray:
-        previous_components = context.metadata.get(
-            "previous_active_components"
-        )
-        current_components = int(context.metadata.get("active_components", 0))
-
-        if (
-            log_proposal_override is None
-            or previous_components is None
-            or int(previous_components) != current_components - 1
-            or current_components <= 1
-        ):
+        if self._expansion_component_counts(context) is None:
             return super().log_prob(
                 particles,
                 context,
-                log_proposal_override=log_proposal_override,
+                evaluation=evaluation,
             )
 
-        data = context.shared["data"]
-        std = float(context.shared["component_std"])
-        variance = std**2
+        if evaluation is None:
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
         beta = float(context.metadata.get("temperature", 0.0))
-
-        pts = np.atleast_2d(particles)
-        logits = pts[:, :current_components]
-        means = pts[:, current_components : 2 * current_components]
-        log_weights = logits - logsumexp(logits, axis=1, keepdims=True)
-
-        residual = data[np.newaxis, :, np.newaxis] - means[:, np.newaxis, :]
-        log_component = -0.5 * (residual**2) / variance - 0.5 * np.log(
-            2.0 * np.pi * variance
-        )
-
-        old_log_mix = logsumexp(
-            log_weights[:, np.newaxis, :previous_components]
-            + log_component[:, :, :previous_components],
-            axis=2,
-        )
-        new_log_mix = logsumexp(
-            log_weights[:, np.newaxis, :] + log_component,
-            axis=2,
-        )
-        old_log_like = np.sum(old_log_mix, axis=1)
-        new_log_like = np.sum(new_log_mix, axis=1)
-        log_prior_vals = log_prior(pts, context)
+        # Mutation follows the same geometric bridge used by the weight update.
         posterior = (
-            log_prior_vals + (1.0 - beta) * old_log_like + beta * new_log_like
+            evaluation["log_prior"]
+            + (1.0 - beta) * evaluation["previous_log_likelihood"]
+            + beta * evaluation["log_likelihood"]
         )
 
         if particles.ndim == 1:
@@ -483,6 +560,7 @@ def main() -> None:
         log_likelihood=gmm_log_likelihood,
     )
 
+    # The inner loop anneals and rejuvenates particles for one model size.
     inner_runner = SequentialMonteCarlo(
         steps=[
             AdaptiveTemperedWeighting(
@@ -503,8 +581,10 @@ def main() -> None:
         "mean_bounds": mean_bounds,
         "logit_prior_scale": logit_prior_scale,
         "component_count_rate": 3.0,
+        "likelihood_block_size": 256,
     }
 
+    # The outer loop adds one component, runs the inner loop, then repeats.
     outer_runner = SequentialMonteCarlo(
         steps=[
             ExpandComponents(target_components, posterior),

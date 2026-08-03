@@ -8,7 +8,6 @@ from .._array_api import asarray, namespace
 from ..utils import call_with_optional_context
 from .base import SMCStep
 from .context import (
-    LOG_PROPOSAL_OVERRIDE_KEY,
     SMC_TRANSFORMATION_KEY,
     StepContext,
 )
@@ -130,12 +129,10 @@ class TransformationStep(SMCStep):
         *,
         posterior: "TemperedPosterior | None" = None,
         transformation_key: str = SMC_TRANSFORMATION_KEY,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         self._transformation = transformation
         self._posterior = posterior
         self._transformation_key = transformation_key
-        self._log_proposal_override_key = log_proposal_override_key
 
     def apply(
         self,
@@ -146,8 +143,9 @@ class TransformationStep(SMCStep):
         transformed_state = self._transformation.forward(state, context, rng)
         context.metadata[self._transformation_key] = self._transformation
         if self._posterior is not None:
+            override_key = self._posterior.log_proposal_override_key
             base_log_proposal = self._posterior.resolve_log_proposal(
-                context.metadata.get(self._log_proposal_override_key)
+                context.metadata.get(override_key)
             )
             if base_log_proposal is not None:
                 _transformed_log_proposal = (
@@ -155,9 +153,7 @@ class TransformationStep(SMCStep):
                         base_log_proposal, context
                     )
                 )
-                context.metadata[self._log_proposal_override_key] = (
-                    _transformed_log_proposal
-                )
+                context.metadata[override_key] = _transformed_log_proposal
         return transformed_state
 
 
@@ -174,13 +170,11 @@ class ExpandDimensions(TransformationStep):
         dimension_delta_key: str = "last_dimension_delta",
         posterior: "TemperedPosterior | None" = None,
         transformation_key: str = SMC_TRANSFORMATION_KEY,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__(
             transformation,
             posterior=posterior,
             transformation_key=transformation_key,
-            log_proposal_override_key=log_proposal_override_key,
         )
         self._expected_block_size = expected_block_size
         self._metadata_key = metadata_key

@@ -11,7 +11,7 @@ from orng import RandomGenerator
 
 from ..state import ParticleState
 from .base import SMCStep
-from .context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from .context import StepContext
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +29,12 @@ class NestedSMCStep(SMCStep):
         record_outputs=False,
         run_kwargs=None,
         output_key=NESTED_SMC_OUTPUT_KEY,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         self.runner = smc_runner
         self.run_kwargs = run_kwargs or {}
         self.posterior = posterior
         self.record_outputs = record_outputs
         self.output_key = output_key
-        self.log_proposal_override_key = log_proposal_override_key
 
     def apply(
         self,
@@ -64,13 +62,12 @@ class NestedSMCStep(SMCStep):
             **self.run_kwargs,
         )
         final_context = result.context
+        override_key = self.posterior.log_proposal_override_key
         output_log_proposal = self.posterior.freeze_log_prob(
             final_context,
-            log_proposal_override=final_context.metadata.get(
-                self.log_proposal_override_key
-            ),
+            log_proposal_override=final_context.metadata.get(override_key),
         )
-        context.metadata[self.log_proposal_override_key] = output_log_proposal
+        context.metadata[override_key] = output_log_proposal
         if self.record_outputs:
             context.record_output(self.output_key, result)
         return result.final_state

@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from ._array_api import asarray, full, namespace
 from ._typing import Array
 from .proposals import ProposalDistribution
 from .state import ParticleState
-from .steps.context import StepContext
+from .steps.context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from .target import (
+    TargetComponentFn,
+    TargetEvaluation,
+    TemperedTarget,
+    _evaluate_component,
+)
 from .transforms import ParticleTransform, get_prebuilt_transform
-from .utils import call_with_optional_context
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -19,35 +24,12 @@ if TYPE_CHECKING:
     from .result import SMCResult
     from .steps.context import StepContext
 
-ArrayLikeFn = Callable[..., Array | float]
-LogProposalLike = ArrayLikeFn | ProposalDistribution
-
-
-def _evaluate(
-    fn: ArrayLikeFn,
-    particles: Array,
-    context: "StepContext",
-) -> Array:
-    """Call function with optional context and return a 1d float array."""
-    values = call_with_optional_context(fn, (particles,), context)
-    xp = namespace(particles, values)
-    array = asarray(values, xp=xp, like=particles)
-    if array.ndim == 0:
-        array = full(
-            (particles.shape[0],),
-            float(array),
-            xp=xp,
-            dtype=array.dtype,
-            like=particles,
-        )
-    if array.ndim > 1:
-        array = xp.reshape(array, (array.shape[0],))
-    return array
+LogProposalLike = TargetComponentFn | ProposalDistribution
 
 
 def _resolve_log_proposal_fn(
     log_proposal: LogProposalLike | None,
-) -> ArrayLikeFn | None:
+) -> TargetComponentFn | None:
     """Normalize proposal inputs to a log-density callable."""
     if log_proposal is None:
         return None
@@ -62,7 +44,7 @@ def _resolve_log_proposal_fn(
 
 
 @dataclass(frozen=True)
-class TemperedPosterior:
+class TemperedPosterior(TemperedTarget):
     """Wrapper exposing posterior building blocks for SMC workflows.
 
     Parameters
@@ -75,69 +57,115 @@ class TemperedPosterior:
         Optional callable or proposal object returning ``log q(x)``. When
         supplied the intermediate targets follow the bridge
         ``q(x)^{1-β} [p(x)L(x)]^{β}``.
+    log_proposal_override_key:
+        Context metadata key containing a runtime proposal override.
     """
 
-    log_prior: ArrayLikeFn
-    log_likelihood: ArrayLikeFn
+    log_prior: TargetComponentFn
+    log_likelihood: TargetComponentFn
     log_proposal: LogProposalLike | None = None
+    log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY
 
     def resolve_log_proposal(
         self,
         log_proposal_override: LogProposalLike | None = None,
-    ) -> ArrayLikeFn | None:
+    ) -> TargetComponentFn | None:
         """Return the effective proposal callable for the current evaluation."""
         if log_proposal_override is not None:
             return _resolve_log_proposal_fn(log_proposal_override)
         return _resolve_log_proposal_fn(self.log_proposal)
 
-    def log_increment(
+    def log_initial(
         self,
         particles: Array,
         context: "StepContext",
         *,
-        log_proposal_override: LogProposalLike | None = None,
+        evaluation: TargetEvaluation | None = None,
     ) -> float | Any:
-        """Return the log-weight increment required by the tempering step."""
-        log_like = _evaluate(self.log_likelihood, particles, context)
+        """Return the proposal or prior endpoint log density.
+
+        When ``evaluation`` is omitted, all posterior components are evaluated
+        from ``particles``. Supplying a matching evaluation avoids recomputing
+        those components.
+        """
+        if evaluation is None:
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
+        log_proposal_override = context.metadata.get(
+            self.log_proposal_override_key
+        )
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             if particles.ndim == 1:
-                return float(log_like[0])
-            return log_like
-        log_prior = _evaluate(self.log_prior, particles, context)
-        log_prop = _evaluate(log_proposal, particles, context)
-        bridge = log_prior + log_like - log_prop
+                return float(evaluation["log_prior"][0])
+            return evaluation["log_prior"]
+        if "log_proposal" not in evaluation:
+            raise ValueError("Evaluation does not contain log_proposal.")
         if particles.ndim == 1:
-            return float(bridge[0])
-        return bridge
+            return float(evaluation["log_proposal"][0])
+        return evaluation["log_proposal"]
 
-    def log_prob(
+    def log_terminal(
         self,
         particles: Array,
         context: "StepContext",
         *,
-        log_proposal_override: LogProposalLike | None = None,
+        evaluation: TargetEvaluation | None = None,
     ) -> float | Any:
-        """Return the tempered log posterior evaluated at the current β."""
-        beta = float(context.metadata.get("temperature", 0.0))
-        log_prior = _evaluate(self.log_prior, particles, context)
-        log_like = _evaluate(self.log_likelihood, particles, context)
-        log_proposal = self.resolve_log_proposal(log_proposal_override)
-        if log_proposal is None:
-            posterior = log_prior + beta * log_like
-        else:
-            log_prop = _evaluate(log_proposal, particles, context)
-            if beta == 0.0:
-                posterior = log_prop
-            elif beta == 1.0:
-                posterior = log_prior + log_like
-            else:
-                posterior = (1.0 - beta) * log_prop + beta * (
-                    log_prior + log_like
-                )
+        """Return the posterior endpoint log density.
+
+        When ``evaluation`` is omitted, all posterior components are evaluated
+        from ``particles``. Supplying a matching evaluation avoids recomputing
+        those components.
+        """
+        if evaluation is None:
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
+        posterior = evaluation["log_prior"] + evaluation["log_likelihood"]
         if particles.ndim == 1:
             return float(posterior[0])
         return posterior
+
+    def evaluate(
+        self,
+        particles: Array,
+        context: "StepContext",
+        *,
+        components: Collection[str] | None = None,
+        evaluation: TargetEvaluation | None = None,
+    ) -> TargetEvaluation:
+        """Evaluate or refresh posterior components for a particle population."""
+        if evaluation is not None:
+            self.validate_evaluation(evaluation, particles, context)
+        allowed = {"log_prior", "log_likelihood", "log_proposal"}
+        requested = allowed if components is None else set(components)
+        unknown = requested.difference(allowed)
+        if unknown:
+            raise ValueError(
+                f"Unknown evaluation components: {sorted(unknown)}"
+            )
+        log_proposal = self.resolve_log_proposal(
+            context.metadata.get(self.log_proposal_override_key)
+        )
+        values = {} if evaluation is None else dict(evaluation.components)
+        if "log_prior" in requested:
+            values["log_prior"] = _evaluate_component(
+                self.log_prior, particles, context
+            )
+        if "log_likelihood" in requested:
+            values["log_likelihood"] = _evaluate_component(
+                self.log_likelihood, particles, context
+            )
+        if "log_proposal" in requested:
+            if log_proposal is None:
+                values.pop("log_proposal", None)
+            else:
+                values["log_proposal"] = _evaluate_component(
+                    log_proposal, particles, context
+                )
+        return self.bind_evaluation(
+            TargetEvaluation(components=values), context
+        )
 
     def freeze_log_prob(
         self,
@@ -151,37 +179,38 @@ class TemperedPosterior:
             shared=copy.deepcopy(dict(context.shared)),
             metadata=copy.deepcopy(dict(context.metadata)),
         )
+        if log_proposal_override is not None:
+            frozen_context.metadata[self.log_proposal_override_key] = (
+                log_proposal_override
+            )
         log_prior = self.log_prior
         log_likelihood = self.log_likelihood
-        log_proposal = self.resolve_log_proposal(log_proposal_override)
+        log_proposal = self.resolve_log_proposal(
+            frozen_context.metadata.get(self.log_proposal_override_key)
+        )
 
         def _frozen_log_prob(particles):
-            beta = float(frozen_context.metadata.get("temperature", 0.0))
-            frozen_log_prior = _evaluate(log_prior, particles, frozen_context)
-            frozen_log_like = _evaluate(
-                log_likelihood,
+            components = {
+                "log_prior": _evaluate_component(
+                    log_prior, particles, frozen_context
+                ),
+                "log_likelihood": _evaluate_component(
+                    log_likelihood, particles, frozen_context
+                ),
+            }
+            if log_proposal is not None:
+                components["log_proposal"] = _evaluate_component(
+                    log_proposal, particles, frozen_context
+                )
+            evaluation = TargetEvaluation(
+                components=components,
+                target_id=self.evaluation_id,
+            )
+            return self.log_prob(
                 particles,
                 frozen_context,
+                evaluation=evaluation,
             )
-            if log_proposal is None:
-                posterior = frozen_log_prior + beta * frozen_log_like
-            else:
-                frozen_log_prop = _evaluate(
-                    log_proposal,
-                    particles,
-                    frozen_context,
-                )
-                if beta == 0.0:
-                    posterior = frozen_log_prop
-                elif beta == 1.0:
-                    posterior = frozen_log_prior + frozen_log_like
-                else:
-                    posterior = (1.0 - beta) * frozen_log_prop + beta * (
-                        frozen_log_prior + frozen_log_like
-                    )
-            if particles.ndim == 1:
-                return float(posterior[0])
-            return posterior
 
         return _frozen_log_prob
 
@@ -264,6 +293,11 @@ def draw_additional_samples(
     resampled_state = ParticleState(
         particles=resampled_particles,
         log_evidence=state.log_evidence,
+        evaluation=(
+            None
+            if state.evaluation is None
+            else state.evaluation.take(indices)
+        ),
         metadata=copy.deepcopy(state.metadata),
     )
 
@@ -285,7 +319,7 @@ def draw_additional_samples(
 
     mutation_step = get_mutation_step(
         mutation=mutation,
-        posterior=posterior,
+        target=posterior,
         mutation_n_steps=mutation_n_steps,
         mutation_kwargs=mutation_kwargs,
         transform=particle_transform,

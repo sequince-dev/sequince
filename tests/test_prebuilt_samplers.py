@@ -67,6 +67,7 @@ def test_make_standard_bayesian_smc_reaches_max_temperature(rng) -> None:
     assert results.states[-1].metadata["temperature"] == pytest.approx(
         max_temperature
     )
+    assert results.final_state.evaluation is not None
     assert metadata["temperature"] == pytest.approx(max_temperature)
 
 
@@ -132,9 +133,8 @@ def test_make_standard_bayesian_smc_accepts_proposal_distribution() -> None:
         log_proposal=ZeroProposal(),
     )
     particles = np.array([[0.0], [1.0]], dtype=float)
-    values = posterior.log_increment(
-        particles,
-        StepContext(t=0, metadata={"temperature": 0.0}),
-    )
+    context = StepContext(t=0, metadata={"temperature": 0.0})
+    evaluation = posterior.evaluate(particles, context)
+    values = posterior.log_increment(particles, context, evaluation=evaluation)
 
     assert np.allclose(values, _quadratic_log_prior(particles))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pytest
@@ -32,10 +32,12 @@ from sequince.steps.resampling import (
 from sequince.steps.weighting import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
+    IncrementalWeighting,
     LogLikelihoodWeighting,
     TemperedWeighting,
     evolving_target_ess_ratio,
 )
+from sequince.target import SequentialTarget, TargetEvaluation
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -114,6 +116,176 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     assert updated.metadata["temperature"] == pytest.approx(0.25)
     assert context.metadata["temperature"] == pytest.approx(0.25)
     assert context.metadata["temperature_delta"] == pytest.approx(0.25)
+    assert updated.metadata["temperature_delta"] == pytest.approx(0.25)
+    assert updated.metadata["log_evidence_increment"] == pytest.approx(0.25)
+    assert updated.metadata["log_evidence_increment_variance"] == (
+        pytest.approx(0.0)
+    )
+    assert updated.metadata["ess_before_resampling"] == pytest.approx(
+        particle_state.effective_sample_size()
+    )
+    assert updated.metadata["ess_at_max_temperature"] == pytest.approx(
+        particle_state.effective_sample_size()
+    )
+
+
+def test_tempering_diagnostics_support_weighted_particles(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    normalized, _ = particle_state.normalize()
+    log_increments = np.array([-1.0, 0.0, 0.5, 1.5])
+    context = context_factory(
+        metadata={"temperature": 0.0, "max_temperature": 1.0}
+    )
+    step = FixedTemperedWeighting(
+        lambda particles: log_increments,
+        temperature_increment=0.4,
+    )
+
+    updated = step(normalized, context, rng)
+
+    base_weights = normalized.weights
+    scaled_ratios = np.exp(0.4 * log_increments - np.max(0.4 * log_increments))
+    mean_ratio = np.sum(base_weights * scaled_ratios)
+    expected_variance = (
+        np.sum(base_weights**2 * (scaled_ratios - mean_ratio) ** 2)
+        / mean_ratio**2
+    )
+    terminal_log_weights = normalized.log_weights + log_increments
+    terminal_weights = np.exp(
+        terminal_log_weights - np.logaddexp.reduce(terminal_log_weights)
+    )
+    expected_terminal_ess = 1.0 / np.sum(terminal_weights**2)
+
+    assert updated.metadata[
+        "log_evidence_increment_variance"
+    ] == pytest.approx(expected_variance)
+    assert updated.metadata["ess_at_max_temperature"] == pytest.approx(
+        expected_terminal_ess
+    )
+
+
+def test_tempered_weighting_reuses_attached_evaluation(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    calls = {"prior": 0, "likelihood": 0}
+
+    def log_prior(particles, context):
+        calls["prior"] += 1
+        return np.zeros(particles.shape[0])
+
+    def log_likelihood(particles, context):
+        calls["likelihood"] += 1
+        return np.ones(particles.shape[0])
+
+    posterior = TemperedPosterior(log_prior, log_likelihood)
+    context = context_factory(metadata={"temperature": 0.0})
+    evaluation = posterior.evaluate(particle_state.particles, context)
+    state = particle_state.with_updates(evaluation=evaluation)
+    step = FixedTemperedWeighting(
+        posterior,
+        temperature_increment=0.25,
+    )
+
+    state = step(state, context, rng)
+    state = step(state, context, rng)
+
+    assert state.evaluation is not None
+    assert calls == {"prior": 1, "likelihood": 1}
+
+
+def test_incremental_weighting_accepts_a_general_sequential_target(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    class LinearTarget(SequentialTarget):
+        def evaluate(
+            self,
+            particles,
+            context,
+            *,
+            components=None,
+            evaluation=None,
+        ):
+            requested = (
+                {"base", "increment"} if components is None else components
+            )
+            values = {} if evaluation is None else dict(evaluation.components)
+            if "base" in requested:
+                values["base"] = -np.sum(particles**2, axis=1)
+            if "increment" in requested:
+                values["increment"] = particles[:, 0]
+            return TargetEvaluation(values)
+
+        def log_increment(self, particles, context, *, evaluation=None):
+            evaluation = evaluation or self.evaluate(particles, context)
+            return evaluation["increment"]
+
+        def log_prob(self, particles, context, *, evaluation=None):
+            evaluation = evaluation or self.evaluate(particles, context)
+            beta = float(context.metadata.get("temperature", 0.0))
+            return evaluation["base"] + beta * evaluation["increment"]
+
+    context = context_factory(metadata={"temperature": 0.0})
+    initial_log_weights = particle_state.log_weights.copy()
+
+    target = LinearTarget()
+    invalid_tempered_target: Any = target
+    with pytest.raises(TypeError, match="log_increment_fn must be callable"):
+        FixedTemperedWeighting(
+            invalid_tempered_target,
+            temperature_increment=0.25,
+        )
+
+    updated = IncrementalWeighting(
+        target,
+        normalize_after=False,
+    )(particle_state, context, rng)
+
+    np.testing.assert_allclose(
+        updated.log_weights,
+        initial_log_weights + particle_state.particles[:, 0],
+    )
+    assert updated.evaluation is not None
+    assert updated.evaluation.components.keys() == {"base", "increment"}
+
+
+def test_tempered_weighting_can_refresh_only_likelihood(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    calls = {"prior": 0, "likelihood": 0}
+
+    def log_prior(particles, context):
+        calls["prior"] += 1
+        return np.zeros(particles.shape[0])
+
+    def log_likelihood(particles, context):
+        calls["likelihood"] += 1
+        return np.full(particles.shape[0], context.t + 1.0)
+
+    posterior = TemperedPosterior(log_prior, log_likelihood)
+    initial_context = context_factory(t=0, metadata={"temperature": 0.0})
+    state = particle_state.with_updates(
+        evaluation=posterior.evaluate(
+            particle_state.particles,
+            initial_context,
+        )
+    )
+    step = FixedTemperedWeighting(
+        posterior,
+        temperature_increment=0.25,
+        refresh_components={"log_likelihood"},
+    )
+
+    updated = step(
+        state,
+        context_factory(t=1, metadata={"temperature": 0.0}),
+        rng,
+    )
+
+    assert calls == {"prior": 1, "likelihood": 2}
+    evaluation = updated.evaluation
+    assert evaluation is not None
+    np.testing.assert_allclose(evaluation["log_likelihood"], 2.0)
 
 
 def test_evolving_target_ess_ratio_uses_clipped_temperature_progress() -> None:
@@ -302,17 +474,18 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
             particles: np.ndarray,
             context: StepContext,
             *,
-            log_proposal_override=None,
+            evaluation=None,
         ) -> np.ndarray:
             context.metadata["custom_increment_called"] = True
             context.metadata["received_proposal_override"] = (
-                log_proposal_override
+                context.metadata.get(self.log_proposal_override_key)
             )
             return np.full(particles.shape[0], 2.0)
 
     posterior = CustomPosterior(
         log_prior=lambda particles, context: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles, context: np.ones(particles.shape[0]),
+        log_proposal_override_key="custom_proposal_override",
     )
 
     def proposal_override(particles):
@@ -328,7 +501,6 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
         posterior,
         temperature_increment=0.25,
         normalize_after=False,
-        log_proposal_override_key="custom_proposal_override",
     )
 
     updated = step(particle_state, context, rng)

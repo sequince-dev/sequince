@@ -6,19 +6,18 @@ from typing import TYPE_CHECKING, Callable, cast
 from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
 from ...transforms import ParticleTransform
-from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
-    call_log_prob,
 )
 from .kernels import MutationKernel, evaluate_log_transition_ratio
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import TemperedPosterior
     from ...state import ParticleState
+    from ...target import SequentialTarget, TargetEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -35,21 +34,19 @@ class MetropolisHastingsMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         kernel: MutationKernel | MutationKernelFactory,
         *,
         n_steps: int = 1,
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__(
             log_prob_fn,
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
-            log_proposal_override_key=log_proposal_override_key,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -94,12 +91,17 @@ class MetropolisHastingsMutation(MutationStep):
         latent_particles: Array,
         transform: ParticleTransform | None,
         context: StepContext,
-    ) -> Array:
+        evaluation: "TargetEvaluation | None" = None,
+    ) -> tuple[Array, "TargetEvaluation | None"]:
         xp = namespace(latent_particles)
         original, log_det = self._inverse_transform(
             latent_particles, transform, context
         )
-        result = call_log_prob(self._log_prob_fn, original, context)
+        result, evaluation = self._evaluate_target(
+            original,
+            context,
+            evaluation=evaluation,
+        )
         result = self._combine_with_log_det(result, log_det)
         values = asarray(result, xp=xp, like=latent_particles)
         n_particles = latent_particles.shape[0]
@@ -111,7 +113,7 @@ class MetropolisHastingsMutation(MutationStep):
             raise ValueError(
                 "log_prob_fn must return a scalar or one value per particle."
             )
-        return values
+        return values, evaluation
 
     def apply(
         self,
@@ -128,7 +130,12 @@ class MetropolisHastingsMutation(MutationStep):
         )
         n_particles = current.shape[0]
         kernel = self._resolve_kernel(current, context)
-        current_log_prob = self._evaluate_log_prob(current, transform, context)
+        current_log_prob, current_evaluation = self._evaluate_log_prob(
+            current,
+            transform,
+            context,
+            state.evaluation,
+        )
 
         accepted_total = 0
         acceptance_by_step: list[float] = []
@@ -141,7 +148,7 @@ class MetropolisHastingsMutation(MutationStep):
                 raise ValueError(
                     "Mutation kernel must return the same shape as its input."
                 )
-            proposed_log_prob = self._evaluate_log_prob(
+            proposed_log_prob, proposed_evaluation = self._evaluate_log_prob(
                 proposals, transform, context
             )
             transition_ratio = asarray(
@@ -173,6 +180,14 @@ class MetropolisHastingsMutation(MutationStep):
             current_log_prob = xp.where(
                 accepted, proposed_log_prob, current_log_prob
             )
+            if (
+                current_evaluation is not None
+                and proposed_evaluation is not None
+            ):
+                current_evaluation = current_evaluation.select(
+                    proposed_evaluation,
+                    accepted,
+                )
 
             accepted_count = int(to_numpy(xp.sum(accepted)))
             accepted_total += accepted_count
@@ -199,4 +214,8 @@ class MetropolisHastingsMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.with_updates(particles=new_particles, metadata=metadata)
+        return state.replace_particles(
+            new_particles,
+            evaluation=current_evaluation,
+            metadata=metadata,
+        )

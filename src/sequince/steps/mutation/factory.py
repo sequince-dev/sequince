@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ...transforms import ParticleTransform
@@ -10,12 +11,12 @@ from .metropolis import MetropolisHastingsMutation
 from .minipcn import MiniPCNMutation
 
 if TYPE_CHECKING:
-    from ...posterior import TemperedPosterior
+    from ...target import SequentialTarget
 
 
 def get_mutation_step(
     mutation: str | SMCStep | None,
-    posterior: "TemperedPosterior",
+    target: "SequentialTarget | Callable[..., Any]",
     transform: ParticleTransform | None = None,
     mutation_n_steps: int = 10,
     mutation_kwargs: dict[str, Any] | None = None,
@@ -29,14 +30,14 @@ def get_mutation_step(
     elif mutation == "emcee":
         run_kwargs = kwargs.pop("run_kwargs", {})
         mutation_step = EmceeMutation(
-            posterior,
+            target,
             n_steps=mutation_n_steps,
             run_kwargs=run_kwargs,
             **kwargs,
         )
     elif mutation == "minipcn":
         mutation_step = MiniPCNMutation(
-            posterior,
+            target,
             n_steps=mutation_n_steps,
             **kwargs,
         )
@@ -55,7 +56,7 @@ def get_mutation_step(
                 "kernel_kwargs can only be used with a named mutation kernel."
             )
         mutation_step = MetropolisHastingsMutation(
-            posterior,
+            target,
             kernel=kernel,
             n_steps=mutation_n_steps,
             **kwargs,

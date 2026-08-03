@@ -8,18 +8,17 @@ import numpy as np
 from ..._array_api import asarray, namespace
 from ..._typing import Array
 from ...transforms import ParticleTransform
-from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
-    call_log_prob,
 )
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import TemperedPosterior
     from ...state import ParticleState
+    from ...target import SequentialTarget
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class MiniPCNMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         *,
         n_steps: int = 1,
         step_fn: str = "tpcn",
@@ -41,7 +40,6 @@ class MiniPCNMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         **kwargs,
     ):
         super().__init__(
@@ -49,7 +47,6 @@ class MiniPCNMutation(MutationStep):
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
-            log_proposal_override_key=log_proposal_override_key,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -78,7 +75,7 @@ class MiniPCNMutation(MutationStep):
             original, log_det = self._inverse_transform(
                 backend_position, transform, context
             )
-            result = call_log_prob(self._log_prob_fn, original, context)
+            result, _ = self._evaluate_target(original, context)
             return self._combine_with_log_det(result, log_det)
 
         dims = latent_particles.shape[1] if latent_particles.ndim > 1 else 1
@@ -102,6 +99,7 @@ class MiniPCNMutation(MutationStep):
         new_particles, _ = self._inverse_transform(
             latent_last, transform, context
         )
+        _, final_evaluation = self._evaluate_target(new_particles, context)
 
         metadata = dict(state.metadata)
         metadata["minipcn_acceptance"] = float(
@@ -119,4 +117,8 @@ class MiniPCNMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.with_updates(particles=new_particles, metadata=metadata)
+        return state.replace_particles(
+            new_particles,
+            evaluation=final_evaluation,
+            metadata=metadata,
+        )

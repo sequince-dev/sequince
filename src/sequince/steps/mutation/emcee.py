@@ -11,20 +11,19 @@ import numpy as np
 from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
 from ...transforms import ParticleTransform
-from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
     as_scalar_log_prob,
     as_vector_log_prob,
-    call_log_prob,
 )
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import TemperedPosterior
     from ...state import ParticleState
+    from ...target import SequentialTarget
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +117,7 @@ class EmceeMutation(MutationStep):
     ----------
     log_prob_fn
         Function to compute the log-probability of a particle position, or a
-        `TemperedPosterior` instance.
+        `SequentialTarget` instance.
     n_steps
         Number of emcee steps to perform.
     move
@@ -139,7 +138,7 @@ class EmceeMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         *,
         n_steps: int = 1,
         move: Any = None,
@@ -147,7 +146,6 @@ class EmceeMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         **kwargs,
     ):
         import emcee
@@ -157,7 +155,6 @@ class EmceeMutation(MutationStep):
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
-            log_proposal_override_key=log_proposal_override_key,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -206,7 +203,7 @@ class EmceeMutation(MutationStep):
                 original, log_det = self._inverse_transform(
                     backend_positions, transform, context
                 )
-                result = call_log_prob(self._log_prob_fn, original, context)
+                result, _ = self._evaluate_target(original, context)
                 result = self._combine_with_log_det(result, log_det)
                 return as_vector_log_prob(result, backend_positions.shape[0])
 
@@ -223,7 +220,7 @@ class EmceeMutation(MutationStep):
                 original, log_det = self._inverse_transform(
                     backend_position, transform, context
                 )
-                result = call_log_prob(self._log_prob_fn, original, context)
+                result, _ = self._evaluate_target(original, context)
                 result = self._combine_with_log_det(result, log_det)
                 return as_scalar_log_prob(result)
 
@@ -258,6 +255,7 @@ class EmceeMutation(MutationStep):
         new_particles, _ = self._inverse_transform(
             latent_result, transform, context
         )
+        _, final_evaluation = self._evaluate_target(new_particles, context)
 
         metadata = dict(state.metadata)
         metadata["emcee_acceptance"] = float(
@@ -274,4 +272,8 @@ class EmceeMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.with_updates(particles=new_particles, metadata=metadata)
+        return state.replace_particles(
+            new_particles,
+            evaluation=final_evaluation,
+            metadata=metadata,
+        )
