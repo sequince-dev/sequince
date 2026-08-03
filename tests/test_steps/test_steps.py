@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pytest
@@ -32,11 +32,12 @@ from sequince.steps.resampling import (
 from sequince.steps.weighting import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
+    IncrementalWeighting,
     LogLikelihoodWeighting,
     TemperedWeighting,
     evolving_target_ess_ratio,
 )
-from sequince.target import AnnealedTarget, TargetEvaluation
+from sequince.target import SequentialTarget, TargetEvaluation
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -193,10 +194,10 @@ def test_tempered_weighting_reuses_attached_evaluation(
     assert calls == {"prior": 1, "likelihood": 1}
 
 
-def test_tempered_weighting_accepts_a_general_annealed_target(
+def test_incremental_weighting_accepts_a_general_sequential_target(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
-    class LinearTarget(AnnealedTarget):
+    class LinearTarget(SequentialTarget):
         def evaluate(
             self,
             particles,
@@ -230,15 +231,22 @@ def test_tempered_weighting_accepts_a_general_annealed_target(
     context = context_factory(metadata={"temperature": 0.0})
     initial_log_weights = particle_state.log_weights.copy()
 
-    updated = FixedTemperedWeighting(
-        LinearTarget(),
-        temperature_increment=0.25,
+    target = LinearTarget()
+    invalid_tempered_target: Any = target
+    with pytest.raises(TypeError, match="log_increment_fn must be callable"):
+        FixedTemperedWeighting(
+            invalid_tempered_target,
+            temperature_increment=0.25,
+        )
+
+    updated = IncrementalWeighting(
+        target,
         normalize_after=False,
     )(particle_state, context, rng)
 
     np.testing.assert_allclose(
         updated.log_weights,
-        initial_log_weights + 0.25 * particle_state.particles[:, 0],
+        initial_log_weights + particle_state.particles[:, 0],
     )
     assert updated.evaluation is not None
     assert updated.evaluation.components.keys() == {"base", "increment"}

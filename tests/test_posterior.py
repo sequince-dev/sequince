@@ -13,16 +13,16 @@ from sequince.posterior import (
 from sequince.proposals import FlowProposal
 from sequince.result import SMCResult
 from sequince.state import ParticleState
-from sequince.target import AnnealedTarget, TargetEvaluation
+from sequince.target import TargetEvaluation, TemperedTarget
 
 
-def test_tempered_posterior_implements_annealed_target() -> None:
+def test_tempered_posterior_implements_tempered_target() -> None:
     target = TemperedPosterior(
         log_prior=lambda particles: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles: np.zeros(particles.shape[0]),
     )
 
-    assert isinstance(target, AnnealedTarget)
+    assert isinstance(target, TemperedTarget)
 
 
 def test_targets_receive_distinct_automatic_evaluation_ids() -> None:
@@ -85,7 +85,7 @@ def test_target_replaces_evaluation_from_another_target(
         )
 
 
-def test_tempered_posterior_accepts_proposal_distribution_object(
+def test_annealed_posterior_accepts_proposal_distribution_object(
     context_factory,
 ) -> None:
     class QuadraticProposal:
@@ -189,6 +189,7 @@ def test_target_evaluation_selects_and_serializes() -> None:
             "score": np.array([5.0, 6.0]),
         },
         target_id="target-a",
+        evaluation_key="stage-a",
     )
     proposed = TargetEvaluation(
         components={
@@ -197,6 +198,7 @@ def test_target_evaluation_selects_and_serializes() -> None:
             "score": np.array([50.0, 60.0]),
         },
         target_id="target-a",
+        evaluation_key="stage-a",
     )
 
     selected = current.select(proposed, np.array([True, False]))
@@ -206,6 +208,7 @@ def test_target_evaluation_selects_and_serializes() -> None:
     np.testing.assert_allclose(restored["log_likelihood"], [30.0, 4.0])
     np.testing.assert_allclose(restored["score"], [50.0, 6.0])
     assert restored.target_id == "target-a"
+    assert restored.evaluation_key == "stage-a"
 
 
 def test_target_evaluation_rejects_combining_different_targets() -> None:
@@ -221,6 +224,24 @@ def test_target_evaluation_rejects_combining_different_targets() -> None:
     with pytest.raises(ValueError, match="different targets"):
         current.select(proposed, np.array([True, False]))
     with pytest.raises(ValueError, match="different targets"):
+        TargetEvaluation.concatenate([current, proposed])
+
+
+def test_target_evaluation_rejects_combining_different_stages() -> None:
+    current = TargetEvaluation(
+        components={"value": np.array([1.0, 2.0])},
+        target_id="target-a",
+        evaluation_key="stage-a",
+    )
+    proposed = TargetEvaluation(
+        components={"value": np.array([3.0, 4.0])},
+        target_id="target-a",
+        evaluation_key="stage-b",
+    )
+
+    with pytest.raises(ValueError, match="different target stages"):
+        current.select(proposed, np.array([True, False]))
+    with pytest.raises(ValueError, match="different target stages"):
         TargetEvaluation.concatenate([current, proposed])
 
 
