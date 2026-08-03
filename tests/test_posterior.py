@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from sequince.posterior import (
     PosteriorEvaluation,
@@ -129,6 +130,33 @@ def test_posterior_evaluation_selects_and_serializes() -> None:
     np.testing.assert_allclose(restored.log_prior, [10.0, 2.0])
     np.testing.assert_allclose(restored.log_likelihood, [30.0, 4.0])
     np.testing.assert_allclose(restored.auxiliary["score"], [50.0, 6.0])
+
+
+def test_posterior_evaluation_rejects_different_particle_count(
+    context_factory,
+) -> None:
+    posterior = TemperedPosterior(
+        log_prior=lambda particles, context: np.zeros(particles.shape[0]),
+        log_likelihood=lambda particles, context: np.zeros(particles.shape[0]),
+    )
+    evaluation = posterior.evaluate(
+        np.zeros((2, 1)),
+        context_factory(),
+    )
+    particles = np.zeros((3, 1))
+    context = context_factory(metadata={"temperature": 0.5})
+
+    with pytest.raises(ValueError, match="2 entries.*3 particles"):
+        posterior.log_prob(particles, context, evaluation=evaluation)
+    with pytest.raises(ValueError, match="2 entries.*3 particles"):
+        posterior.log_increment(particles, context, evaluation=evaluation)
+    with pytest.raises(ValueError, match="2 entries.*3 particles"):
+        posterior.refresh(
+            particles,
+            evaluation,
+            context,
+            components={"log_likelihood"},
+        )
 
 
 def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:

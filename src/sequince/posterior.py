@@ -49,6 +49,16 @@ class PosteriorEvaluation:
                 "Posterior evaluation arrays must have the same leading dimension."
             )
 
+    def validate_for(self, particles: Array) -> None:
+        """Validate that this evaluation has one entry per supplied particle."""
+        n_particles = 1 if particles.ndim == 1 else particles.shape[0]
+        if self.log_prior.shape[0] != n_particles:
+            raise ValueError(
+                "Posterior evaluation has "
+                f"{self.log_prior.shape[0]} entries but received "
+                f"{n_particles} particles."
+            )
+
     def copy(self) -> "PosteriorEvaluation":
         """Return a detached copy preserving array backends."""
         xp = namespace(self.log_prior)
@@ -261,6 +271,7 @@ class TemperedPosterior:
                 context,
                 log_proposal_override=log_proposal_override,
             )
+        evaluation.validate_for(particles)
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             if particles.ndim == 1:
@@ -297,6 +308,7 @@ class TemperedPosterior:
                 context,
                 log_proposal_override=log_proposal_override,
             )
+        evaluation.validate_for(particles)
         beta = float(context.metadata.get("temperature", 0.0))
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
@@ -354,6 +366,7 @@ class TemperedPosterior:
         log_proposal_override: LogProposalLike | None = None,
     ) -> PosteriorEvaluation:
         """Reevaluate selected components for unchanged particles."""
+        evaluation.validate_for(particles)
         allowed = {"log_prior", "log_likelihood", "log_proposal"}
         unknown = set(components).difference(allowed)
         if unknown:
