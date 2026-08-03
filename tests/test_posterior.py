@@ -25,6 +25,66 @@ def test_tempered_posterior_implements_annealed_target() -> None:
     assert isinstance(target, AnnealedTarget)
 
 
+def test_targets_receive_distinct_automatic_evaluation_ids() -> None:
+    first = TemperedPosterior(
+        log_prior=lambda particles: np.zeros(particles.shape[0]),
+        log_likelihood=lambda particles: np.zeros(particles.shape[0]),
+    )
+    second = TemperedPosterior(
+        log_prior=first.log_prior,
+        log_likelihood=first.log_likelihood,
+    )
+
+    assert len(first.evaluation_id) == 32
+    assert first.evaluation_id != second.evaluation_id
+
+
+def test_target_replaces_evaluation_from_another_target(
+    context_factory,
+    caplog,
+) -> None:
+    calls = {"first": 0, "second": 0}
+
+    def likelihood(name, value):
+        def evaluate(particles, context):
+            calls[name] += 1
+            return np.full(particles.shape[0], value)
+
+        return evaluate
+
+    first = TemperedPosterior(
+        log_prior=lambda particles: np.zeros(particles.shape[0]),
+        log_likelihood=likelihood("first", 1.0),
+    )
+    second = TemperedPosterior(
+        log_prior=lambda particles: np.zeros(particles.shape[0]),
+        log_likelihood=likelihood("second", 2.0),
+    )
+    particles = np.zeros((3, 1))
+    context = context_factory(metadata={"temperature": 0.5})
+
+    first_evaluation = first.evaluate(particles, context)
+    with caplog.at_level("DEBUG", logger="sequince.target"):
+        second_evaluation = second.prepare_evaluation(
+            particles,
+            context,
+            evaluation=first_evaluation,
+        )
+
+    assert calls == {"first": 1, "second": 1}
+    assert second_evaluation.target_id == second.evaluation_id
+    np.testing.assert_allclose(second_evaluation["log_likelihood"], 2.0)
+    assert "Discarding evaluation from target" in caplog.text
+    assert first.evaluation_id in caplog.text
+    assert second.evaluation_id in caplog.text
+    with pytest.raises(ValueError, match="different target"):
+        second.log_prob(
+            particles,
+            context,
+            evaluation=first_evaluation,
+        )
+
+
 def test_tempered_posterior_accepts_proposal_distribution_object(
     context_factory,
 ) -> None:
@@ -128,6 +188,7 @@ def test_target_evaluation_selects_and_serializes() -> None:
             "log_likelihood": np.array([3.0, 4.0]),
             "score": np.array([5.0, 6.0]),
         },
+        target_id="target-a",
     )
     proposed = TargetEvaluation(
         components={
@@ -135,6 +196,7 @@ def test_target_evaluation_selects_and_serializes() -> None:
             "log_likelihood": np.array([30.0, 40.0]),
             "score": np.array([50.0, 60.0]),
         },
+        target_id="target-a",
     )
 
     selected = current.select(proposed, np.array([True, False]))
@@ -143,6 +205,23 @@ def test_target_evaluation_selects_and_serializes() -> None:
     np.testing.assert_allclose(restored["log_prior"], [10.0, 2.0])
     np.testing.assert_allclose(restored["log_likelihood"], [30.0, 4.0])
     np.testing.assert_allclose(restored["score"], [50.0, 6.0])
+    assert restored.target_id == "target-a"
+
+
+def test_target_evaluation_rejects_combining_different_targets() -> None:
+    current = TargetEvaluation(
+        components={"value": np.array([1.0, 2.0])},
+        target_id="target-a",
+    )
+    proposed = TargetEvaluation(
+        components={"value": np.array([3.0, 4.0])},
+        target_id="target-b",
+    )
+
+    with pytest.raises(ValueError, match="different targets"):
+        current.select(proposed, np.array([True, False]))
+    with pytest.raises(ValueError, match="different targets"):
+        TargetEvaluation.concatenate([current, proposed])
 
 
 def test_target_evaluation_rejects_different_particle_count(
