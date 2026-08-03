@@ -11,6 +11,7 @@ from ..stats import (
 )
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
+from .context import LOG_PROPOSAL_OVERRIDE_KEY
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -87,13 +88,15 @@ def _weights_as_1d_array(
 
 def _resolve_increment_fn(
     increment: IncrementFn | "TemperedPosterior",
+    *,
+    log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
 ) -> IncrementFn:
     if hasattr(increment, "log_increment"):
         posterior = increment  # type: ignore[assignment]
 
         def _wrapped(particles: Array, context: StepContext) -> Array | float:
             log_proposal_override = context.metadata.get(
-                "log_proposal_override"
+                log_proposal_override_key
             )
             # type: ignore[attr-defined]
             return posterior.log_increment(  # type: ignore[union-attr]
@@ -172,8 +175,12 @@ class BaseTemperedStep(SMCStep):
         log_increment_fn: IncrementFn | "TemperedPosterior",
         *,
         normalize_after: bool = True,
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
-        self._log_increment_fn = _resolve_increment_fn(log_increment_fn)
+        self._log_increment_fn = _resolve_increment_fn(
+            log_increment_fn,
+            log_proposal_override_key=log_proposal_override_key,
+        )
         self._normalize_after = normalize_after
 
     def initialize_metadata(
@@ -214,8 +221,13 @@ class TemperedWeighting(BaseTemperedStep):
         *,
         normalize_after: bool = True,
         clip_temperature: tuple[float, float] | None = None,
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
-        super().__init__(log_increment_fn, normalize_after=normalize_after)
+        super().__init__(
+            log_increment_fn,
+            normalize_after=normalize_after,
+            log_proposal_override_key=log_proposal_override_key,
+        )
         self._schedule = temperature_schedule
         self._clip = clip_temperature
 
@@ -287,10 +299,15 @@ class FixedTemperedWeighting(BaseTemperedStep):
         *,
         temperature_increment: float,
         normalize_after: bool = True,
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         if temperature_increment < 0.0:
             raise ValueError("temperature_increment must be non-negative.")
-        super().__init__(log_increment_fn, normalize_after=normalize_after)
+        super().__init__(
+            log_increment_fn,
+            normalize_after=normalize_after,
+            log_proposal_override_key=log_proposal_override_key,
+        )
         self._temperature_increment = temperature_increment
 
     def apply(
@@ -384,6 +401,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         normalize_after: bool = True,
         max_bisection_iter: int = 30,
         criterion: Literal["ess", "cess"] = "ess",
+        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         if not callable(target_ess_ratio) and not (
             0.0 < target_ess_ratio <= 1.0
@@ -394,7 +412,11 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         if criterion not in {"ess", "cess"}:
             raise ValueError("criterion must be either 'ess' or 'cess'.")
 
-        super().__init__(log_increment_fn, normalize_after=normalize_after)
+        super().__init__(
+            log_increment_fn,
+            normalize_after=normalize_after,
+            log_proposal_override_key=log_proposal_override_key,
+        )
 
         self._target_ess_ratio = target_ess_ratio
         self._max_temperature = max_temperature
