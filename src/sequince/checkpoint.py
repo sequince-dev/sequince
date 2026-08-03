@@ -298,6 +298,7 @@ class SMCCheckpoint:
     rng_state: dict[str, Any] | None = None
     history: tuple[ParticleState, ...] | None = None
     observation: Any = None
+    initial_state: ParticleState | None = None
     version: int = CHECKPOINT_VERSION
 
     @classmethod
@@ -332,6 +333,11 @@ class SMCCheckpoint:
             rng_state=None if rng is None else resolve_rng(rng).state_dict(),
             history=history,
             observation=copy.deepcopy(context.observation),
+            initial_state=(
+                None
+                if result.initial_state is None
+                else result.initial_state.copy()
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -351,6 +357,11 @@ class SMCCheckpoint:
                 else [item.to_dict() for item in self.history]
             ),
             "observation": copy.deepcopy(self.observation),
+            "initial_state": (
+                None
+                if self.initial_state is None
+                else self.initial_state.to_dict()
+            ),
         }
 
     @classmethod
@@ -400,6 +411,13 @@ class SMCCheckpoint:
             raise TypeError(
                 "SMCCheckpoint 'history' must be a sequence or None."
             )
+        initial_state_payload = payload.get("initial_state")
+        if initial_state_payload is not None and not isinstance(
+            initial_state_payload, Mapping
+        ):
+            raise TypeError(
+                "SMCCheckpoint 'initial_state' must be a mapping or None."
+            )
         next_iteration = int(payload["next_iteration"])
         next_observation_index = int(payload["next_observation_index"])
         if next_iteration < 0 or next_observation_index < 0:
@@ -428,6 +446,13 @@ class SMCCheckpoint:
                 )
             ),
             observation=copy.deepcopy(payload.get("observation")),
+            initial_state=(
+                None
+                if initial_state_payload is None
+                else ParticleState.from_dict(
+                    copy.deepcopy(initial_state_payload)
+                )
+            ),
             version=version,
         )
 
@@ -450,7 +475,11 @@ class SMCCheckpoint:
             metadata=copy.deepcopy(self.metadata),
             outputs=copy.deepcopy(self.outputs),
         )
-        return SMCResult(states=states, context=context)
+        return SMCResult(
+            states=states,
+            context=context,
+            initial_state=self.initial_state,
+        )
 
     def save_pickle(
         self,

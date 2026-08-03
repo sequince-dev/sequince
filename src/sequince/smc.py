@@ -31,6 +31,7 @@ class SMCRuntime:
 
     state: ParticleState
     produced_states: list[ParticleState]
+    initial_state: ParticleState | None
     t: int
     next_observation_index: int
     shared_context: dict[str, Any]
@@ -159,8 +160,9 @@ class SequentialMonteCarlo:
                     "run() requires either initial_state or runtime."
                 )
             runtime = SMCRuntime(
-                state=initial_state,
+                state=initial_state.copy(),
                 produced_states=[],
+                initial_state=initial_state.copy(),
                 t=0,
                 next_observation_index=0,
                 shared_context=dict(shared_context or {}),
@@ -271,7 +273,11 @@ class SequentialMonteCarlo:
                     state.log_evidence,
                 )
             produced_states.append(state)
-            result = SMCResult(states=list(produced_states), context=context)
+            result = SMCResult(
+                states=list(produced_states),
+                context=context,
+                initial_state=runtime.initial_state,
+            )
 
             for callback in self._callbacks:
                 callback_name = getattr(
@@ -322,7 +328,11 @@ class SequentialMonteCarlo:
         )
         if context is None or not produced_states:
             raise ValueError("SMC run produced no states.")
-        return SMCResult(states=list(produced_states), context=context)
+        return SMCResult(
+            states=list(produced_states),
+            context=context,
+            initial_state=runtime.initial_state,
+        )
 
     def resume_from(
         self,
@@ -347,6 +357,11 @@ class SequentialMonteCarlo:
         return SMCRuntime(
             state=state,
             produced_states=[item.copy() for item in history],
+            initial_state=(
+                None
+                if checkpoint_obj.initial_state is None
+                else checkpoint_obj.initial_state.copy()
+            ),
             t=checkpoint_obj.next_iteration,
             next_observation_index=checkpoint_obj.next_observation_index,
             shared_context=dict(shared_context or {}),

@@ -125,6 +125,9 @@ def _assert_results_equal(
     assert len(left.states) == len(right.states)
     for left_state, right_state in zip(left.states, right.states):
         _assert_states_equal(left_state, right_state)
+    assert (left.initial_state is None) == (right.initial_state is None)
+    if left.initial_state is not None and right.initial_state is not None:
+        _assert_states_equal(left.initial_state, right.initial_state)
     assert left.context.t == right.context.t
     assert (
         left.context.next_observation_index
@@ -202,7 +205,11 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
     state = particle_state.with_updates(
         metadata={"temperature": 0.5, "nested": {"value": [1, 2, 3]}}
     )
-    result = SMCResult(states=[particle_state, state], context=context)
+    result = SMCResult(
+        states=[particle_state, state],
+        context=context,
+        initial_state=particle_state,
+    )
     rng = np.random.default_rng(123)
     rng.normal(size=3)
 
@@ -217,6 +224,7 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
 
     _assert_states_equal(checkpoint.state, restored.state)
     _assert_results_equal(checkpoint.result(), restored.result())
+    assert restored.initial_state is not None
     assert checkpoint.metadata == restored.metadata
     assert checkpoint.outputs == restored.outputs
     assert restored.observation == {"batch": 2}
