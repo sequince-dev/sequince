@@ -244,12 +244,23 @@ class TemperedPosterior:
     def log_increment(
         self,
         particles: Array,
-        evaluation: PosteriorEvaluation,
         context: "StepContext",
         *,
+        evaluation: PosteriorEvaluation | None = None,
         log_proposal_override: LogProposalLike | None = None,
     ) -> float | Any:
-        """Return the log-weight increment required by the tempering step."""
+        """Return the log-weight increment required by the tempering step.
+
+        When ``evaluation`` is omitted, all posterior components are evaluated
+        from ``particles``. Supplying a matching evaluation avoids recomputing
+        those components.
+        """
+        if evaluation is None:
+            evaluation = self.evaluate(
+                particles,
+                context,
+                log_proposal_override=log_proposal_override,
+            )
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             if particles.ndim == 1:
@@ -269,12 +280,23 @@ class TemperedPosterior:
     def log_prob(
         self,
         particles: Array,
-        evaluation: PosteriorEvaluation,
         context: "StepContext",
         *,
+        evaluation: PosteriorEvaluation | None = None,
         log_proposal_override: LogProposalLike | None = None,
     ) -> float | Any:
-        """Return the tempered log posterior evaluated at the current β."""
+        """Return the tempered log posterior evaluated at the current β.
+
+        When ``evaluation`` is omitted, all posterior components are evaluated
+        from ``particles``. Supplying a matching evaluation avoids recomputing
+        those components.
+        """
+        if evaluation is None:
+            evaluation = self.evaluate(
+                particles,
+                context,
+                log_proposal_override=log_proposal_override,
+            )
         beta = float(context.metadata.get("temperature", 0.0))
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
@@ -389,8 +411,8 @@ class TemperedPosterior:
             )
             return self.log_prob(
                 particles,
-                evaluation,
                 frozen_context,
+                evaluation=evaluation,
                 log_proposal_override=log_proposal_override,
             )
 

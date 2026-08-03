@@ -126,8 +126,8 @@ class MutationStep(SMCStep):
         return (
             self._posterior.log_prob(
                 particles,
-                evaluation,
                 context,
+                evaluation=evaluation,
                 log_proposal_override=log_proposal_override,
             ),
             evaluation,

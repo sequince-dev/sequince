@@ -43,7 +43,7 @@ def test_tempered_posterior_accepts_proposal_distribution_object(
     context = context_factory(metadata={"temperature": 0.25})
 
     evaluation = posterior.evaluate(particles, context)
-    values = posterior.log_prob(particles, evaluation, context)
+    values = posterior.log_prob(particles, context, evaluation=evaluation)
 
     expected = 0.75 * np.array([0.0, -1.0]) + 0.25 * np.array([1.0, 1.0])
     assert np.allclose(values, expected)
@@ -76,10 +76,39 @@ def test_posterior_evaluation_refreshes_only_requested_components(
         context,
         components={"log_likelihood"},
     )
-    posterior.log_increment(particles, refreshed, context)
-    posterior.log_prob(particles, refreshed, context)
+    posterior.log_increment(particles, context, evaluation=refreshed)
+    posterior.log_prob(particles, context, evaluation=refreshed)
 
     assert calls == {"prior": 1, "likelihood": 2, "proposal": 1}
+
+
+def test_tempered_posterior_evaluates_directly_from_particles(
+    context_factory,
+) -> None:
+    calls = {"prior": 0, "likelihood": 0}
+
+    def log_prior(particles, context):
+        calls["prior"] += 1
+        return np.full(particles.shape[0], -1.0)
+
+    def log_likelihood(particles, context):
+        calls["likelihood"] += 1
+        return np.full(particles.shape[0], -2.0)
+
+    posterior = TemperedPosterior(log_prior, log_likelihood)
+    particles = np.zeros((3, 1))
+    context = context_factory(metadata={"temperature": 0.5})
+
+    values = posterior.log_prob(particles, context)
+
+    np.testing.assert_allclose(values, -2.0)
+    assert calls == {"prior": 1, "likelihood": 1}
+
+    calls.update(prior=0, likelihood=0)
+    increments = posterior.log_increment(particles, context)
+
+    np.testing.assert_allclose(increments, -2.0)
+    assert calls == {"prior": 1, "likelihood": 1}
 
 
 def test_posterior_evaluation_selects_and_serializes() -> None:
@@ -107,7 +136,7 @@ def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
         def __init__(self, shift: float = 0.75) -> None:
             self.xp: Any = np
             self.shift = shift
-            self.fitted_particles = None
+            self.fitted_particles: Any = None
 
         def fit(self, particles, context=None, **kwargs: Any) -> "DummyFlow":
             self.fitted_particles = np.asarray(particles, dtype=float).copy()

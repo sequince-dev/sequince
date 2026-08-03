@@ -265,8 +265,8 @@ class BaseTemperedStep(SMCStep):
         return (
             self._posterior.log_increment(
                 state.particles,
-                evaluation,
                 context,
+                evaluation=evaluation,
                 log_proposal_override=log_proposal_override,
             ),
             state,

@@ -226,7 +226,9 @@ def test_tempered_weighting_can_refresh_only_likelihood(
     )
 
     assert calls == {"prior": 1, "likelihood": 2}
-    np.testing.assert_allclose(updated.evaluation.log_likelihood, 2.0)
+    evaluation = updated.evaluation
+    assert evaluation is not None
+    np.testing.assert_allclose(evaluation.log_likelihood, 2.0)
 
 
 def test_evolving_target_ess_ratio_uses_clipped_temperature_progress() -> None:
@@ -413,9 +415,9 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
         def log_increment(
             self,
             particles: np.ndarray,
-            evaluation,
             context: StepContext,
             *,
+            evaluation=None,
             log_proposal_override=None,
         ) -> np.ndarray:
             context.metadata["custom_increment_called"] = True

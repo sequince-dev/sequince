@@ -319,8 +319,8 @@ class WasteFreeResampleMove(SMCStep):
                 )
             values = self._posterior.log_prob(
                 particles,
-                evaluation,
                 context,
+                evaluation=evaluation,
                 log_proposal_override=override,
             )
         arr = asarray(values, xp=xp, like=particles)
