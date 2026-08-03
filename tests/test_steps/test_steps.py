@@ -205,7 +205,6 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
             *,
             components=None,
             evaluation=None,
-            **kwargs,
         ):
             requested = (
                 {"base", "increment"} if components is None else components
@@ -217,13 +216,11 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
                 values["increment"] = particles[:, 0]
             return TargetEvaluation(values)
 
-        def log_increment(
-            self, particles, context, *, evaluation=None, **kwargs
-        ):
+        def log_increment(self, particles, context, *, evaluation=None):
             evaluation = evaluation or self.evaluate(particles, context)
             return evaluation["increment"]
 
-        def log_prob(self, particles, context, *, evaluation=None, **kwargs):
+        def log_prob(self, particles, context, *, evaluation=None):
             evaluation = evaluation or self.evaluate(particles, context)
             beta = float(context.metadata.get("temperature", 0.0))
             return evaluation["base"] + beta * evaluation["increment"]
@@ -478,18 +475,17 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
             context: StepContext,
             *,
             evaluation=None,
-            log_proposal_override=None,
-            **kwargs,
         ) -> np.ndarray:
             context.metadata["custom_increment_called"] = True
             context.metadata["received_proposal_override"] = (
-                log_proposal_override
+                context.metadata.get(self.log_proposal_override_key)
             )
             return np.full(particles.shape[0], 2.0)
 
     posterior = CustomPosterior(
         log_prior=lambda particles, context: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles, context: np.ones(particles.shape[0]),
+        log_proposal_override_key="custom_proposal_override",
     )
 
     def proposal_override(particles):
@@ -505,7 +501,6 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
         posterior,
         temperature_increment=0.25,
         normalize_after=False,
-        log_proposal_override_key="custom_proposal_override",
     )
 
     updated = step(particle_state, context, rng)
