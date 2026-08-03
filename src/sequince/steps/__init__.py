@@ -8,9 +8,14 @@ from .context import (
 from .control import ContinueWhile
 from .log import LoggingStep
 from .mutation import (
+    AdaptiveMaskedGaussianRandomWalk,
+    BlockedMetropolisHastingsMutation,
     EmceeMutation,
+    MaskedGaussianRandomWalk,
+    MetropolisBlock,
     MetropolisHastingsMutation,
     MiniPCNMutation,
+    MutateIfResampled,
 )
 from .nested import NestedSMCStep
 from .proposal import AdaptGaussianProposal
@@ -34,6 +39,8 @@ from .weighting import (
 )
 
 __all__ = [
+    "AdaptiveMaskedGaussianRandomWalk",
+    "BlockedMetropolisHastingsMutation",
     "StepContext",
     "LOG_PROPOSAL_OVERRIDE_KEY",
     "SMC_TRANSFORMATION_KEY",
@@ -43,8 +50,11 @@ __all__ = [
     "SMCTransformation",
     "TransformationStep",
     "EmceeMutation",
+    "MaskedGaussianRandomWalk",
     "MetropolisHastingsMutation",
+    "MetropolisBlock",
     "MiniPCNMutation",
+    "MutateIfResampled",
     "NestedSMCStep",
     "AdaptGaussianProposal",
     "MultinomialResampling",

@@ -366,6 +366,12 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         Criterion used when selecting the temperature increment. ``"ess"``
         targets the ESS ratio after weighting. ``"cess"`` targets the
         conditional ESS ratio induced by the proposed incremental weights.
+
+    Notes
+    -----
+    The returned particle state and current step context record
+    ``temperature``, ``temperature_delta``, ``ess_ratio``, and ``cess_ratio``.
+    Active updates also record ``target_ess_ratio``.
     """
 
     def __init__(
@@ -406,14 +412,24 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         current_temp = context.metadata.get("temperature", 0.0)
         remaining = self._max_temperature - current_temp
         if remaining <= 0.0:
+            ess_ratio = ess_ratio_from_log_weights(state.log_weights)
+            metadata = dict(state.metadata)
+            metadata.update(
+                temperature=current_temp,
+                temperature_delta=0.0,
+                ess_ratio=ess_ratio,
+                cess_ratio=1.0,
+            )
             context.metadata["temperature"] = current_temp
             context.metadata["temperature_delta"] = 0.0
+            context.metadata["ess_ratio"] = ess_ratio
+            context.metadata["cess_ratio"] = 1.0
             logger.debug(
                 "AdaptiveTemperedWeighting already at max temperature %.3f; requesting immediate stop.",
                 self._max_temperature,
             )
             context.request_stop_immediately()
-            return state
+            return state.with_updates(metadata=metadata)
 
         xp = namespace(state.log_weights)
         log_increments = call_with_optional_context(
@@ -439,9 +455,19 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             )
 
         new_log_weights = state.log_weights + delta * increments
+        new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
+        new_cess_ratio = cess_ratio_from_log_weights_and_increments(
+            state.log_weights,
+            delta * increments,
+        )
         metadata = dict(state.metadata)
-        metadata["temperature"] = current_temp + delta
-        metadata["target_ess_ratio"] = target_ess_ratio
+        metadata.update(
+            temperature=current_temp + delta,
+            temperature_delta=delta,
+            target_ess_ratio=target_ess_ratio,
+            ess_ratio=new_ess_ratio,
+            cess_ratio=new_cess_ratio,
+        )
 
         updated_state = state.with_updates(
             log_weights=new_log_weights, metadata=metadata
@@ -452,7 +478,8 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         context.metadata["temperature"] = metadata["temperature"]
         context.metadata["temperature_delta"] = delta
         context.metadata["target_ess_ratio"] = target_ess_ratio
-        new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
+        context.metadata["ess_ratio"] = new_ess_ratio
+        context.metadata["cess_ratio"] = new_cess_ratio
         logger.debug(
             "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
             "target %s ratio=%.4f, ESS ratio=%.4f.",
