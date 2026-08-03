@@ -204,12 +204,7 @@ class MetropolisHastingsMutation(MutationStep):
         metadata["metropolis_hastings_acceptance_by_step"] = acceptance_by_step
         metadata["metropolis_hastings_steps"] = self._n_steps
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
-                xp.stack(chain, axis=0),
-                transform,
-                context,
-                like=state.particles,
-            )
+            metadata["mutation_chains"] = xp.stack(chain, axis=0)
 
         context.metadata["metropolis_hastings_acceptance"] = acceptance
         context.metadata["metropolis_hastings_acceptance_by_step"] = (

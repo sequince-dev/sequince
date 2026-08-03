@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from orng import ArrayRNG
 
+from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import (
@@ -28,6 +29,27 @@ def test_emcee_mutation_runs_single_step(
     assert mutated.particles.shape == particle_state.particles.shape
     assert "emcee_acceptance" in mutated.metadata
     assert mutated.metadata["emcee_steps"] == 1
+
+
+def test_emcee_mutation_evaluates_final_population(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    posterior = TemperedPosterior(
+        log_prior=lambda particles: -np.sum(particles**2, axis=-1),
+        log_likelihood=lambda particles: np.sum(particles, axis=-1),
+    )
+    context = context_factory(metadata={"temperature": 1.0})
+
+    mutated = EmceeMutation(posterior, n_steps=1)(particle_state, context, rng)
+
+    assert mutated.evaluation is not None
+    expected = posterior.evaluate(mutated.particles, context)
+    np.testing.assert_allclose(
+        mutated.evaluation.log_prior, expected.log_prior
+    )
+    np.testing.assert_allclose(
+        mutated.evaluation.log_likelihood, expected.log_likelihood
+    )
 
 
 def test_emcee_mutation_uses_supplied_rng(

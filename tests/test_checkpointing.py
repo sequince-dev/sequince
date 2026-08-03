@@ -136,20 +136,7 @@ def _assert_states_equal(left: ParticleState, right: ParticleState) -> None:
                 left.evaluation.log_proposal,
                 right.evaluation.log_proposal,
             )
-    assert left.metadata.keys() == right.metadata.keys()
-    for key in left.metadata:
-        left_value = left.metadata[key]
-        right_value = right.metadata[key]
-        if isinstance(left_value, np.ndarray) or isinstance(
-            right_value, np.ndarray
-        ):
-            np.testing.assert_allclose(
-                left_value,
-                right_value,
-                equal_nan=True,
-            )
-        else:
-            assert left_value == right_value
+    assert left.metadata == right.metadata
 
 
 def _assert_results_equal(

@@ -463,10 +463,6 @@ def test_systematic_resampling_skips_when_not_required(
     step = SystematicResampling(ess_threshold=0.2, always_resample=False)
     result = step(normalized, context, rng)
     assert result is normalized  # no resampling expected
-    assert result.metadata["ess_before_resampling"] == pytest.approx(
-        normalized.effective_sample_size()
-    )
-    assert result.metadata["resampled"] is False
 
 
 @pytest.mark.parametrize("resampled", [False, True])

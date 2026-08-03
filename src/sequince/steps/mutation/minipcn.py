@@ -67,23 +67,17 @@ class MiniPCNMutation(MutationStep):
         from minipcn import Sampler
 
         xp = namespace(state.particles)
-        self._evaluation_cache.clear()
-        self._cache_evaluation(state.particles, state.evaluation)
         transform = self._prepare_transform(state.particles, context)
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
-        cached_particles, _ = self._inverse_transform(
-            latent_particles, transform, context
-        )
-        self._cache_evaluation(cached_particles, state.evaluation)
 
         def log_prob_fn(position):
             backend_position = asarray(position, xp=xp, like=latent_particles)
             original, log_det = self._inverse_transform(
                 backend_position, transform, context
             )
-            result, _ = self._evaluate_target_cached(original, context)
+            result, _ = self._evaluate_target(original, context)
             return self._combine_with_log_det(result, log_det)
 
         dims = latent_particles.shape[1] if latent_particles.ndim > 1 else 1
@@ -107,11 +101,7 @@ class MiniPCNMutation(MutationStep):
         new_particles, _ = self._inverse_transform(
             latent_last, transform, context
         )
-        final_evaluation = self._cached_evaluation(new_particles)
-        if self._posterior is not None and final_evaluation is None:
-            raise RuntimeError(
-                "Final MiniPCN particles are missing posterior evaluations."
-            )
+        _, final_evaluation = self._evaluate_target(new_particles, context)
 
         metadata = dict(state.metadata)
         metadata["minipcn_acceptance"] = float(
@@ -121,12 +111,7 @@ class MiniPCNMutation(MutationStep):
         metadata["minipcn_steps"] = self._n_steps
 
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
-                chain[-self._n_steps :],
-                transform,
-                context,
-                like=latent_particles,
-            )
+            metadata["mutation_chains"] = chain
 
         acceptance = metadata["minipcn_acceptance"]
         logger.debug(
