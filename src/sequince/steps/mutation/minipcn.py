@@ -8,7 +8,7 @@ import numpy as np
 from ..._array_api import asarray, namespace
 from ..._typing import Array
 from ...transforms import ParticleTransform
-from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
@@ -40,7 +40,6 @@ class MiniPCNMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         **kwargs,
     ):
         super().__init__(
@@ -48,7 +47,6 @@ class MiniPCNMutation(MutationStep):
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
-            log_proposal_override_key=log_proposal_override_key,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")

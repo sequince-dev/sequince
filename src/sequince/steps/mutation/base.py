@@ -9,7 +9,7 @@ from ..._typing import Array
 from ...target import SequentialTarget
 from ...transforms import ParticleTransform
 from ..base import SMCStep
-from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from ..context import StepContext
 
 if TYPE_CHECKING:
     from ...target import TargetEvaluation
@@ -67,7 +67,6 @@ class MutationStep(SMCStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__()
         self._target = (
@@ -76,7 +75,6 @@ class MutationStep(SMCStep):
         self._log_prob_fn = (
             None if self._target is not None else cast(LogProbFn, log_prob_fn)
         )
-        self._log_proposal_override_key = log_proposal_override_key
         if not callable(transform_refit) and not isinstance(
             transform_refit, str
         ):
@@ -108,21 +106,16 @@ class MutationStep(SMCStep):
             if self._log_prob_fn is None:  # pragma: no cover
                 raise RuntimeError("Mutation target is not configured.")
             return call_log_prob(self._log_prob_fn, particles, context), None
-        log_proposal_override = context.metadata.get(
-            self._log_proposal_override_key
-        )
         evaluation = self._target.prepare_evaluation(
             particles,
             context,
             evaluation=evaluation,
-            log_proposal_override=log_proposal_override,
         )
         return (
             self._target.log_prob(
                 particles,
                 context,
                 evaluation=evaluation,
-                log_proposal_override=log_proposal_override,
             ),
             evaluation,
         )

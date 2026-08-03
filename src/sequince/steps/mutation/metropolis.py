@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable, cast
 from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
 from ...transforms import ParticleTransform
-from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
+from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
@@ -41,14 +41,12 @@ class MetropolisHastingsMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__(
             log_prob_fn,
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
-            log_proposal_override_key=log_proposal_override_key,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")

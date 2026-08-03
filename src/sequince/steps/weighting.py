@@ -15,7 +15,6 @@ from ..stats import (
 from ..target import SequentialTarget, TemperedTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
-from .context import LOG_PROPOSAL_OVERRIDE_KEY
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -236,7 +235,6 @@ class BaseTemperedStep(SMCStep):
         log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         normalize_after: bool = True,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         refresh_components: Collection[str] = (),
     ):
         self._target = (
@@ -250,7 +248,6 @@ class BaseTemperedStep(SMCStep):
             else _resolve_increment_fn(cast(IncrementFn, log_increment_fn))
         )
         self._normalize_after = normalize_after
-        self._log_proposal_override_key = log_proposal_override_key
         self._refresh_components = frozenset(refresh_components)
 
     def evaluate_log_increment(
@@ -270,15 +267,11 @@ class BaseTemperedStep(SMCStep):
                 ),
                 state,
             )
-        log_proposal_override = context.metadata.get(
-            self._log_proposal_override_key
-        )
         evaluation = self._target.prepare_evaluation(
             state.particles,
             context,
             evaluation=state.evaluation,
             refresh_components=self._refresh_components,
-            log_proposal_override=log_proposal_override,
         )
         if evaluation is not state.evaluation:
             state = state.with_updates(evaluation=evaluation)
@@ -287,7 +280,6 @@ class BaseTemperedStep(SMCStep):
                 state.particles,
                 context,
                 evaluation=evaluation,
-                log_proposal_override=log_proposal_override,
             ),
             state,
         )
@@ -330,13 +322,11 @@ class TemperedWeighting(BaseTemperedStep):
         *,
         normalize_after: bool = True,
         clip_temperature: tuple[float, float] | None = None,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         refresh_components: Collection[str] = (),
     ):
         super().__init__(
             log_increment_fn,
             normalize_after=normalize_after,
-            log_proposal_override_key=log_proposal_override_key,
             refresh_components=refresh_components,
         )
         self._schedule = temperature_schedule
@@ -406,7 +396,6 @@ class FixedTemperedWeighting(BaseTemperedStep):
         *,
         temperature_increment: float,
         normalize_after: bool = True,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         refresh_components: Collection[str] = (),
     ):
         if temperature_increment < 0.0:
@@ -414,7 +403,6 @@ class FixedTemperedWeighting(BaseTemperedStep):
         super().__init__(
             log_increment_fn,
             normalize_after=normalize_after,
-            log_proposal_override_key=log_proposal_override_key,
             refresh_components=refresh_components,
         )
         self._temperature_increment = temperature_increment
@@ -522,7 +510,6 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         normalize_after: bool = True,
         max_bisection_iter: int = 30,
         criterion: Literal["ess", "cess"] = "ess",
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         refresh_components: Collection[str] = (),
     ):
         if not callable(target_ess_ratio) and not (
@@ -545,7 +532,6 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         super().__init__(
             log_increment_fn,
             normalize_after=normalize_after,
-            log_proposal_override_key=log_proposal_override_key,
             refresh_components=refresh_components,
         )
 

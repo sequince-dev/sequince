@@ -11,7 +11,6 @@ from .._typing import Array
 from ..target import SequentialTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
-from .context import LOG_PROPOSAL_OVERRIDE_KEY
 from .mutation import (
     MutationKernel,
     evaluate_log_transition_ratio,
@@ -75,7 +74,6 @@ class WasteFreeResampleMove(SMCStep):
         *,
         resample_ancestors: bool = True,
         proposals_per_particle: int = 1,
-        log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         if isinstance(log_prob_fn, SequentialTarget):
             self._target: SequentialTarget | None = log_prob_fn
@@ -83,7 +81,6 @@ class WasteFreeResampleMove(SMCStep):
         else:
             self._target = None
             self._log_prob_fn = log_prob_fn
-        self._log_proposal_override_key = log_proposal_override_key
         has_correction = hasattr(kernel, "log_transition_ratio") or hasattr(
             kernel, "log_density"
         )
@@ -310,18 +307,15 @@ class WasteFreeResampleMove(SMCStep):
                 context,
             )
         else:
-            override = context.metadata.get(self._log_proposal_override_key)
-            if evaluation is None:
-                evaluation = self._target.evaluate(
-                    particles,
-                    context,
-                    log_proposal_override=override,
-                )
+            evaluation = self._target.prepare_evaluation(
+                particles,
+                context,
+                evaluation=evaluation,
+            )
             values = self._target.log_prob(
                 particles,
                 context,
                 evaluation=evaluation,
-                log_proposal_override=override,
             )
         arr = asarray(values, xp=xp, like=particles)
         if arr.ndim == 0:

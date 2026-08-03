@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Collection, Mapping
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from ._typing import Array
 from .proposals import ProposalDistribution
 from .state import ParticleState
-from .steps.context import StepContext
+from .steps.context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
 from .target import (
-    TargetComponent,
+    TargetComponentFn,
     TargetEvaluation,
     TemperedTarget,
     _evaluate_component,
@@ -24,12 +24,12 @@ if TYPE_CHECKING:
     from .result import SMCResult
     from .steps.context import StepContext
 
-LogProposalLike = TargetComponent | ProposalDistribution
+LogProposalLike = TargetComponentFn | ProposalDistribution
 
 
 def _resolve_log_proposal_fn(
     log_proposal: LogProposalLike | None,
-) -> TargetComponent | None:
+) -> TargetComponentFn | None:
     """Normalize proposal inputs to a log-density callable."""
     if log_proposal is None:
         return None
@@ -41,12 +41,6 @@ def _resolve_log_proposal_fn(
     raise TypeError(
         "log_proposal must be a callable, a ProposalDistribution, or None."
     )
-
-
-def _reject_unknown_options(options: Mapping[str, Any]) -> None:
-    if options:
-        names = ", ".join(sorted(options))
-        raise TypeError(f"Unknown target options: {names}.")
 
 
 @dataclass(frozen=True)
@@ -63,16 +57,19 @@ class TemperedPosterior(TemperedTarget):
         Optional callable or proposal object returning ``log q(x)``. When
         supplied the intermediate targets follow the bridge
         ``q(x)^{1-β} [p(x)L(x)]^{β}``.
+    log_proposal_override_key:
+        Context metadata key containing a runtime proposal override.
     """
 
-    log_prior: TargetComponent
-    log_likelihood: TargetComponent
+    log_prior: TargetComponentFn
+    log_likelihood: TargetComponentFn
     log_proposal: LogProposalLike | None = None
+    log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY
 
     def resolve_log_proposal(
         self,
         log_proposal_override: LogProposalLike | None = None,
-    ) -> TargetComponent | None:
+    ) -> TargetComponentFn | None:
         """Return the effective proposal callable for the current evaluation."""
         if log_proposal_override is not None:
             return _resolve_log_proposal_fn(log_proposal_override)
@@ -84,8 +81,6 @@ class TemperedPosterior(TemperedTarget):
         context: "StepContext",
         *,
         evaluation: TargetEvaluation | None = None,
-        log_proposal_override: LogProposalLike | None = None,
-        **kwargs: Any,
     ) -> float | Any:
         """Return the proposal or prior endpoint log density.
 
@@ -93,18 +88,11 @@ class TemperedPosterior(TemperedTarget):
         from ``particles``. Supplying a matching evaluation avoids recomputing
         those components.
         """
-        _reject_unknown_options(kwargs)
         if evaluation is None:
-            evaluation = self.evaluate(
-                particles,
-                context,
-                log_proposal_override=log_proposal_override,
-            )
-        self.validate_evaluation(
-            evaluation,
-            particles,
-            context,
-            log_proposal_override=log_proposal_override,
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
+        log_proposal_override = context.metadata.get(
+            self.log_proposal_override_key
         )
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
@@ -123,8 +111,6 @@ class TemperedPosterior(TemperedTarget):
         context: "StepContext",
         *,
         evaluation: TargetEvaluation | None = None,
-        log_proposal_override: LogProposalLike | None = None,
-        **kwargs: Any,
     ) -> float | Any:
         """Return the posterior endpoint log density.
 
@@ -132,19 +118,9 @@ class TemperedPosterior(TemperedTarget):
         from ``particles``. Supplying a matching evaluation avoids recomputing
         those components.
         """
-        _reject_unknown_options(kwargs)
         if evaluation is None:
-            evaluation = self.evaluate(
-                particles,
-                context,
-                log_proposal_override=log_proposal_override,
-            )
-        self.validate_evaluation(
-            evaluation,
-            particles,
-            context,
-            log_proposal_override=log_proposal_override,
-        )
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
         posterior = evaluation["log_prior"] + evaluation["log_likelihood"]
         if particles.ndim == 1:
             return float(posterior[0])
@@ -157,19 +133,10 @@ class TemperedPosterior(TemperedTarget):
         *,
         components: Collection[str] | None = None,
         evaluation: TargetEvaluation | None = None,
-        log_proposal_override: LogProposalLike | None = None,
-        log_proposal_values: Array | None = None,
-        **kwargs: Any,
     ) -> TargetEvaluation:
         """Evaluate or refresh posterior components for a particle population."""
-        _reject_unknown_options(kwargs)
         if evaluation is not None:
-            self.validate_evaluation(
-                evaluation,
-                particles,
-                context,
-                log_proposal_override=log_proposal_override,
-            )
+            self.validate_evaluation(evaluation, particles, context)
         allowed = {"log_prior", "log_likelihood", "log_proposal"}
         requested = allowed if components is None else set(components)
         unknown = requested.difference(allowed)
@@ -177,11 +144,9 @@ class TemperedPosterior(TemperedTarget):
             raise ValueError(
                 f"Unknown evaluation components: {sorted(unknown)}"
             )
-        log_proposal = self.resolve_log_proposal(log_proposal_override)
-        if log_proposal_values is not None and log_proposal is None:
-            raise ValueError(
-                "log_proposal_values were supplied without a proposal."
-            )
+        log_proposal = self.resolve_log_proposal(
+            context.metadata.get(self.log_proposal_override_key)
+        )
         values = {} if evaluation is None else dict(evaluation.components)
         if "log_prior" in requested:
             values["log_prior"] = _evaluate_component(
@@ -195,15 +160,11 @@ class TemperedPosterior(TemperedTarget):
             if log_proposal is None:
                 values.pop("log_proposal", None)
             else:
-                values["log_proposal"] = (
-                    log_proposal_values
-                    if log_proposal_values is not None
-                    else _evaluate_component(log_proposal, particles, context)
+                values["log_proposal"] = _evaluate_component(
+                    log_proposal, particles, context
                 )
         return self.bind_evaluation(
-            TargetEvaluation(components=values),
-            context,
-            log_proposal_override=log_proposal_override,
+            TargetEvaluation(components=values), context
         )
 
     def freeze_log_prob(
@@ -218,9 +179,15 @@ class TemperedPosterior(TemperedTarget):
             shared=copy.deepcopy(dict(context.shared)),
             metadata=copy.deepcopy(dict(context.metadata)),
         )
+        if log_proposal_override is not None:
+            frozen_context.metadata[self.log_proposal_override_key] = (
+                log_proposal_override
+            )
         log_prior = self.log_prior
         log_likelihood = self.log_likelihood
-        log_proposal = self.resolve_log_proposal(log_proposal_override)
+        log_proposal = self.resolve_log_proposal(
+            frozen_context.metadata.get(self.log_proposal_override_key)
+        )
 
         def _frozen_log_prob(particles):
             components = {
@@ -243,7 +210,6 @@ class TemperedPosterior(TemperedTarget):
                 particles,
                 frozen_context,
                 evaluation=evaluation,
-                log_proposal_override=log_proposal_override,
             )
 
         return _frozen_log_prob

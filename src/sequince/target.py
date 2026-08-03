@@ -18,11 +18,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TargetComponent = Callable[..., Array | float]
+TargetComponentFn = Callable[..., Array | float]
 
 
 def _evaluate_component(
-    component: TargetComponent,
+    component: TargetComponentFn,
     particles: Array,
     context: StepContext,
 ) -> Array:
@@ -242,7 +242,6 @@ class SequentialTarget(ABC):
     def evaluation_key(
         self,
         context: StepContext,
-        **kwargs: Any,
     ) -> Hashable | None:
         """Return the state of this target relevant to cached evaluations."""
         return None
@@ -251,25 +250,22 @@ class SequentialTarget(ABC):
         self,
         evaluation: TargetEvaluation,
         context: StepContext,
-        **kwargs: Any,
     ) -> bool:
         """Return whether an evaluation was produced by this target."""
         return (
             evaluation.target_id == self.evaluation_id
-            and evaluation.evaluation_key
-            == self.evaluation_key(context, **kwargs)
+            and evaluation.evaluation_key == self.evaluation_key(context)
         )
 
     def bind_evaluation(
         self,
         evaluation: TargetEvaluation,
         context: StepContext,
-        **kwargs: Any,
     ) -> TargetEvaluation:
         """Associate an evaluation returned by this target with its identity."""
         return evaluation.with_target(
             self.evaluation_id,
-            self.evaluation_key(context, **kwargs),
+            self.evaluation_key(context),
         )
 
     def prepare_evaluation(
@@ -279,12 +275,11 @@ class SequentialTarget(ABC):
         *,
         evaluation: TargetEvaluation | None = None,
         refresh_components: Collection[str] = (),
-        **kwargs: Any,
     ) -> TargetEvaluation:
         """Return a compatible evaluation, refreshing it when required."""
         if evaluation is None:
-            prepared = self.evaluate(particles, context, **kwargs)
-        elif not self.accepts_evaluation(evaluation, context, **kwargs):
+            prepared = self.evaluate(particles, context)
+        elif not self.accepts_evaluation(evaluation, context):
             logger.debug(
                 "Discarding evaluation from target %s at key %r; "
                 "current %s target is %s at key %r.",
@@ -292,9 +287,9 @@ class SequentialTarget(ABC):
                 evaluation.evaluation_key,
                 type(self).__name__,
                 self.evaluation_id,
-                self.evaluation_key(context, **kwargs),
+                self.evaluation_key(context),
             )
-            prepared = self.evaluate(particles, context, **kwargs)
+            prepared = self.evaluate(particles, context)
         elif refresh_components:
             evaluation.validate_for(particles)
             prepared = self.refresh(
@@ -302,24 +297,22 @@ class SequentialTarget(ABC):
                 evaluation,
                 context,
                 components=refresh_components,
-                **kwargs,
             )
         else:
             evaluation.validate_for(particles)
             return evaluation
         prepared.validate_for(particles)
-        return self.bind_evaluation(prepared, context, **kwargs)
+        return self.bind_evaluation(prepared, context)
 
     def validate_evaluation(
         self,
         evaluation: TargetEvaluation,
         particles: Array,
         context: StepContext,
-        **kwargs: Any,
     ) -> None:
         """Validate particle alignment and ownership of an evaluation."""
         evaluation.validate_for(particles)
-        if not self.accepts_evaluation(evaluation, context, **kwargs):
+        if not self.accepts_evaluation(evaluation, context):
             raise ValueError(
                 "Target evaluation belongs to a different target or stage."
             )
@@ -332,7 +325,6 @@ class SequentialTarget(ABC):
         *,
         components: Collection[str] | None = None,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> TargetEvaluation:
         """Evaluate or refresh named components of the target."""
 
@@ -343,7 +335,6 @@ class SequentialTarget(ABC):
         context: StepContext,
         *,
         components: Collection[str],
-        **kwargs: Any,
     ) -> TargetEvaluation:
         """Refresh named components for an unchanged particle population."""
         return self.evaluate(
@@ -351,7 +342,6 @@ class SequentialTarget(ABC):
             context,
             components=components,
             evaluation=evaluation,
-            **kwargs,
         )
 
     @abstractmethod
@@ -361,7 +351,6 @@ class SequentialTarget(ABC):
         context: StepContext,
         *,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> Array | float:
         """Return the current target log density."""
 
@@ -372,7 +361,6 @@ class SequentialTarget(ABC):
         context: StepContext,
         *,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> Array | float:
         """Return the log-weight increment to the next target."""
 
@@ -387,7 +375,6 @@ class TemperedTarget(SequentialTarget):
         context: StepContext,
         *,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> Array | float:
         """Return the initial endpoint log density."""
 
@@ -398,7 +385,6 @@ class TemperedTarget(SequentialTarget):
         context: StepContext,
         *,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> Array | float:
         """Return the terminal endpoint log density."""
 
@@ -408,27 +394,18 @@ class TemperedTarget(SequentialTarget):
         context: StepContext,
         *,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> Array | float:
         """Return the interpolated log density at the current temperature."""
         if evaluation is None:
-            evaluation = self.evaluate(particles, context, **kwargs)
-        self.validate_evaluation(evaluation, particles, context, **kwargs)
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
         beta = float(context.metadata.get("temperature", 0.0))
         if beta == 0.0:
-            return self.log_initial(
-                particles, context, evaluation=evaluation, **kwargs
-            )
+            return self.log_initial(particles, context, evaluation=evaluation)
         if beta == 1.0:
-            return self.log_terminal(
-                particles, context, evaluation=evaluation, **kwargs
-            )
-        initial = self.log_initial(
-            particles, context, evaluation=evaluation, **kwargs
-        )
-        terminal = self.log_terminal(
-            particles, context, evaluation=evaluation, **kwargs
-        )
+            return self.log_terminal(particles, context, evaluation=evaluation)
+        initial = self.log_initial(particles, context, evaluation=evaluation)
+        terminal = self.log_terminal(particles, context, evaluation=evaluation)
         return (1.0 - beta) * initial + beta * terminal
 
     def log_increment(
@@ -437,16 +414,11 @@ class TemperedTarget(SequentialTarget):
         context: StepContext,
         *,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> Array | float:
         """Return the terminal-to-initial log-density ratio."""
         if evaluation is None:
-            evaluation = self.evaluate(particles, context, **kwargs)
-        self.validate_evaluation(evaluation, particles, context, **kwargs)
-        initial = self.log_initial(
-            particles, context, evaluation=evaluation, **kwargs
-        )
-        terminal = self.log_terminal(
-            particles, context, evaluation=evaluation, **kwargs
-        )
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
+        initial = self.log_initial(particles, context, evaluation=evaluation)
+        terminal = self.log_terminal(particles, context, evaluation=evaluation)
         return terminal - initial
