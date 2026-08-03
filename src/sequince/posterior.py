@@ -121,7 +121,7 @@ class TemperedPosterior(AnnealedTarget):
                 context,
                 log_proposal_override=log_proposal_override,
             )
-        evaluation.validate_for(particles)
+        self.validate_evaluation(evaluation, particles)
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             if particles.ndim == 1:
@@ -160,7 +160,7 @@ class TemperedPosterior(AnnealedTarget):
                 context,
                 log_proposal_override=log_proposal_override,
             )
-        evaluation.validate_for(particles)
+        self.validate_evaluation(evaluation, particles)
         beta = float(context.metadata.get("temperature", 0.0))
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
@@ -200,7 +200,7 @@ class TemperedPosterior(AnnealedTarget):
         """Evaluate or refresh posterior components for a particle population."""
         _reject_unknown_options(kwargs)
         if evaluation is not None:
-            evaluation.validate_for(particles)
+            self.validate_evaluation(evaluation, particles)
         allowed = {"log_prior", "log_likelihood", "log_proposal"}
         requested = allowed if components is None else set(components)
         unknown = requested.difference(allowed)
@@ -229,7 +229,7 @@ class TemperedPosterior(AnnealedTarget):
                     if log_proposal_values is not None
                     else _evaluate(log_proposal, particles, context)
                 )
-        return TargetEvaluation(components=values)
+        return self.bind_evaluation(TargetEvaluation(components=values))
 
     def freeze_log_prob(
         self,
@@ -260,6 +260,7 @@ class TemperedPosterior(AnnealedTarget):
                 )
             evaluation = TargetEvaluation(
                 components=components,
+                target_id=self.evaluation_id,
             )
             return self.log_prob(
                 particles,

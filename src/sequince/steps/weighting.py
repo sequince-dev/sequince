@@ -244,22 +244,14 @@ class BaseTemperedStep(SMCStep):
         log_proposal_override = context.metadata.get(
             self._log_proposal_override_key
         )
-        evaluation = state.evaluation
-        if evaluation is None:
-            evaluation = self._target.evaluate(
-                state.particles,
-                context,
-                log_proposal_override=log_proposal_override,
-            )
-            state = state.with_updates(evaluation=evaluation)
-        elif self._refresh_components:
-            evaluation = self._target.refresh(
-                state.particles,
-                evaluation,
-                context,
-                components=self._refresh_components,
-                log_proposal_override=log_proposal_override,
-            )
+        evaluation = self._target.prepare_evaluation(
+            state.particles,
+            context,
+            evaluation=state.evaluation,
+            refresh_components=self._refresh_components,
+            log_proposal_override=log_proposal_override,
+        )
+        if evaluation is not state.evaluation:
             state = state.with_updates(evaluation=evaluation)
         return (
             self._target.log_increment(

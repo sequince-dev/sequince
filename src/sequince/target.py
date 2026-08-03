@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from ._array_api import copy as array_copy
 from ._array_api import namespace
@@ -13,11 +15,15 @@ if TYPE_CHECKING:
     from .steps.context import StepContext
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class TargetEvaluation:
     """Named, particle-aligned values evaluated by an annealed target."""
 
     components: Mapping[str, Array]
+    target_id: str | None = None
 
     def __post_init__(self) -> None:
         components = dict(self.components)
@@ -56,6 +62,12 @@ class TargetEvaluation:
                 f"{n_particles} particles."
             )
 
+    def with_target_id(self, target_id: str) -> TargetEvaluation:
+        """Return this evaluation associated with an annealed target."""
+        if self.target_id == target_id:
+            return self
+        return type(self)(components=self.components, target_id=target_id)
+
     def copy(self) -> TargetEvaluation:
         """Return a detached copy preserving array backends."""
         return type(self)(
@@ -63,6 +75,7 @@ class TargetEvaluation:
                 key: array_copy(value, xp=namespace(value))
                 for key, value in self.components.items()
             },
+            target_id=self.target_id,
         )
 
     def take(self, indices: Array) -> TargetEvaluation:
@@ -71,6 +84,7 @@ class TargetEvaluation:
             components={
                 key: value[indices] for key, value in self.components.items()
             },
+            target_id=self.target_id,
         )
 
     @classmethod
@@ -84,6 +98,9 @@ class TargetEvaluation:
         component_keys = items[0].components.keys()
         if any(item.components.keys() != component_keys for item in items[1:]):
             raise ValueError("Target evaluations have different components.")
+        target_id = items[0].target_id
+        if any(item.target_id != target_id for item in items[1:]):
+            raise ValueError("Target evaluations belong to different targets.")
         return cls(
             components={
                 key: namespace(items[0][key]).concat(
@@ -91,6 +108,7 @@ class TargetEvaluation:
                 )
                 for key in component_keys
             },
+            target_id=target_id,
         )
 
     def select(
@@ -101,6 +119,8 @@ class TargetEvaluation:
         """Select proposed values for accepted particles."""
         if self.components.keys() != proposed.components.keys():
             raise ValueError("Target evaluations have different components.")
+        if self.target_id != proposed.target_id:
+            raise ValueError("Target evaluations belong to different targets.")
 
         def choose(current: Array, candidate: Array) -> Array:
             xp = namespace(current, candidate, accepted)
@@ -117,10 +137,14 @@ class TargetEvaluation:
                 key: choose(value, proposed[key])
                 for key, value in self.components.items()
             },
+            target_id=self.target_id,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"components": dict(self.components)}
+        return {
+            "components": dict(self.components),
+            "target_id": self.target_id,
+        }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> TargetEvaluation:
@@ -129,11 +153,83 @@ class TargetEvaluation:
             raise TypeError(
                 "Target evaluation payload must contain a component mapping."
             )
-        return cls(components=dict(components))
+        target_id = payload.get("target_id")
+        if target_id is not None and not isinstance(target_id, str):
+            raise TypeError("Target evaluation target_id must be a string.")
+        return cls(components=dict(components), target_id=target_id)
 
 
 class AnnealedTarget(ABC):
     """Interface for targets following a geometric annealing path."""
+
+    _evaluation_id: str
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> AnnealedTarget:
+        instance = super().__new__(cls)
+        object.__setattr__(instance, "_evaluation_id", uuid4().hex)
+        return instance
+
+    @property
+    def evaluation_id(self) -> str:
+        """Opaque identity used to validate cached target evaluations."""
+        return self._evaluation_id
+
+    def accepts_evaluation(self, evaluation: TargetEvaluation) -> bool:
+        """Return whether an evaluation was produced by this target."""
+        return evaluation.target_id == self.evaluation_id
+
+    def bind_evaluation(
+        self, evaluation: TargetEvaluation
+    ) -> TargetEvaluation:
+        """Associate an evaluation returned by this target with its identity."""
+        return evaluation.with_target_id(self.evaluation_id)
+
+    def prepare_evaluation(
+        self,
+        particles: Array,
+        context: StepContext,
+        *,
+        evaluation: TargetEvaluation | None = None,
+        refresh_components: Collection[str] = (),
+        **kwargs: Any,
+    ) -> TargetEvaluation:
+        """Return a compatible evaluation, refreshing it when required."""
+        if evaluation is None:
+            prepared = self.evaluate(particles, context, **kwargs)
+        elif not self.accepts_evaluation(evaluation):
+            logger.debug(
+                "Discarding evaluation from target %s; current %s target is %s.",
+                evaluation.target_id,
+                type(self).__name__,
+                self.evaluation_id,
+            )
+            prepared = self.evaluate(particles, context, **kwargs)
+        elif refresh_components:
+            evaluation.validate_for(particles)
+            prepared = self.refresh(
+                particles,
+                evaluation,
+                context,
+                components=refresh_components,
+                **kwargs,
+            )
+        else:
+            evaluation.validate_for(particles)
+            return evaluation
+        prepared.validate_for(particles)
+        return self.bind_evaluation(prepared)
+
+    def validate_evaluation(
+        self,
+        evaluation: TargetEvaluation,
+        particles: Array,
+    ) -> None:
+        """Validate particle alignment and ownership of an evaluation."""
+        evaluation.validate_for(particles)
+        if not self.accepts_evaluation(evaluation):
+            raise ValueError(
+                "Target evaluation belongs to a different target."
+            )
 
     @abstractmethod
     def evaluate(

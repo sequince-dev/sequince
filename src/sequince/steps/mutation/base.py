@@ -111,12 +111,12 @@ class MutationStep(SMCStep):
         log_proposal_override = context.metadata.get(
             self._log_proposal_override_key
         )
-        if evaluation is None:
-            evaluation = self._target.evaluate(
-                particles,
-                context,
-                log_proposal_override=log_proposal_override,
-            )
+        evaluation = self._target.prepare_evaluation(
+            particles,
+            context,
+            evaluation=evaluation,
+            log_proposal_override=log_proposal_override,
+        )
         return (
             self._target.log_prob(
                 particles,
