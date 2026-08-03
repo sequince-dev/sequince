@@ -21,7 +21,7 @@ from ._array_api import (
 from ._typing import Array
 
 if TYPE_CHECKING:
-    from .posterior import PosteriorEvaluation
+    from .target import TargetEvaluation
 
 
 @dataclass(init=False)
@@ -31,7 +31,7 @@ class ParticleState:
     particles: Array
     log_weights: Array
     log_evidence: float = 0.0
-    evaluation: PosteriorEvaluation | None = None
+    evaluation: TargetEvaluation | None = None
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
 
     def __init__(
@@ -39,7 +39,7 @@ class ParticleState:
         particles: Array,
         log_weights: Array | Real | None = None,
         log_evidence: float = 0.0,
-        evaluation: PosteriorEvaluation | None = None,
+        evaluation: TargetEvaluation | None = None,
         metadata: MutableMapping[str, Any] | None = None,
     ) -> None:
         if len(particles) == 0:
@@ -51,10 +51,10 @@ class ParticleState:
         self.metadata = dict(metadata or {})
         if (
             evaluation is not None
-            and evaluation.log_prior.shape[0] != particles.shape[0]
+            and evaluation.n_particles != particles.shape[0]
         ):
             raise ValueError(
-                "Posterior evaluation must match the particle population."
+                "Target evaluation must match the particle population."
             )
 
         if log_weights is None or isinstance(log_weights, Real):
@@ -135,7 +135,7 @@ class ParticleState:
         self,
         particles: Array,
         *,
-        evaluation: PosteriorEvaluation | None = None,
+        evaluation: TargetEvaluation | None = None,
         **updates: Any,
     ) -> "ParticleState":
         """Replace particles and explicitly provide their evaluation."""
@@ -203,9 +203,9 @@ class ParticleState:
             )
         evaluation_payload = payload.get("evaluation")
         if evaluation_payload is not None:
-            from .posterior import PosteriorEvaluation
+            from .target import TargetEvaluation
 
-            evaluation = PosteriorEvaluation.from_dict(evaluation_payload)
+            evaluation = TargetEvaluation.from_dict(evaluation_payload)
         else:
             evaluation = None
         return cls(

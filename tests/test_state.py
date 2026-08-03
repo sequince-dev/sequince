@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sequince.posterior import PosteriorEvaluation
 from sequince.state import ParticleState
+from sequince.target import TargetEvaluation
 
 
 def test_copy_creates_independent_state(particle_state: ParticleState) -> None:
@@ -44,10 +44,12 @@ def test_weights_handles_non_finite_log_norm() -> None:
     assert np.allclose(weights, np.full(3, 1 / 3))
 
 
-def test_state_resamples_and_serializes_posterior_evaluation() -> None:
-    evaluation = PosteriorEvaluation(
-        log_prior=np.array([1.0, 2.0, 3.0]),
-        log_likelihood=np.array([4.0, 5.0, 6.0]),
+def test_state_resamples_and_serializes_target_evaluation() -> None:
+    evaluation = TargetEvaluation(
+        components={
+            "log_prior": np.array([1.0, 2.0, 3.0]),
+            "log_likelihood": np.array([4.0, 5.0, 6.0]),
+        }
     )
     state = ParticleState(
         particles=np.array([[1.0], [2.0], [3.0]]),
@@ -58,8 +60,9 @@ def test_state_resamples_and_serializes_posterior_evaluation() -> None:
     restored = ParticleState.from_dict(resampled.to_dict())
 
     np.testing.assert_allclose(restored.particles[:, 0], [3.0, 1.0, 3.0])
+    assert restored.evaluation is not None
     np.testing.assert_allclose(
-        restored.evaluation.log_likelihood,
+        restored.evaluation["log_likelihood"],
         [6.0, 4.0, 6.0],
     )
 

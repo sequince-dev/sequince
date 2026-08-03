@@ -16,8 +16,8 @@ from .kernels import MutationKernel, evaluate_log_transition_ratio
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import PosteriorEvaluation, TemperedPosterior
     from ...state import ParticleState
+    from ...target import AnnealedTarget, TargetEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class MetropolisHastingsMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
         kernel: MutationKernel | MutationKernelFactory,
         *,
         n_steps: int = 1,
@@ -93,8 +93,8 @@ class MetropolisHastingsMutation(MutationStep):
         latent_particles: Array,
         transform: ParticleTransform | None,
         context: StepContext,
-        evaluation: "PosteriorEvaluation | None" = None,
-    ) -> tuple[Array, "PosteriorEvaluation | None"]:
+        evaluation: "TargetEvaluation | None" = None,
+    ) -> tuple[Array, "TargetEvaluation | None"]:
         xp = namespace(latent_particles)
         original, log_det = self._inverse_transform(
             latent_particles, transform, context

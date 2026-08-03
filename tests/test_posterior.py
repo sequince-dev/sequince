@@ -7,13 +7,22 @@ import numpy as np
 import pytest
 
 from sequince.posterior import (
-    PosteriorEvaluation,
     TemperedPosterior,
     draw_additional_samples,
 )
 from sequince.proposals import FlowProposal
 from sequince.result import SMCResult
 from sequince.state import ParticleState
+from sequince.target import AnnealedTarget, TargetEvaluation
+
+
+def test_tempered_posterior_implements_annealed_target() -> None:
+    target = TemperedPosterior(
+        log_prior=lambda particles: np.zeros(particles.shape[0]),
+        log_likelihood=lambda particles: np.zeros(particles.shape[0]),
+    )
+
+    assert isinstance(target, AnnealedTarget)
 
 
 def test_tempered_posterior_accepts_proposal_distribution_object(
@@ -50,7 +59,7 @@ def test_tempered_posterior_accepts_proposal_distribution_object(
     assert np.allclose(values, expected)
 
 
-def test_posterior_evaluation_refreshes_only_requested_components(
+def test_target_evaluation_refreshes_only_requested_components(
     context_factory,
 ) -> None:
     calls = {"prior": 0, "likelihood": 0, "proposal": 0}
@@ -112,27 +121,31 @@ def test_tempered_posterior_evaluates_directly_from_particles(
     assert calls == {"prior": 1, "likelihood": 1}
 
 
-def test_posterior_evaluation_selects_and_serializes() -> None:
-    current = PosteriorEvaluation(
-        log_prior=np.array([1.0, 2.0]),
-        log_likelihood=np.array([3.0, 4.0]),
-        auxiliary={"score": np.array([5.0, 6.0])},
+def test_target_evaluation_selects_and_serializes() -> None:
+    current = TargetEvaluation(
+        components={
+            "log_prior": np.array([1.0, 2.0]),
+            "log_likelihood": np.array([3.0, 4.0]),
+            "score": np.array([5.0, 6.0]),
+        },
     )
-    proposed = PosteriorEvaluation(
-        log_prior=np.array([10.0, 20.0]),
-        log_likelihood=np.array([30.0, 40.0]),
-        auxiliary={"score": np.array([50.0, 60.0])},
+    proposed = TargetEvaluation(
+        components={
+            "log_prior": np.array([10.0, 20.0]),
+            "log_likelihood": np.array([30.0, 40.0]),
+            "score": np.array([50.0, 60.0]),
+        },
     )
 
     selected = current.select(proposed, np.array([True, False]))
-    restored = PosteriorEvaluation.from_dict(selected.to_dict())
+    restored = TargetEvaluation.from_dict(selected.to_dict())
 
-    np.testing.assert_allclose(restored.log_prior, [10.0, 2.0])
-    np.testing.assert_allclose(restored.log_likelihood, [30.0, 4.0])
-    np.testing.assert_allclose(restored.auxiliary["score"], [50.0, 6.0])
+    np.testing.assert_allclose(restored["log_prior"], [10.0, 2.0])
+    np.testing.assert_allclose(restored["log_likelihood"], [30.0, 4.0])
+    np.testing.assert_allclose(restored["score"], [50.0, 6.0])
 
 
-def test_posterior_evaluation_rejects_different_particle_count(
+def test_target_evaluation_rejects_different_particle_count(
     context_factory,
 ) -> None:
     posterior = TemperedPosterior(

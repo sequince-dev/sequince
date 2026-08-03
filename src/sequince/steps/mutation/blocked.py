@@ -16,8 +16,8 @@ from .metropolis import MetropolisHastingsMutation, MutationKernelFactory
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import TemperedPosterior
     from ...state import ParticleState
+    from ...target import AnnealedTarget
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
         blocks: tuple[MetropolisBlock, ...] | list[MetropolisBlock],
         *,
         transform: ParticleTransform | None = None,

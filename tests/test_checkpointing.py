@@ -117,24 +117,13 @@ def _assert_states_equal(left: ParticleState, right: ParticleState) -> None:
     assert left.log_evidence == pytest.approx(right.log_evidence)
     assert (left.evaluation is None) == (right.evaluation is None)
     if left.evaluation is not None and right.evaluation is not None:
-        np.testing.assert_allclose(
-            left.evaluation.log_prior,
-            right.evaluation.log_prior,
+        assert left.evaluation.components.keys() == (
+            right.evaluation.components.keys()
         )
-        np.testing.assert_allclose(
-            left.evaluation.log_likelihood,
-            right.evaluation.log_likelihood,
-        )
-        assert (left.evaluation.log_proposal is None) == (
-            right.evaluation.log_proposal is None
-        )
-        if (
-            left.evaluation.log_proposal is not None
-            and right.evaluation.log_proposal is not None
-        ):
+        for component in left.evaluation.components:
             np.testing.assert_allclose(
-                left.evaluation.log_proposal,
-                right.evaluation.log_proposal,
+                left.evaluation[component],
+                right.evaluation[component],
             )
     assert left.metadata == right.metadata
 

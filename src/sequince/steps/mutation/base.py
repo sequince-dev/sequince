@@ -6,12 +6,13 @@ import numpy as np
 
 from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
+from ...target import AnnealedTarget
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
 
 if TYPE_CHECKING:
-    from ...posterior import PosteriorEvaluation, TemperedPosterior
+    from ...target import TargetEvaluation
 
 LogProbFn = Callable[..., Array | float]
 PARTICLE_TRANSFORM_KEY = "particle_transform"
@@ -61,7 +62,7 @@ class MutationStep(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
         *,
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
@@ -69,16 +70,11 @@ class MutationStep(SMCStep):
         log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
         super().__init__()
-        self._posterior = (
-            log_prob_fn
-            if hasattr(log_prob_fn, "evaluate")
-            and hasattr(log_prob_fn, "log_prob")
-            else None
+        self._target = (
+            log_prob_fn if isinstance(log_prob_fn, AnnealedTarget) else None
         )
         self._log_prob_fn = (
-            None
-            if self._posterior is not None
-            else cast(LogProbFn, log_prob_fn)
+            None if self._target is not None else cast(LogProbFn, log_prob_fn)
         )
         self._log_proposal_override_key = log_proposal_override_key
         if not callable(transform_refit) and not isinstance(
@@ -106,9 +102,9 @@ class MutationStep(SMCStep):
         particles: Array,
         context: StepContext,
         *,
-        evaluation: "PosteriorEvaluation | None" = None,
-    ) -> tuple[Any, "PosteriorEvaluation | None"]:
-        if self._posterior is None:
+        evaluation: "TargetEvaluation | None" = None,
+    ) -> tuple[Any, "TargetEvaluation | None"]:
+        if self._target is None:
             if self._log_prob_fn is None:  # pragma: no cover
                 raise RuntimeError("Mutation target is not configured.")
             return call_log_prob(self._log_prob_fn, particles, context), None
@@ -116,13 +112,13 @@ class MutationStep(SMCStep):
             self._log_proposal_override_key
         )
         if evaluation is None:
-            evaluation = self._posterior.evaluate(
+            evaluation = self._target.evaluate(
                 particles,
                 context,
                 log_proposal_override=log_proposal_override,
             )
         return (
-            self._posterior.log_prob(
+            self._target.log_prob(
                 particles,
                 context,
                 evaluation=evaluation,

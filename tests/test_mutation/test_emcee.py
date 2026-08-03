@@ -45,10 +45,10 @@ def test_emcee_mutation_evaluates_final_population(
     assert mutated.evaluation is not None
     expected = posterior.evaluate(mutated.particles, context)
     np.testing.assert_allclose(
-        mutated.evaluation.log_prior, expected.log_prior
+        mutated.evaluation["log_prior"], expected["log_prior"]
     )
     np.testing.assert_allclose(
-        mutated.evaluation.log_likelihood, expected.log_likelihood
+        mutated.evaluation["log_likelihood"], expected["log_likelihood"]
     )
 
 

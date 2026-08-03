@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Collection
-from typing import TYPE_CHECKING, Any, Callable, Literal, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from .._array_api import asarray, logsumexp, namespace, to_numpy
 from .._typing import Array
@@ -12,6 +12,7 @@ from ..stats import (
     ess_from_log_weights,
     ess_ratio_from_log_weights,
 )
+from ..target import AnnealedTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 from .context import LOG_PROPOSAL_OVERRIDE_KEY
@@ -19,7 +20,6 @@ from .context import LOG_PROPOSAL_OVERRIDE_KEY
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ..posterior import TemperedPosterior
     from ..state import ParticleState
 
 
@@ -136,7 +136,7 @@ def _weights_as_1d_array(
 
 
 def _resolve_increment_fn(
-    increment: IncrementFn | "TemperedPosterior",
+    increment: IncrementFn | "AnnealedTarget",
 ) -> IncrementFn:
     if callable(increment):
         return increment
@@ -204,21 +204,20 @@ class BaseTemperedStep(SMCStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "TemperedPosterior",
+        log_increment_fn: IncrementFn | "AnnealedTarget",
         *,
         normalize_after: bool = True,
         log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
         refresh_components: Collection[str] = (),
     ):
-        self._posterior: TemperedPosterior | None = (
-            cast("TemperedPosterior", log_increment_fn)
-            if hasattr(log_increment_fn, "evaluate")
-            and hasattr(log_increment_fn, "log_increment")
+        self._target = (
+            log_increment_fn
+            if isinstance(log_increment_fn, AnnealedTarget)
             else None
         )
         self._log_increment_fn = (
             None
-            if self._posterior is not None
+            if self._target is not None
             else _resolve_increment_fn(log_increment_fn)
         )
         self._normalize_after = normalize_after
@@ -230,8 +229,8 @@ class BaseTemperedStep(SMCStep):
         state: ParticleState,
         context: StepContext,
     ) -> tuple[Array | float, ParticleState]:
-        """Return increments and attach a missing posterior evaluation."""
-        if self._posterior is None:
+        """Return increments and attach a missing target evaluation."""
+        if self._target is None:
             if self._log_increment_fn is None:  # pragma: no cover
                 raise RuntimeError("Tempering increment is not configured.")
             return (
@@ -247,14 +246,14 @@ class BaseTemperedStep(SMCStep):
         )
         evaluation = state.evaluation
         if evaluation is None:
-            evaluation = self._posterior.evaluate(
+            evaluation = self._target.evaluate(
                 state.particles,
                 context,
                 log_proposal_override=log_proposal_override,
             )
             state = state.with_updates(evaluation=evaluation)
         elif self._refresh_components:
-            evaluation = self._posterior.refresh(
+            evaluation = self._target.refresh(
                 state.particles,
                 evaluation,
                 context,
@@ -263,7 +262,7 @@ class BaseTemperedStep(SMCStep):
             )
             state = state.with_updates(evaluation=evaluation)
         return (
-            self._posterior.log_increment(
+            self._target.log_increment(
                 state.particles,
                 context,
                 evaluation=evaluation,
@@ -305,7 +304,7 @@ class TemperedWeighting(BaseTemperedStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "TemperedPosterior",
+        log_increment_fn: IncrementFn | "AnnealedTarget",
         temperature_schedule: TemperatureSchedule,
         *,
         normalize_after: bool = True,
@@ -382,7 +381,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "TemperedPosterior",
+        log_increment_fn: IncrementFn | "AnnealedTarget",
         *,
         temperature_increment: float,
         normalize_after: bool = True,
@@ -461,7 +460,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     Parameters
     ----------
     log_increment_fn:
-        A callable or ``TemperedPosterior`` providing the log-weight increments.
+        A callable or ``AnnealedTarget`` providing the log-weight increments.
     target_ess_ratio:
         The target ESS ratio (ESS / n) to achieve after weighting, or a
         callable that returns the target for the current temperature. The
@@ -493,7 +492,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "TemperedPosterior",
+        log_increment_fn: IncrementFn | "AnnealedTarget",
         *,
         target_ess_ratio: TargetESSRatio = 0.7,
         max_temperature: float = 1.0,

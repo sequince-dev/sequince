@@ -22,8 +22,8 @@ from .base import (
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import TemperedPosterior
     from ...state import ParticleState
+    from ...target import AnnealedTarget
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ class EmceeMutation(MutationStep):
     ----------
     log_prob_fn
         Function to compute the log-probability of a particle position, or a
-        `TemperedPosterior` instance.
+        `AnnealedTarget` instance.
     n_steps
         Number of emcee steps to perform.
     move
@@ -138,7 +138,7 @@ class EmceeMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
         *,
         n_steps: int = 1,
         move: Any = None,
