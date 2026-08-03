@@ -20,6 +20,7 @@ class StepContext:
     """Runtime context passed to each SMC step."""
 
     t: int
+    next_observation_index: int = 0
     observation: Any = None
     shared: SharedContext = field(default_factory=dict)
     """Dictionary for shared user-defined context across steps.

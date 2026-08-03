@@ -7,14 +7,17 @@ from sequince.state import ParticleState
 
 
 def test_copy_creates_independent_state(particle_state: ParticleState) -> None:
+    particle_state.metadata["nested"] = {"values": [1.0]}
     copied = particle_state.copy()
     copied.particles[0, 0] = 99.0
     copied.log_weights[0] = -5.0
     copied.metadata["temperature"] = 10.0
+    copied.metadata["nested"]["values"].append(2.0)
 
     assert not np.array_equal(copied.particles, particle_state.particles)
     assert not np.array_equal(copied.log_weights, particle_state.log_weights)
     assert particle_state.metadata["temperature"] == 0.0
+    assert particle_state.metadata["nested"] == {"values": [1.0]}
 
 
 def test_normalize_updates_log_weights_and_evidence(

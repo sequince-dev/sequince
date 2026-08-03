@@ -20,18 +20,19 @@ def resolve_rng(
     rng: RNGLike = None,
     *,
     backend: str | None = None,
-) -> RandomGenerator | np.random.Generator:
-    """Return the provided RNG or create an ``RandomGenerator`` for the requested backend."""
+) -> RandomGenerator:
+    """Return an ORNG generator for the supplied RNG-like value."""
     if isinstance(rng, RandomGenerator):
         return rng
     if isinstance(rng, np.random.Generator):
-        return rng
+        return RandomGenerator(backend="numpy", generator=rng)
     if isinstance(rng, int):
         return RandomGenerator(backend=backend or "numpy", seed=rng)
     if rng is None:
         return RandomGenerator(backend=backend or "numpy")
     raise TypeError(
-        "rng must be an RandomGenerator, numpy.random.Generator, an int seed, or None."
+        "rng must be an orng.RandomGenerator, numpy.random.Generator, "
+        "an int seed, or None."
     )
 
 
@@ -43,34 +44,31 @@ def call_with_optional_context(
     """Call fn with base_args and append context only if required."""
     signature = inspect.signature(fn)
     params = signature.parameters.values()
-
     positional = [
-        p
-        for p in params
-        if p.kind
+        parameter
+        for parameter in params
+        if parameter.kind
         in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         )
     ]
-    required = sum(1 for p in positional if p.default is inspect._empty)
-    if required > len(base_args):
-        return fn(*base_args, context)
-
-    has_varargs = any(
-        p.kind == inspect.Parameter.VAR_POSITIONAL for p in params
+    required = sum(
+        parameter.default is inspect._empty for parameter in positional
     )
-    if not has_varargs and len(base_args) > len(positional):
-        raise TypeError(
-            "Function cannot accept the provided number of positional arguments."
-        )
-
-    try:
+    has_varargs = any(
+        parameter.kind == inspect.Parameter.VAR_POSITIONAL
+        for parameter in params
+    )
+    max_positional = float("inf") if has_varargs else len(positional)
+    base_count = len(base_args)
+    if required <= base_count + 1 <= max_positional:
+        return fn(*base_args, context)
+    if required <= base_count <= max_positional:
         return fn(*base_args)
-    except TypeError:
-        if has_varargs or len(positional) > len(base_args):
-            return fn(*base_args, context)
-        raise
+    raise TypeError(
+        "Function cannot accept the provided positional arguments."
+    )
 
 
 def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:

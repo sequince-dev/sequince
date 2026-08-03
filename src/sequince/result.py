@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 from numpy.random import Generator as NumPyGenerator
@@ -11,13 +12,12 @@ from numpy.random import Generator as NumPyGenerator
 from ._array_api import asarray, namespace, to_numpy
 from ._typing import Array
 from .state import ParticleState
+from .steps.context import StepContext
 from .steps.nested import NESTED_SMC_OUTPUT_KEY
 from .utils import resolve_rng
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
-
-    from .steps.base import StepContext
 
 
 def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ._array_api import asarray, namespace
 from ._typing import Array
-from .flows import NormalizingFlow, clone_flow, flow_asarray
+from .flows import (
+    NormalizingFlow,
+    clone_flow,
+    flow_asarray,
+    flow_state_dict,
+    load_flow_state_dict,
+)
 
 if TYPE_CHECKING:
     from .steps.context import StepContext
@@ -61,6 +68,15 @@ class FlowProposal(ProposalDistribution):
         self._flow.fit(backend_particles, context=context)
         return self
 
+    def state_dict(self) -> dict[str, Any]:
+        return {"flow": flow_state_dict(self._flow)}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        flow_state = state.get("flow", {})
+        if not isinstance(flow_state, Mapping):
+            raise TypeError("FlowProposal state 'flow' must be a mapping.")
+        load_flow_state_dict(self._flow, flow_state)
+
     def log_prob(
         self,
         particles: Array,
@@ -88,6 +104,9 @@ class FlowProposal(ProposalDistribution):
             self._flow, "sample_and_log_prob", None
         )
         if callable(flow_sample_and_log_prob):
-            return flow_sample_and_log_prob(n_samples, context=context)
+            return flow_sample_and_log_prob(
+                n_samples,
+                context=context,
+            )
         samples = self.sample(n_samples, context=context)
         return samples, self.log_prob(samples, context=context)

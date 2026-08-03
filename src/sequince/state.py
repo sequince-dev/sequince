@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from numbers import Real
 from typing import Any, MutableMapping
@@ -60,7 +62,7 @@ class ParticleState:
             particles=array_copy(self.particles, xp=xp),
             log_weights=array_copy(self.log_weights, xp=xp),
             log_evidence=float(self.log_evidence),
-            metadata=dict(self.metadata),
+            metadata=copy.deepcopy(self.metadata),
         )
 
     def normalize(self) -> tuple["ParticleState", float]:
@@ -130,4 +132,36 @@ class ParticleState:
             log_weights=log_weights,
             log_evidence=self.log_evidence,
             metadata=dict(self.metadata, ancestors=indices),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a detached dictionary representation of this state."""
+        copied = self.copy()
+        return {
+            "particles": copied.particles,
+            "log_weights": copied.log_weights,
+            "log_evidence": copied.log_evidence,
+            "metadata": copied.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ParticleState":
+        """Reconstruct a state from :meth:`to_dict` output."""
+        if not isinstance(payload, Mapping):
+            raise TypeError("ParticleState payload must be a mapping.")
+        missing = {
+            key
+            for key in ("particles", "log_weights", "log_evidence", "metadata")
+            if key not in payload
+        }
+        if missing:
+            raise ValueError(
+                "ParticleState payload is missing required keys: "
+                + ", ".join(sorted(missing))
+            )
+        return cls(
+            particles=payload["particles"],
+            log_weights=payload["log_weights"],
+            log_evidence=float(payload["log_evidence"]),
+            metadata=copy.deepcopy(payload["metadata"]),
         )

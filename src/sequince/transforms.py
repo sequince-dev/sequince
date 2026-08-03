@@ -9,7 +9,13 @@ from typing import Any, Mapping, Sequence
 import array_api_extra as xpx
 
 from ._array_api import asarray, namespace, to_numpy
-from .flows import NormalizingFlow, clone_flow, flow_asarray
+from .flows import (
+    NormalizingFlow,
+    clone_flow,
+    flow_asarray,
+    flow_state_dict,
+    load_flow_state_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +156,15 @@ class FlowTransform(ParticleTransform):
             clone_flow(self._flow),
             fit_kwargs=self._fit_kwargs,
         )
+
+    def state_dict(self):
+        return {"flow": flow_state_dict(self._flow)}
+
+    def load_state_dict(self, state):
+        flow_state = state.get("flow", {})
+        if not isinstance(flow_state, Mapping):
+            raise TypeError("FlowTransform state 'flow' must be a mapping.")
+        load_flow_state_dict(self._flow, flow_state)
 
     def fit(self, particles, context=None):
         backend_particles = flow_asarray(self._flow, particles)
