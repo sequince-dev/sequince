@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
     from ...state import ParticleState
-    from ...target import AnnealedTarget, TargetEvaluation
+    from ...target import SequentialTarget, TargetEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class MetropolisHastingsMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         kernel: MutationKernel | MutationKernelFactory,
         *,
         n_steps: int = 1,

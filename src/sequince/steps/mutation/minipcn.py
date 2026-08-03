@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
     from ...state import ParticleState
-    from ...target import AnnealedTarget
+    from ...target import SequentialTarget
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class MiniPCNMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         *,
         n_steps: int = 1,
         step_fn: str = "tpcn",

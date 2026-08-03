@@ -11,12 +11,12 @@ from .metropolis import MetropolisHastingsMutation
 from .minipcn import MiniPCNMutation
 
 if TYPE_CHECKING:
-    from ...target import AnnealedTarget
+    from ...target import SequentialTarget
 
 
 def get_mutation_step(
     mutation: str | SMCStep | None,
-    target: "AnnealedTarget | Callable[..., Any]",
+    target: "SequentialTarget | Callable[..., Any]",
     transform: ParticleTransform | None = None,
     mutation_n_steps: int = 10,
     mutation_kwargs: dict[str, Any] | None = None,

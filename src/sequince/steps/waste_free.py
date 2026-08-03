@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._array_api import arange, asarray, full, namespace
 from .._typing import Array
-from ..target import AnnealedTarget
+from ..target import SequentialTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 from .context import LOG_PROPOSAL_OVERRIDE_KEY
@@ -55,7 +55,7 @@ class WasteFreeResampleMove(SMCStep):
     ----------
     log_prob_fn:
         Callable returning log probabilities of the tempered target, or an
-        object exposing a ``log_prob`` method (e.g. ``AnnealedTarget``).
+        object exposing a ``log_prob`` method (e.g. ``SequentialTarget``).
     kernel:
         Mutation kernel supplying forward and backward log densities.
     resample_ancestors:
@@ -70,15 +70,15 @@ class WasteFreeResampleMove(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Any] | AnnealedTarget,
+        log_prob_fn: Callable[..., Any] | SequentialTarget,
         kernel: MutationKernel | MutationKernelFactory,
         *,
         resample_ancestors: bool = True,
         proposals_per_particle: int = 1,
         log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
     ):
-        if isinstance(log_prob_fn, AnnealedTarget):
-            self._target: AnnealedTarget | None = log_prob_fn
+        if isinstance(log_prob_fn, SequentialTarget):
+            self._target: SequentialTarget | None = log_prob_fn
             self._log_prob_fn: Callable[..., Any] | None = None
         else:
             self._target = None

@@ -8,7 +8,7 @@ from .prebuilt_samplers import make_standard_bayesian_smc
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .state import ParticleState
-from .target import AnnealedTarget, TargetEvaluation
+from .target import SequentialTarget, TargetEvaluation, TemperedTarget
 
 try:
     __version__ = importlib.metadata.version("sequince")
@@ -22,7 +22,8 @@ __all__ = [
     "SequentialMonteCarlo",
     "MetaSequentialMonteCarlo",
     "SMCResult",
-    "AnnealedTarget",
+    "SequentialTarget",
+    "TemperedTarget",
     "TemperedPosterior",
     "TargetEvaluation",
     "make_standard_bayesian_smc",

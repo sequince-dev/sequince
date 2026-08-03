@@ -6,7 +6,7 @@ import numpy as np
 
 from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
-from ...target import AnnealedTarget
+from ...target import SequentialTarget
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from ..context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
@@ -62,7 +62,7 @@ class MutationStep(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         *,
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
@@ -71,7 +71,7 @@ class MutationStep(SMCStep):
     ):
         super().__init__()
         self._target = (
-            log_prob_fn if isinstance(log_prob_fn, AnnealedTarget) else None
+            log_prob_fn if isinstance(log_prob_fn, SequentialTarget) else None
         )
         self._log_prob_fn = (
             None if self._target is not None else cast(LogProbFn, log_prob_fn)

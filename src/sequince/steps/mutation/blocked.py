@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
     from ...state import ParticleState
-    from ...target import AnnealedTarget
+    from ...target import SequentialTarget
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "AnnealedTarget",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         blocks: tuple[MetropolisBlock, ...] | list[MetropolisBlock],
         *,
         transform: ParticleTransform | None = None,

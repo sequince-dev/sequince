@@ -34,6 +34,7 @@ from .waste_free import WasteFreeResampleMove
 from .weighting import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
+    IncrementalWeighting,
     LogLikelihoodWeighting,
     TemperedWeighting,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "StratifiedResampling",
     "SystematicResampling",
     "LogLikelihoodWeighting",
+    "IncrementalWeighting",
     "TemperedWeighting",
     "AdaptiveTemperedWeighting",
     "FixedTemperedWeighting",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Collection
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 from .._array_api import asarray, logsumexp, namespace, to_numpy
 from .._typing import Array
@@ -12,7 +12,7 @@ from ..stats import (
     ess_from_log_weights,
     ess_ratio_from_log_weights,
 )
-from ..target import AnnealedTarget
+from ..target import SequentialTarget, TemperedTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 from .context import LOG_PROPOSAL_OVERRIDE_KEY
@@ -136,28 +136,37 @@ def _weights_as_1d_array(
 
 
 def _resolve_increment_fn(
-    increment: IncrementFn | "AnnealedTarget",
+    increment: IncrementFn,
 ) -> IncrementFn:
     if callable(increment):
         return increment
     raise TypeError("log_increment_fn must be callable.")
 
 
-class LogLikelihoodWeighting(SMCStep):
-    """Increment log weights using a user-supplied log-likelihood function.
+class IncrementalWeighting(SMCStep):
+    """Apply a complete sequential-target log-weight increment.
 
-    The callable can have signature ``(particles,)`` or
-    ``(particles, context)``; the ``StepContext`` instance is
-    passed automatically when required.
+    A callable can have signature ``(particles,)`` or
+    ``(particles, context)``. A ``SequentialTarget`` supplies its current
+    complete increment and participates in evaluation caching.
     """
 
     def __init__(
         self,
-        log_likelihood_fn: Callable[..., Any],
+        log_increment_fn: IncrementFn | SequentialTarget,
         *,
         normalize_after: bool = True,
     ):
-        self._log_likelihood_fn = log_likelihood_fn
+        self._target = (
+            log_increment_fn
+            if isinstance(log_increment_fn, SequentialTarget)
+            else None
+        )
+        self._log_increment_fn = (
+            None
+            if self._target is not None
+            else _resolve_increment_fn(cast(IncrementFn, log_increment_fn))
+        )
         self._normalize_after = normalize_after
 
     def apply(
@@ -167,17 +176,33 @@ class LogLikelihoodWeighting(SMCStep):
         rng: "RandomGenerator",
     ) -> ParticleState:
         xp = namespace(state.log_weights)
-        log_like = call_with_optional_context(
-            self._log_likelihood_fn,
-            (state.particles,),
-            context,
-        )
+        if self._target is None:
+            if self._log_increment_fn is None:  # pragma: no cover
+                raise RuntimeError("Sequential increment is not configured.")
+            increment = call_with_optional_context(
+                self._log_increment_fn,
+                (state.particles,),
+                context,
+            )
+        else:
+            evaluation = self._target.prepare_evaluation(
+                state.particles,
+                context,
+                evaluation=state.evaluation,
+            )
+            increment = self._target.log_increment(
+                state.particles,
+                context,
+                evaluation=evaluation,
+            )
+            if evaluation is not state.evaluation:
+                state = state.with_updates(evaluation=evaluation)
         increments = _weights_as_1d_array(
-            log_like, xp=xp, like=state.log_weights
+            increment, xp=xp, like=state.log_weights
         )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
-                "Log-likelihood function must return one value per particle."
+                "Increment function must return one value per particle."
             )
 
         updated_state = state.with_updates(
@@ -186,11 +211,15 @@ class LogLikelihoodWeighting(SMCStep):
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
         logger.debug(
-            "LogLikelihoodWeighting: mean increment %.6f (normalize_after=%s).",
+            "IncrementalWeighting: mean increment %.6f (normalize_after=%s).",
             float(to_numpy(xp.sum(increments) / increments.shape[0])),
             self._normalize_after,
         )
         return updated_state
+
+
+class LogLikelihoodWeighting(IncrementalWeighting):
+    """Backward-compatible name for callable likelihood increments."""
 
 
 class BaseTemperedStep(SMCStep):
@@ -204,7 +233,7 @@ class BaseTemperedStep(SMCStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "AnnealedTarget",
+        log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         normalize_after: bool = True,
         log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY,
@@ -212,13 +241,13 @@ class BaseTemperedStep(SMCStep):
     ):
         self._target = (
             log_increment_fn
-            if isinstance(log_increment_fn, AnnealedTarget)
+            if isinstance(log_increment_fn, TemperedTarget)
             else None
         )
         self._log_increment_fn = (
             None
             if self._target is not None
-            else _resolve_increment_fn(log_increment_fn)
+            else _resolve_increment_fn(cast(IncrementFn, log_increment_fn))
         )
         self._normalize_after = normalize_after
         self._log_proposal_override_key = log_proposal_override_key
@@ -296,7 +325,7 @@ class TemperedWeighting(BaseTemperedStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "AnnealedTarget",
+        log_increment_fn: IncrementFn | "TemperedTarget",
         temperature_schedule: TemperatureSchedule,
         *,
         normalize_after: bool = True,
@@ -373,7 +402,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "AnnealedTarget",
+        log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         temperature_increment: float,
         normalize_after: bool = True,
@@ -452,7 +481,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     Parameters
     ----------
     log_increment_fn:
-        A callable or ``AnnealedTarget`` providing the log-weight increments.
+        A callable or ``TemperedTarget`` providing log-weight increments.
     target_ess_ratio:
         The target ESS ratio (ESS / n) to achieve after weighting, or a
         callable that returns the target for the current temperature. The
@@ -484,7 +513,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
     def __init__(
         self,
-        log_increment_fn: IncrementFn | "AnnealedTarget",
+        log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         target_ess_ratio: TargetESSRatio = 0.7,
         max_temperature: float = 1.0,
