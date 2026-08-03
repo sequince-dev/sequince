@@ -160,6 +160,7 @@ class PeriodicStep(SMCStep):
             raise TypeError("PeriodicStep state 'step' must be a mapping.")
         self.step.load_state_dict(nested_state)
 
+
 class RepeatStep(SMCStep):
     """Repeat a step or sequence of steps a fixed number of times."""
 
