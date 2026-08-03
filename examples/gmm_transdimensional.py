@@ -256,9 +256,10 @@ class GMMTemperedPosterior(TemperedPosterior):
         context: StepContext,
         *,
         evaluation=None,
-        log_proposal_override=None,
-        **kwargs,
     ) -> np.ndarray:
+        log_proposal_override = context.metadata.get(
+            self.log_proposal_override_key
+        )
         previous_components = context.metadata.get(
             "previous_active_components"
         )
@@ -274,8 +275,6 @@ class GMMTemperedPosterior(TemperedPosterior):
                 particles,
                 context,
                 evaluation=evaluation,
-                log_proposal_override=log_proposal_override,
-                **kwargs,
             )
 
         data = context.shared["data"]
@@ -313,9 +312,10 @@ class GMMTemperedPosterior(TemperedPosterior):
         context: StepContext,
         *,
         evaluation=None,
-        log_proposal_override=None,
-        **kwargs,
     ) -> np.ndarray:
+        log_proposal_override = context.metadata.get(
+            self.log_proposal_override_key
+        )
         previous_components = context.metadata.get(
             "previous_active_components"
         )
@@ -331,8 +331,6 @@ class GMMTemperedPosterior(TemperedPosterior):
                 particles,
                 context,
                 evaluation=evaluation,
-                log_proposal_override=log_proposal_override,
-                **kwargs,
             )
 
         data = context.shared["data"]
