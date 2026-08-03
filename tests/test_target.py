@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Collection
-from typing import Any
 
 import numpy as np
 
@@ -20,7 +19,7 @@ class DiscreteSequentialTarget(SequentialTarget):
     def __init__(self) -> None:
         self.calls = {"log_prob": 0, "log_increment": 0}
 
-    def evaluation_key(self, context, **kwargs: Any) -> int:
+    def evaluation_key(self, context) -> int:
         return int(context.metadata["stage"])
 
     def evaluate(
@@ -30,10 +29,9 @@ class DiscreteSequentialTarget(SequentialTarget):
         *,
         components: Collection[str] | None = None,
         evaluation: TargetEvaluation | None = None,
-        **kwargs: Any,
     ) -> TargetEvaluation:
         if evaluation is not None:
-            self.validate_evaluation(evaluation, particles, context, **kwargs)
+            self.validate_evaluation(evaluation, particles, context)
         allowed = {"log_prob", "log_increment"}
         requested = allowed if components is None else set(components)
         values = {} if evaluation is None else dict(evaluation.components)
@@ -45,7 +43,7 @@ class DiscreteSequentialTarget(SequentialTarget):
             self.calls["log_increment"] += 1
             values["log_increment"] = np.full(particles.shape[0], stage + 1)
         return self.bind_evaluation(
-            TargetEvaluation(components=values), context, **kwargs
+            TargetEvaluation(components=values), context
         )
 
     def log_prob(
@@ -54,11 +52,10 @@ class DiscreteSequentialTarget(SequentialTarget):
         context,
         *,
         evaluation=None,
-        **kwargs: Any,
     ):
         if evaluation is None:
-            evaluation = self.evaluate(particles, context, **kwargs)
-        self.validate_evaluation(evaluation, particles, context, **kwargs)
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
         return evaluation["log_prob"]
 
     def log_increment(
@@ -67,11 +64,10 @@ class DiscreteSequentialTarget(SequentialTarget):
         context,
         *,
         evaluation=None,
-        **kwargs: Any,
     ):
         if evaluation is None:
-            evaluation = self.evaluate(particles, context, **kwargs)
-        self.validate_evaluation(evaluation, particles, context, **kwargs)
+            evaluation = self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
         return evaluation["log_increment"]
 
 

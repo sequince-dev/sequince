@@ -119,6 +119,32 @@ def test_annealed_posterior_accepts_proposal_distribution_object(
     assert np.allclose(values, expected)
 
 
+def test_tempered_posterior_uses_configured_proposal_override_key(
+    context_factory,
+) -> None:
+    posterior = TemperedPosterior(
+        log_prior=lambda particles: np.zeros(particles.shape[0]),
+        log_likelihood=lambda particles: np.zeros(particles.shape[0]),
+        log_proposal=lambda particles: np.full(particles.shape[0], -1.0),
+        log_proposal_override_key="custom_proposal_override",
+    )
+    particles = np.zeros((3, 1))
+    context = context_factory(
+        metadata={
+            "custom_proposal_override": lambda particles: np.full(
+                particles.shape[0], -2.0
+            )
+        }
+    )
+
+    evaluation = posterior.evaluate(particles, context)
+
+    np.testing.assert_allclose(evaluation["log_proposal"], -2.0)
+    np.testing.assert_allclose(
+        posterior.log_initial(particles, context, evaluation=evaluation), -2.0
+    )
+
+
 def test_target_evaluation_refreshes_only_requested_components(
     context_factory,
 ) -> None:

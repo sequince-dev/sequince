@@ -106,13 +106,15 @@ def test_transformation_step_composes_proposal_distribution_density(
         log_prior=lambda particles: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles: np.zeros(particles.shape[0]),
         log_proposal=QuadraticProposal(),
+        log_proposal_override_key="transformed_log_proposal",
     )
     context = context_factory()
     step = TransformationStep(ScalingTransformation(), posterior=posterior)
 
     once_transformed = step(particle_state, context, rng)
     twice_transformed = step(once_transformed, context, rng)
-    transformed_log_proposal = context.metadata["log_proposal_override"]
+    transformed_log_proposal = context.metadata["transformed_log_proposal"]
+    assert "log_proposal_override" not in context.metadata
 
     base_particles = twice_transformed.particles / 4.0
     expected = -0.5 * np.sum(
