@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from orng import RandomGenerator
 
 from sequince._array_api import namespace
 from sequince.posterior import TemperedPosterior
@@ -16,25 +15,21 @@ from sequince.steps.base import StepContext
 def test_sequince_runs_with_array_backends(
     backend: str, backend_factory
 ) -> None:
-    out = backend_factory(backend)
-    xp, particles, log_weights, row_sum = out
+    case = backend_factory(backend)
+    xp = case.xp
+    particles = case.particles
     backend_ns = namespace(particles)
-
-    initial_state = ParticleState(
-        particles=particles,
-        log_weights=log_weights,
-    )
 
     smc, _, _ = make_standard_bayesian_smc(
         log_prior=lambda x, ctx: xp.zeros(x.shape[0], dtype=x.dtype),
-        log_likelihood=lambda x, ctx: -0.5 * row_sum(x**2),
+        log_likelihood=lambda x, ctx: -0.5 * case.row_sum(x**2),
         mutation="none",
     )
 
     results = smc.run(
-        initial_state,
+        case.state(),
         num_steps=1,
-        rng=RandomGenerator(backend=backend, seed=1234),
+        rng=case.rng(1234),
     )
 
     assert len(results) == 1
@@ -45,7 +40,7 @@ def test_sequince_runs_with_array_backends(
 
     samples = results.posterior_samples(
         n_samples=particles.shape[0],
-        rng=RandomGenerator(backend=backend, seed=4321),
+        rng=case.rng(4321),
     )
     assert samples.shape[0] == particles.shape[0]
     assert namespace(samples) is backend_ns

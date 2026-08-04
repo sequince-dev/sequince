@@ -141,27 +141,13 @@ def test_make_standard_bayesian_smc_validates_resampling_name() -> None:
         )
 
 
-def test_make_standard_bayesian_smc_accepts_proposal_distribution() -> None:
-    class ZeroProposal:
-        def log_prob(self, particles: np.ndarray, context=None) -> np.ndarray:
-            values = np.asarray(particles, dtype=float)
-            if values.ndim == 1:
-                values = values[:, np.newaxis]
-            return np.zeros(values.shape[0], dtype=float)
-
-        def sample(self, n_samples: int, context=None) -> np.ndarray:
-            return np.zeros((n_samples, 1), dtype=float)
-
-        def sample_and_log_prob(
-            self, n_samples: int, context=None
-        ) -> tuple[np.ndarray, np.ndarray]:
-            samples = self.sample(n_samples, context=context)
-            return samples, self.log_prob(samples, context=context)
-
+def test_make_standard_bayesian_smc_accepts_proposal_distribution(
+    analytic_proposal_factory,
+) -> None:
     _, posterior, _ = make_standard_bayesian_smc(
         _quadratic_log_prior,
         _zero_log_likelihood,
-        log_proposal=ZeroProposal(),
+        log_proposal=analytic_proposal_factory(n_dim=1),
     )
     particles = np.array([[0.0], [1.0]], dtype=float)
     context = StepContext(t=0, metadata={"temperature": 0.0})

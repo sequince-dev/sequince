@@ -79,17 +79,19 @@ def test_log_likelihood_weighting_updates_log_weights(
 
 
 def test_tempered_weighting_scales_log_likelihood(
-    particle_state: ParticleState, context_factory, rng
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    unit_log_likelihood,
 ) -> None:
-    def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        return np.ones(particles.shape[0])
-
     def schedule(t: int, context: StepContext) -> float:
         context.metadata.setdefault("temperatures", []).append(t)
         return 0.5 + 0.1 * t
 
     context = context_factory(t=2, metadata={})
-    step = TemperedWeighting(log_like, schedule, normalize_after=False)
+    step = TemperedWeighting(
+        unit_log_likelihood, schedule, normalize_after=False
+    )
     updated = step(particle_state, context, rng)
 
     expected_increment = (0.5 + 0.1 * 2) * np.ones_like(
@@ -102,14 +104,16 @@ def test_tempered_weighting_scales_log_likelihood(
 
 
 def test_fixed_tempered_weighting_updates_metadata_and_context(
-    particle_state: ParticleState, context_factory, rng
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    unit_log_likelihood,
 ) -> None:
-    def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        return np.ones(particles.shape[0])
-
     context = context_factory(metadata={"temperature": 0.0})
     step = FixedTemperedWeighting(
-        log_like, temperature_increment=0.25, normalize_after=False
+        unit_log_likelihood,
+        temperature_increment=0.25,
+        normalize_after=False,
     )
     updated = step(particle_state, context, rng)
 
@@ -322,13 +326,13 @@ def test_evolving_target_ess_ratio_validates_arguments(
 
 
 def test_adaptive_tempered_weighting_reaches_max_temperature(
-    particle_state: ParticleState, context_factory, rng
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    unit_log_likelihood,
 ) -> None:
-    def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        return np.ones(particles.shape[0])
-
     step = AdaptiveTemperedWeighting(
-        log_like,
+        unit_log_likelihood,
         target_ess_ratio=0.8,
         max_temperature=0.6,
         min_delta=0.05,
@@ -437,12 +441,12 @@ def test_adaptive_tempered_weighting_validates_scheduled_target(
 
 
 def test_adaptive_tempered_weighting_no_op_when_max_reached(
-    particle_state: ParticleState, context_factory, rng
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    unit_log_likelihood,
 ) -> None:
-    def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        return np.ones(particles.shape[0])
-
-    step = AdaptiveTemperedWeighting(log_like, max_temperature=1.0)
+    step = AdaptiveTemperedWeighting(unit_log_likelihood, max_temperature=1.0)
     state = particle_state.with_updates(metadata={"temperature": 1.0})
     context = context_factory(metadata={"temperature": 1.0})
 
@@ -576,14 +580,14 @@ def test_resampling_preserves_array_backend(
     backend_factory,
     context_factory,
 ) -> None:
-    _, particles, log_weights, _ = backend_factory(backend)
-    state = ParticleState(particles=particles, log_weights=log_weights)
+    case = backend_factory(backend)
+    particles = case.particles
     backend_ns = namespace(particles)
 
     updated = step_type(always_resample=True)(
-        state,
+        case.state(),
         context_factory(),
-        RandomGenerator(backend=backend, seed=1234),
+        case.rng(1234),
     )
 
     assert namespace(updated.particles) is backend_ns
@@ -646,16 +650,11 @@ def test_waste_free_resample_move_returns_uniform_weights(
     particle_state: ParticleState,
     context_factory,
     rng,
+    standard_normal_log_prob,
 ) -> None:
-    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        pts = np.asarray(particles, dtype=float)
-        if pts.ndim == 1:
-            pts = pts[:, np.newaxis]
-        return -0.5 * np.sum(pts**2, axis=1)
-
     context = context_factory(shared={"temperature": 1.0})
     proposal = GaussianRandomWalk(scale=0.5)
-    step = WasteFreeResampleMove(log_prob, proposal)
+    step = WasteFreeResampleMove(standard_normal_log_prob, proposal)
 
     updated = step(particle_state, context, rng)
 
@@ -705,16 +704,11 @@ def test_waste_free_resample_move_multiple_proposals(
     particle_state: ParticleState,
     context_factory,
     rng,
+    standard_normal_log_prob,
 ) -> None:
-    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        pts = np.asarray(particles, dtype=float)
-        if pts.ndim == 1:
-            pts = pts[:, np.newaxis]
-        return -0.5 * np.sum(pts**2, axis=1)
-
     context = context_factory(shared={"temperature": 1.0})
     step = WasteFreeResampleMove(
-        log_prob,
+        standard_normal_log_prob,
         GaussianRandomWalk(scale=0.4),
         proposals_per_particle=3,
     )
@@ -739,12 +733,12 @@ def test_waste_free_resample_move_preserves_array_backend(
     backend_factory,
     context_factory,
 ) -> None:
-    xp, particles, log_weights, row_sum = backend_factory(backend)
-    state = ParticleState(particles=particles, log_weights=log_weights)
+    case = backend_factory(backend)
+    particles = case.particles
     backend_ns = namespace(particles)
 
     def log_prob(values, context: StepContext):
-        return -0.5 * row_sum(values**2)
+        return -0.5 * case.row_sum(values**2)
 
     step = WasteFreeResampleMove(
         log_prob,
@@ -752,27 +746,24 @@ def test_waste_free_resample_move_preserves_array_backend(
         proposals_per_particle=2,
     )
     updated = step(
-        state,
+        case.state(),
         context_factory(shared={"temperature": 1.0}),
-        RandomGenerator(backend=backend, seed=1234),
+        case.rng(1234),
     )
 
     assert namespace(updated.particles) is backend_ns
     assert namespace(updated.log_weights) is backend_ns
     assert namespace(updated.metadata["ancestors"]) is backend_ns
     assert updated.particles.shape == particles.shape
-    assert updated.log_weights.shape == log_weights.shape
+    assert updated.log_weights.shape == case.log_weights.shape
 
 
 def test_waste_free_resample_move_supports_dynamic_proposal(
     particle_state: ParticleState,
     context_factory,
     rng,
+    standard_normal_log_prob,
 ) -> None:
-    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        pts = np.asarray(particles, dtype=float)
-        return -0.5 * np.sum(np.atleast_2d(pts) ** 2, axis=-1)
-
     context = context_factory(metadata={"proposal_scale": 0.15})
 
     def factory(parents: np.ndarray, ctx: StepContext) -> GaussianRandomWalk:
@@ -790,7 +781,7 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
     adapter(particle_state, context, rng)
 
     step = WasteFreeResampleMove(
-        log_prob,
+        standard_normal_log_prob,
         factory,
         proposals_per_particle=2,
     )

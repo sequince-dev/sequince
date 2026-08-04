@@ -100,42 +100,8 @@ def test_composite_transform(particles):
     np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
 
 
-def test_flow_transform_round_trip_and_clone(particles):
-    class ShiftFlow:
-        xp = np
-
-        def __init__(self, shift=1.5):
-            self.shift = shift
-            self.fitted_particles = None
-
-        def fit(self, values, context=None):
-            self.fitted_particles = np.asarray(values, dtype=float).copy()
-            return self
-
-        def forward(self, values, context=None):
-            arr = np.asarray(values, dtype=float)
-            return arr + self.shift, np.zeros(arr.shape[0], dtype=float)
-
-        def inverse(self, values, context=None):
-            arr = np.asarray(values, dtype=float)
-            return arr - self.shift, np.zeros(arr.shape[0], dtype=float)
-
-        def log_prob(self, values, context=None):
-            arr = np.asarray(values, dtype=float)
-            if arr.ndim == 1:
-                arr = arr[:, np.newaxis]
-            return -0.5 * np.sum(arr**2, axis=1)
-
-        def sample(self, num_samples: int = 1, context=None):
-            return np.full((num_samples, 3), self.shift, dtype=float)
-
-        def state_dict(self):
-            return {"fitted_particles": self.fitted_particles}
-
-        def load_state_dict(self, state):
-            self.fitted_particles = np.asarray(state["fitted_particles"])
-
-    transform = FlowTransform(ShiftFlow())
+def test_flow_transform_round_trip_and_clone(particles, shift_flow_factory):
+    transform = FlowTransform(shift_flow_factory(n_dim=3))
     transform.fit(particles)
     latent, log_det = transform.forward(particles)
     restored, restore_log_det = transform.inverse(latent)
@@ -151,7 +117,7 @@ def test_flow_transform_round_trip_and_clone(particles):
     assert cloned is not transform
     assert cloned.flow is not transform.flow
 
-    restored_transform = FlowTransform(ShiftFlow())
+    restored_transform = FlowTransform(shift_flow_factory(n_dim=3))
     restored_transform.load_state_dict(transform.state_dict())
     np.testing.assert_allclose(
         restored_transform.flow.fitted_particles, particles
