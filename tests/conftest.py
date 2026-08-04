@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from orng import RandomGenerator
 
+from sequince._array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
@@ -35,7 +36,6 @@ class BackendCase:
     xp: Any
     particles: Any
     log_weights: Any
-    row_sum: Callable[[Any], Any]
 
     def state(self) -> ParticleState:
         return ParticleState(
@@ -126,10 +126,9 @@ def _backend_factory(backend: str) -> BackendCase:
         )
         log_weights = np.zeros(particles.shape[0], dtype=np.float64)
 
-        def row_sum(arr: Any) -> Any:
-            return np.sum(arr, axis=1)
-
-        return BackendCase(backend, np, particles, log_weights, row_sum)
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     if backend == "torch":
         torch = pytest.importorskip("torch")
@@ -139,10 +138,9 @@ def _backend_factory(backend: str) -> BackendCase:
         )
         log_weights = torch.zeros(particles.shape[0], dtype=torch.float32)
 
-        def row_sum(arr: Any) -> Any:
-            return torch.sum(arr, dim=1)
-
-        return BackendCase(backend, torch, particles, log_weights, row_sum)
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     if backend == "jax":
         jnp = pytest.importorskip("jax.numpy")
@@ -152,10 +150,9 @@ def _backend_factory(backend: str) -> BackendCase:
         )
         log_weights = jnp.zeros(particles.shape[0], dtype=jnp.float32)
 
-        def row_sum(arr: Any) -> Any:
-            return jnp.sum(arr, axis=1)
-
-        return BackendCase(backend, jnp, particles, log_weights, row_sum)
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     if backend == "cupy":
         cupy = pytest.importorskip("cupy")
@@ -169,10 +166,9 @@ def _backend_factory(backend: str) -> BackendCase:
         )
         log_weights = cupy.zeros(particles.shape[0], dtype=cupy.float32)
 
-        def row_sum(arr: Any) -> Any:
-            return cupy.sum(arr, axis=1)
-
-        return BackendCase(backend, cupy, particles, log_weights, row_sum)
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     raise ValueError(f"Unsupported backend '{backend}'.")
 

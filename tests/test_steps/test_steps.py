@@ -734,11 +734,12 @@ def test_waste_free_resample_move_preserves_array_backend(
     context_factory,
 ) -> None:
     case = backend_factory(backend)
+    xp = case.xp
     particles = case.particles
     backend_ns = namespace(particles)
 
     def log_prob(values, context: StepContext):
-        return -0.5 * case.row_sum(values**2)
+        return -0.5 * xp.sum(values**2, axis=1)
 
     step = WasteFreeResampleMove(
         log_prob,

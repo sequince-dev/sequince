@@ -153,7 +153,6 @@ def test_flow_transform_passes_fit_kwargs(particles):
 
 
 def test_flow_transform_preserves_input_namespace(particles):
-    torch = pytest.importorskip("torch")
     torch_api = pytest.importorskip("array_api_compat.torch")
 
     class TorchFlow:
@@ -163,12 +162,12 @@ def test_flow_transform_preserves_input_namespace(particles):
             return self
 
         def forward(self, values, context=None):
-            values = torch.asarray(values)
-            return values + 1.0, torch.zeros(values.shape[0])
+            values = self.xp.asarray(values)
+            return values + 1.0, self.xp.zeros(values.shape[0])
 
         def inverse(self, values, context=None):
-            values = torch.asarray(values)
-            return values - 1.0, torch.zeros(values.shape[0])
+            values = self.xp.asarray(values)
+            return values - 1.0, self.xp.zeros(values.shape[0])
 
     transform = CompositeTransform(
         [AffineTransform(), FlowTransform(TorchFlow())]

@@ -22,7 +22,7 @@ def test_sequince_runs_with_array_backends(
 
     smc, _, _ = make_standard_bayesian_smc(
         log_prior=lambda x, ctx: xp.zeros(x.shape[0], dtype=x.dtype),
-        log_likelihood=lambda x, ctx: -0.5 * case.row_sum(x**2),
+        log_likelihood=lambda x, ctx: -0.5 * xp.sum(x**2, axis=1),
         mutation="none",
     )
 
@@ -59,6 +59,7 @@ def test_torch_gpu_particles_remain_on_device() -> None:
     particles = torch.arange(8, device=device, dtype=dtype).reshape(4, 2)
     log_weights = torch.full((4,), float("-inf"), dtype=dtype, device=device)
     state = ParticleState(particles=particles, log_weights=log_weights)
+    xp = namespace(particles)
 
     normalized, _ = state.normalize()
     assert normalized.log_weights.device == device
@@ -72,8 +73,8 @@ def test_torch_gpu_particles_remain_on_device() -> None:
 
     context = StepContext(t=0)
     posterior = TemperedPosterior(
-        log_prior=lambda x, ctx: torch.sum(x, dim=1),
-        log_likelihood=lambda x, ctx: torch.sum(x, dim=1),
+        log_prior=lambda x, ctx: xp.sum(x, axis=1),
+        log_likelihood=lambda x, ctx: xp.sum(x, axis=1),
     )
     evaluation = posterior.evaluate(state.particles, context)
     log_inc: Any = posterior.log_increment(

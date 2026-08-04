@@ -167,10 +167,11 @@ def test_gaussian_random_walk_mutation_preserves_backend(
     backend_factory,
 ) -> None:
     case = backend_factory(backend)
+    xp = case.xp
     particles = case.particles
     backend_ns = namespace(particles)
     step = MetropolisHastingsMutation(
-        lambda values, context: -0.5 * case.row_sum(values**2),
+        lambda values, context: -0.5 * xp.sum(values**2, axis=1),
         GaussianRandomWalk(scale=0.1),
         n_steps=2,
         store_chains=True,
