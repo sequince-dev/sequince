@@ -1,6 +1,26 @@
 import numpy as np
 
-from sequince.utils import in_bounds
+from sequince.utils import in_bounds, normalize_log_weights
+
+
+def test_normalize_log_weights():
+    log_weights = np.log([1.0, 3.0])
+
+    normalized, log_norm, valid = normalize_log_weights(log_weights)
+
+    np.testing.assert_allclose(np.exp(normalized), [0.25, 0.75])
+    assert np.isclose(log_norm, np.log(4.0))
+    assert valid
+
+
+def test_normalize_degenerate_log_weights_to_uniform():
+    normalized, log_norm, valid = normalize_log_weights(
+        np.array([-np.inf, -np.inf])
+    )
+
+    np.testing.assert_allclose(np.exp(normalized), [0.5, 0.5])
+    assert log_norm == 0.0
+    assert not valid
 
 
 def test_in_bounds():
