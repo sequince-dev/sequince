@@ -70,7 +70,11 @@ class NestedSMCStep(SMCStep):
         context.metadata[override_key] = output_log_proposal
         if self.record_outputs:
             context.record_output(self.output_key, result)
-        return result.final_state
+        # The retained evaluation was computed using the inner loop's proposal.
+        # Installing the terminal density as the next proposal changes the
+        # target components required by the outer context, so that evaluation
+        # must not be reused by a subsequent weighting or mutation step.
+        return result.final_state.with_updates(evaluation=None)
 
     def state_dict(self) -> dict[str, Any]:
         return {"runner": self.runner.state_dict()}
