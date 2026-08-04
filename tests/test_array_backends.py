@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from sequince._array_api import namespace
+from sequince.array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 from sequince.state import ParticleState
