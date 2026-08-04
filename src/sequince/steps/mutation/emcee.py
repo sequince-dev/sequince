@@ -265,7 +265,12 @@ class EmceeMutation(MutationStep):
         acceptance = metadata["emcee_acceptance"]
         if self._store_chains:
             chains = sampler.get_chain(flat=False, discard=0, thin=1)
-            metadata["mutation_chains"] = chains
+            metadata["mutation_chains"] = self._inverse_chain(
+                chains,
+                transform,
+                context,
+                like=latent_particles,
+            )
 
         logger.debug(
             "EmceeMutation completed: acceptance=%.3f after %d steps.",

@@ -95,6 +95,15 @@ class MutationStep(SMCStep):
         self._store_chains = store_chains
         self._chain: Array | None = None
 
+    @property
+    def store_chains(self) -> bool:
+        """Whether full mutation chains are retained in state metadata."""
+        return self._store_chains
+
+    @store_chains.setter
+    def store_chains(self, value: bool) -> None:
+        self._store_chains = bool(value)
+
     def _evaluate_target(
         self,
         particles: Array,
@@ -178,6 +187,24 @@ class MutationStep(SMCStep):
         arr = asarray(values, xp=xp)
         output, log_det = transform.inverse(arr, context=context)
         return asarray(output, xp=xp), asarray(log_det, xp=xp)
+
+    def _inverse_chain(
+        self,
+        chain: Array,
+        transform: ParticleTransform | None,
+        context: StepContext,
+        *,
+        like: Array,
+    ) -> Array:
+        """Map a stored mutation chain back into particle coordinates."""
+        xp = namespace(like)
+        latent_chain = asarray(chain, xp=xp, like=like)
+        if transform is None:
+            return latent_chain
+        original_shape = latent_chain.shape
+        flattened = xp.reshape(latent_chain, (-1, original_shape[-1]))
+        particles, _ = self._inverse_transform(flattened, transform, context)
+        return xp.reshape(particles, original_shape)
 
     @staticmethod
     def _combine_with_log_det(result: Any, log_det: Array | None):
