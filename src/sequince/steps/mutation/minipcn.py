@@ -109,7 +109,12 @@ class MiniPCNMutation(MutationStep):
         metadata["minipcn_steps"] = self._n_steps
 
         if self._store_chains:
-            metadata["mutation_chains"] = chain
+            metadata["mutation_chains"] = self._inverse_chain(
+                chain[-self._n_steps :],
+                transform,
+                context,
+                like=latent_particles,
+            )
 
         acceptance = metadata["minipcn_acceptance"]
         logger.debug(

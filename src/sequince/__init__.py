@@ -3,6 +3,7 @@
 import importlib.metadata
 import logging
 
+from .mcmc import MarkovChainMonteCarlo, MCMCResult, make_mcmc
 from .posterior import TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
 from .result import SMCResult
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "ParticleState",
+    "MCMCResult",
+    "MarkovChainMonteCarlo",
     "SequentialMonteCarlo",
     "MetaSequentialMonteCarlo",
     "SMCResult",
@@ -27,4 +30,5 @@ __all__ = [
     "TemperedPosterior",
     "TargetEvaluation",
     "make_standard_bayesian_smc",
+    "make_mcmc",
 ]
