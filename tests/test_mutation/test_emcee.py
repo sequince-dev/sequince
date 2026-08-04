@@ -3,7 +3,9 @@ from __future__ import annotations
 import emcee
 import numpy as np
 import pytest
+from orng import ArrayRNG
 
+from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import (
@@ -27,6 +29,52 @@ def test_emcee_mutation_runs_single_step(
     assert mutated.particles.shape == particle_state.particles.shape
     assert "emcee_acceptance" in mutated.metadata
     assert mutated.metadata["emcee_steps"] == 1
+
+
+def test_emcee_mutation_evaluates_final_population(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    posterior = TemperedPosterior(
+        log_prior=lambda particles: -np.sum(particles**2, axis=-1),
+        log_likelihood=lambda particles: np.sum(particles, axis=-1),
+    )
+    context = context_factory(metadata={"temperature": 1.0})
+
+    mutated = EmceeMutation(posterior, n_steps=1)(particle_state, context, rng)
+
+    assert mutated.evaluation is not None
+    expected = posterior.evaluate(mutated.particles, context)
+    np.testing.assert_allclose(
+        mutated.evaluation["log_prior"], expected["log_prior"]
+    )
+    np.testing.assert_allclose(
+        mutated.evaluation["log_likelihood"], expected["log_likelihood"]
+    )
+
+
+def test_emcee_mutation_uses_supplied_rng(
+    particle_state, context_factory
+) -> None:
+    def log_prob(position: np.ndarray, context: StepContext) -> float:
+        return float(-0.5 * np.sum(position**2))
+
+    step = EmceeMutation(log_prob, n_steps=3, move="bilby-de")
+    first = step(
+        particle_state,
+        context_factory(),
+        ArrayRNG(seed=2468),
+    )
+    second = step(
+        particle_state,
+        context_factory(),
+        ArrayRNG(seed=2468),
+    )
+
+    np.testing.assert_array_equal(first.particles, second.particles)
+    assert (
+        first.metadata["emcee_acceptance"]
+        == second.metadata["emcee_acceptance"]
+    )
 
 
 def test_emcee_mutation_resolves_bilby_de_move() -> None:

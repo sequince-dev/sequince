@@ -3,12 +3,12 @@
 import importlib.metadata
 import logging
 
-from .posterior import PosteriorEvaluation, TemperedPosterior
+from .posterior import TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
-from .proposals import draw_initial_state
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .state import ParticleState
+from .target import SequentialTarget, TargetEvaluation, TemperedTarget
 
 try:
     __version__ = importlib.metadata.version("sequince")
@@ -22,8 +22,9 @@ __all__ = [
     "SequentialMonteCarlo",
     "MetaSequentialMonteCarlo",
     "SMCResult",
+    "SequentialTarget",
+    "TemperedTarget",
     "TemperedPosterior",
-    "PosteriorEvaluation",
+    "TargetEvaluation",
     "make_standard_bayesian_smc",
-    "draw_initial_state",
 ]

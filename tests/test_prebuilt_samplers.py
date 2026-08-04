@@ -123,6 +123,15 @@ def test_make_standard_bayesian_smc_supports_fixed_schedule(rng) -> None:
     assert result.final_state.metadata["temperature"] == pytest.approx(1.0)
 
 
+def test_make_standard_bayesian_smc_requires_fixed_step_count() -> None:
+    with pytest.raises(ValueError, match="num_steps must be positive"):
+        make_standard_bayesian_smc(
+            _quadratic_log_prior,
+            _zero_log_likelihood,
+            adaptive=False,
+        )
+
+
 def test_make_standard_bayesian_smc_validates_resampling_name() -> None:
     with pytest.raises(ValueError):
         make_standard_bayesian_smc(
@@ -157,6 +166,6 @@ def test_make_standard_bayesian_smc_accepts_proposal_distribution() -> None:
     particles = np.array([[0.0], [1.0]], dtype=float)
     context = StepContext(t=0, metadata={"temperature": 0.0})
     evaluation = posterior.evaluate(particles, context)
-    values = posterior.log_increment(particles, evaluation, context)
+    values = posterior.log_increment(particles, context, evaluation=evaluation)
 
     assert np.allclose(values, _quadratic_log_prior(particles))

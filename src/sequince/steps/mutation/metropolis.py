@@ -16,8 +16,8 @@ from .kernels import MutationKernel, evaluate_log_transition_ratio
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import PosteriorEvaluation, TemperedPosterior
     from ...state import ParticleState
+    from ...target import SequentialTarget, TargetEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class MetropolisHastingsMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         kernel: MutationKernel | MutationKernelFactory,
         *,
         n_steps: int = 1,
@@ -91,8 +91,8 @@ class MetropolisHastingsMutation(MutationStep):
         latent_particles: Array,
         transform: ParticleTransform | None,
         context: StepContext,
-        evaluation: "PosteriorEvaluation | None" = None,
-    ) -> tuple[Array, "PosteriorEvaluation | None"]:
+        evaluation: "TargetEvaluation | None" = None,
+    ) -> tuple[Array, "TargetEvaluation | None"]:
         xp = namespace(latent_particles)
         original, log_det = self._inverse_transform(
             latent_particles, transform, context
@@ -202,12 +202,7 @@ class MetropolisHastingsMutation(MutationStep):
         metadata["metropolis_hastings_acceptance_by_step"] = acceptance_by_step
         metadata["metropolis_hastings_steps"] = self._n_steps
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
-                xp.stack(chain, axis=0),
-                transform,
-                context,
-                like=state.particles,
-            )
+            metadata["mutation_chains"] = xp.stack(chain, axis=0)
 
         context.metadata["metropolis_hastings_acceptance"] = acceptance
         context.metadata["metropolis_hastings_acceptance_by_step"] = (

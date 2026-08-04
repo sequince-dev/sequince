@@ -8,8 +8,10 @@ from sequince._array_api import namespace
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import (
+    AdaptiveMaskedGaussianRandomWalk,
     CallableMutationKernel,
     GaussianRandomWalk,
+    MaskedGaussianRandomWalk,
     MetropolisHastingsMutation,
     MixtureMutationKernel,
     evaluate_log_transition_ratio,
@@ -184,6 +186,59 @@ def test_gaussian_random_walk_mutation_preserves_backend(
     assert updated.particles.shape == particles.shape
     assert namespace(updated.particles) is backend_ns
     assert namespace(updated.metadata["mutation_chains"]) is backend_ns
+
+
+def test_masked_gaussian_changes_only_active_coordinates(rng) -> None:
+    particles = np.arange(20, dtype=float).reshape(5, 4)
+    kernel = MaskedGaussianRandomWalk(indices=(1, 3), scale=0.2)
+
+    proposals = kernel.sample(particles, rng)
+
+    assert np.array_equal(proposals[:, (0, 2)], particles[:, (0, 2)])
+    assert np.any(proposals[:, (1, 3)] != particles[:, (1, 3)])
+    np.testing.assert_allclose(
+        kernel.log_transition_ratio(particles, proposals),
+        0.0,
+    )
+
+
+def test_masked_gaussian_uses_block_covariance() -> None:
+    particles = np.zeros((20_000, 3))
+    covariance = np.array([[1.0, 0.7], [0.7, 2.0]])
+    kernel = MaskedGaussianRandomWalk(
+        indices=(0, 2),
+        covariance=covariance,
+        scale=0.5,
+    )
+
+    proposals = kernel.sample(particles, RandomGenerator(seed=1234))
+
+    empirical = np.cov(proposals[:, (0, 2)], rowvar=False)
+    np.testing.assert_allclose(empirical, 0.25 * covariance, rtol=0.04)
+    assert np.array_equal(proposals[:, 1], particles[:, 1])
+
+
+def test_adaptive_gaussian_estimates_active_covariance() -> None:
+    particles = np.array(
+        [
+            [-1.0, 10.0, -2.0],
+            [0.0, 20.0, 0.0],
+            [1.0, 30.0, 2.0],
+        ]
+    )
+    factory = AdaptiveMaskedGaussianRandomWalk(
+        indices=(0, 2),
+        scale=1.0,
+        regularization=1e-4,
+    )
+
+    kernel = factory(particles, StepContext(t=0))
+
+    expected = np.cov(particles[:, (0, 2)], rowvar=False)
+    expected += 1e-4 * np.eye(2)
+    np.testing.assert_allclose(kernel.covariance, expected)
+    assert kernel.indices == (0, 2)
+    assert kernel.scale == 1.0
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])

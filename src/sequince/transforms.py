@@ -126,17 +126,6 @@ class ParticleTransform:
         zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
         return arr, zeros
 
-    def state_dict(self) -> dict[str, Any]:
-        """Return mutable fitted state needed to resume a run."""
-        return {}
-
-    def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        """Restore mutable fitted state."""
-        if state:
-            raise ValueError(
-                f"{type(self).__name__} does not support fitted state."
-            )
-
 
 class IdentityTransform(ParticleTransform):
     """No-op transform that simply returns the input particles."""
@@ -286,13 +275,6 @@ class AffineTransform(ParticleTransform):
         log_det = xp.sum(xp.log(self._scale))
         log_det_vec = _log_det_entries(log_det, arr, xp)
         return restored, log_det_vec
-
-    def state_dict(self) -> dict[str, Any]:
-        return {"mean": self._mean, "scale": self._scale}
-
-    def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        self._mean = state.get("mean")
-        self._scale = state.get("scale")
 
 
 class BoundedToUnitHypercubeTransform(ParticleTransform):
@@ -482,30 +464,6 @@ class CompositeTransform(ParticleTransform):
 
     def clone(self):
         return CompositeTransform([t.clone() for t in self._transforms])
-
-    def state_dict(self) -> dict[str, Any]:
-        return {
-            "transforms": [
-                transform.state_dict() for transform in self._transforms
-            ]
-        }
-
-    def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        transform_states = state.get("transforms", [])
-        if not isinstance(transform_states, Sequence):
-            raise TypeError(
-                "CompositeTransform state 'transforms' must be a sequence."
-            )
-        if len(transform_states) != len(self._transforms):
-            raise ValueError(
-                "CompositeTransform state does not match configured transforms."
-            )
-        for transform, transform_state in zip(
-            self._transforms, transform_states, strict=True
-        ):
-            if not isinstance(transform_state, Mapping):
-                raise TypeError("Transform state must be a mapping.")
-            transform.load_state_dict(transform_state)
 
     def fit(self, particles, context=None):
         data = particles

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ._array_api import asarray, namespace
 from ._typing import Array
@@ -13,11 +13,9 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
-from .state import ParticleState
-from .steps.context import StepContext
 
 if TYPE_CHECKING:
-    from .posterior import TemperedPosterior
+    from .steps.context import StepContext
 
 logger = logging.getLogger(__name__)
 
@@ -112,88 +110,3 @@ class FlowProposal(ProposalDistribution):
             )
         samples = self.sample(n_samples, context=context)
         return samples, self.log_prob(samples, context=context)
-
-
-def draw_initial_state(
-    proposal: ProposalDistribution,
-    n_particles: int,
-    *,
-    validation_fns: Sequence[Callable[[Array], Array]] = (),
-    posterior: TemperedPosterior | None = None,
-    context: StepContext | None = None,
-    max_batches: int = 100,
-) -> ParticleState:
-    """Draw a finite initial particle population from a proposal.
-
-    Proposal samples with non-finite proposal density or non-finite values from
-    any validation function are discarded.
-    """
-    if n_particles < 1:
-        raise ValueError("n_particles must be positive.")
-    if max_batches < 1:
-        raise ValueError("max_batches must be positive.")
-
-    accepted: list[Array] = []
-    accepted_evaluations = []
-    evaluation_context = context or StepContext(t=0)
-    n_accepted = 0
-    for _ in range(max_batches):
-        particles, log_proposal = proposal.sample_and_log_prob(
-            n_particles,
-            context=context,
-        )
-        xp = namespace(particles, log_proposal)
-        particles = asarray(particles, xp=xp)
-        log_proposal = asarray(log_proposal, xp=xp, like=particles)
-        valid = xp.isfinite(log_proposal)
-        evaluation = None
-        if posterior is not None:
-            evaluation = posterior.evaluate(
-                particles,
-                evaluation_context,
-                log_proposal_values=log_proposal,
-            )
-            valid = (
-                valid
-                & xp.isfinite(evaluation.log_prior)
-                & xp.isfinite(evaluation.log_likelihood)
-            )
-        else:
-            for validation_fn in validation_fns:
-                values = asarray(
-                    validation_fn(particles),
-                    xp=xp,
-                    like=log_proposal,
-                )
-                valid = valid & xp.isfinite(values)
-        if bool(xp.any(valid)):
-            batch = particles[valid]
-            accepted.append(batch)
-            if evaluation is not None:
-                accepted_evaluations.append(
-                    evaluation.take(xp.nonzero(valid)[0])
-                )
-            n_accepted += batch.shape[0]
-        if n_accepted >= n_particles:
-            break
-
-    if n_accepted < n_particles:
-        raise RuntimeError(
-            f"Could only draw {n_accepted} finite particles after "
-            f"{max_batches} proposal batches."
-        )
-    xp = namespace(*accepted)
-    particles = (
-        accepted[0] if len(accepted) == 1 else xp.concat(accepted, axis=0)
-    )
-    initial_evaluation = None
-    if accepted_evaluations:
-        from .posterior import PosteriorEvaluation
-
-        initial_evaluation = PosteriorEvaluation.concatenate(
-            accepted_evaluations
-        ).take(xp.arange(n_particles))
-    return ParticleState(
-        particles=particles[:n_particles],
-        evaluation=initial_evaluation,
-    )

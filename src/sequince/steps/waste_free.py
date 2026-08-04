@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._array_api import arange, asarray, full, namespace
 from .._typing import Array
+from ..target import SequentialTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 from .mutation import (
@@ -53,7 +54,7 @@ class WasteFreeResampleMove(SMCStep):
     ----------
     log_prob_fn:
         Callable returning log probabilities of the tempered target, or an
-        object exposing a ``log_prob`` method (e.g. ``TemperedPosterior``).
+        object exposing a ``log_prob`` method (e.g. ``SequentialTarget``).
     kernel:
         Mutation kernel supplying forward and backward log densities.
     resample_ancestors:
@@ -68,19 +69,18 @@ class WasteFreeResampleMove(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Any],
+        log_prob_fn: Callable[..., Any] | SequentialTarget,
         kernel: MutationKernel | MutationKernelFactory,
         *,
         resample_ancestors: bool = True,
         proposals_per_particle: int = 1,
     ):
-        self._posterior = (
-            log_prob_fn
-            if hasattr(log_prob_fn, "evaluate")
-            and hasattr(log_prob_fn, "log_prob")
-            else None
-        )
-        self._log_prob_fn = None if self._posterior else log_prob_fn
+        if isinstance(log_prob_fn, SequentialTarget):
+            self._target: SequentialTarget | None = log_prob_fn
+            self._log_prob_fn: Callable[..., Any] | None = None
+        else:
+            self._target = None
+            self._log_prob_fn = log_prob_fn
         has_correction = hasattr(kernel, "log_transition_ratio") or hasattr(
             kernel, "log_density"
         )
@@ -232,9 +232,9 @@ class WasteFreeResampleMove(SMCStep):
         new_particles = combined_particles[selected]
         new_evaluation = None
         if candidate_evaluations:
-            from ..posterior import PosteriorEvaluation
+            from ..target import TargetEvaluation
 
-            new_evaluation = PosteriorEvaluation.concatenate(
+            new_evaluation = TargetEvaluation.concatenate(
                 candidate_evaluations
             ).take(selected)
         if squeeze_last:
@@ -296,7 +296,7 @@ class WasteFreeResampleMove(SMCStep):
         evaluation=None,
     ):
         xp = namespace(particles)
-        if self._posterior is None:
+        if self._target is None:
             if self._log_prob_fn is None:  # pragma: no cover
                 raise RuntimeError(
                     "Mutation log probability is not configured."
@@ -307,18 +307,15 @@ class WasteFreeResampleMove(SMCStep):
                 context,
             )
         else:
-            override = context.metadata.get("log_proposal_override")
-            if evaluation is None:
-                evaluation = self._posterior.evaluate(
-                    particles,
-                    context,
-                    log_proposal_override=override,
-                )
-            values = self._posterior.log_prob(
+            evaluation = self._target.prepare_evaluation(
                 particles,
-                evaluation,
                 context,
-                log_proposal_override=override,
+                evaluation=evaluation,
+            )
+            values = self._target.log_prob(
+                particles,
+                context,
+                evaluation=evaluation,
             )
         arr = asarray(values, xp=xp, like=particles)
         if arr.ndim == 0:

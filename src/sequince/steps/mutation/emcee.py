@@ -22,8 +22,8 @@ from .base import (
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ...posterior import TemperedPosterior
     from ...state import ParticleState
+    from ...target import SequentialTarget
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ class EmceeMutation(MutationStep):
     ----------
     log_prob_fn
         Function to compute the log-probability of a particle position, or a
-        `TemperedPosterior` instance.
+        `SequentialTarget` instance.
     n_steps
         Number of emcee steps to perform.
     move
@@ -138,7 +138,7 @@ class EmceeMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "TemperedPosterior",
+        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
         *,
         n_steps: int = 1,
         move: Any = None,
@@ -172,16 +172,10 @@ class EmceeMutation(MutationStep):
         import emcee
 
         xp = namespace(state.particles)
-        self._evaluation_cache.clear()
-        self._cache_evaluation(state.particles, state.evaluation)
         transform = self._prepare_transform(state.particles, context)
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
-        cached_particles, _ = self._inverse_transform(
-            latent_particles, transform, context
-        )
-        self._cache_evaluation(cached_particles, state.evaluation)
         particles = to_numpy(latent_particles)
         if particles.ndim == 1:
             initial_positions = particles[:, np.newaxis]
@@ -209,7 +203,7 @@ class EmceeMutation(MutationStep):
                 original, log_det = self._inverse_transform(
                     backend_positions, transform, context
                 )
-                result, _ = self._evaluate_target_cached(original, context)
+                result, _ = self._evaluate_target(original, context)
                 result = self._combine_with_log_det(result, log_det)
                 return as_vector_log_prob(result, backend_positions.shape[0])
 
@@ -226,7 +220,7 @@ class EmceeMutation(MutationStep):
                 original, log_det = self._inverse_transform(
                     backend_position, transform, context
                 )
-                result, _ = self._evaluate_target_cached(original, context)
+                result, _ = self._evaluate_target(original, context)
                 result = self._combine_with_log_det(result, log_det)
                 return as_scalar_log_prob(result)
 
@@ -239,6 +233,10 @@ class EmceeMutation(MutationStep):
             moves=self._move,
             **self._kwargs,
         )
+        emcee_seed = int(
+            float(to_numpy(rng.random((1,)))[0]) * np.iinfo(np.uint32).max
+        )
+        sampler.random_state = np.random.RandomState(emcee_seed).get_state()
 
         state_result = sampler.run_mcmc(
             initial_positions,
@@ -257,30 +255,17 @@ class EmceeMutation(MutationStep):
         new_particles, _ = self._inverse_transform(
             latent_result, transform, context
         )
-        final_evaluation = self._cached_evaluation(new_particles)
-        if self._posterior is not None and final_evaluation is None:
-            raise RuntimeError(
-                "Final emcee particles are missing posterior evaluations."
-            )
+        _, final_evaluation = self._evaluate_target(new_particles, context)
 
         metadata = dict(state.metadata)
         metadata["emcee_acceptance"] = float(
             np.mean(sampler.acceptance_fraction)
         )
-        metadata["emcee_autocorrelation_time"] = sampler.get_autocorr_time(
-            quiet=True,
-            discard=int(0.2 * self._n_steps),
-        )
         metadata["emcee_steps"] = self._n_steps
         acceptance = metadata["emcee_acceptance"]
         if self._store_chains:
             chains = sampler.get_chain(flat=False, discard=0, thin=1)
-            metadata["mutation_chains"] = self._inverse_chain(
-                chains,
-                transform,
-                context,
-                like=latent_particles,
-            )
+            metadata["mutation_chains"] = chains
 
         logger.debug(
             "EmceeMutation completed: acceptance=%.3f after %d steps.",

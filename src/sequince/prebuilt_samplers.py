@@ -206,7 +206,7 @@ def make_standard_bayesian_smc(
 
     mutation_step = get_mutation_step(
         mutation,
-        posterior=posterior,
+        target=posterior,
         transform=particle_transform,
         mutation_n_steps=mutation_n_steps,
         mutation_kwargs=mutation_kwargs,

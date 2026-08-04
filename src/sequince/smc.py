@@ -351,6 +351,9 @@ class SequentialMonteCarlo:
         restored_rng = checkpoint_obj.restore_rng()
         state = checkpoint_obj.state.copy()
         history = checkpoint_obj.history or (checkpoint_obj.state,)
+        restored_metadata = copy.deepcopy(checkpoint_obj.metadata)
+        restored_metadata.pop("stop_requested", None)
+        restored_metadata.pop("stop_immediately", None)
         return SMCRuntime(
             state=state,
             produced_states=[item.copy() for item in history],
@@ -362,7 +365,7 @@ class SequentialMonteCarlo:
             t=checkpoint_obj.next_iteration,
             next_observation_index=checkpoint_obj.next_observation_index,
             shared_context=dict(shared_context or {}),
-            metadata=copy.deepcopy(checkpoint_obj.metadata),
+            metadata=restored_metadata,
             outputs=copy.deepcopy(checkpoint_obj.outputs),
             rng=restored_rng if restored_rng is not None else resolve_rng(rng),
         )

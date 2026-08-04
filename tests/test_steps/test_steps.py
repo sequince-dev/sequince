@@ -1,6 +1,8 @@
+"""Tests for composable SMC steps."""
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pytest
@@ -9,15 +11,17 @@ from orng import RandomGenerator
 from sequince._array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
+from sequince.stats import (
+    cess_ratio_from_log_weights_and_increments,
+    ess_ratio_from_log_weights,
+)
 from sequince.steps import (
     AdaptGaussianProposal,
     ContinueWhile,
-    ExpandDimensions,
-    MetadataTransformation,
-    SMCTransformation,
+    MutateIfResampled,
     WasteFreeResampleMove,
 )
-from sequince.steps.base import StepContext
+from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.control import PeriodicStep
 from sequince.steps.mutation import GaussianRandomWalk
 from sequince.steps.resampling import (
@@ -28,10 +32,12 @@ from sequince.steps.resampling import (
 from sequince.steps.weighting import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
+    IncrementalWeighting,
     LogLikelihoodWeighting,
     TemperedWeighting,
     evolving_target_ess_ratio,
 )
+from sequince.target import SequentialTarget, TargetEvaluation
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -188,6 +194,61 @@ def test_tempered_weighting_reuses_attached_evaluation(
     assert calls == {"prior": 1, "likelihood": 1}
 
 
+def test_incremental_weighting_accepts_a_general_sequential_target(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    class LinearTarget(SequentialTarget):
+        def evaluate(
+            self,
+            particles,
+            context,
+            *,
+            components=None,
+            evaluation=None,
+        ):
+            requested = (
+                {"base", "increment"} if components is None else components
+            )
+            values = {} if evaluation is None else dict(evaluation.components)
+            if "base" in requested:
+                values["base"] = -np.sum(particles**2, axis=1)
+            if "increment" in requested:
+                values["increment"] = particles[:, 0]
+            return TargetEvaluation(values)
+
+        def log_increment(self, particles, context, *, evaluation=None):
+            evaluation = evaluation or self.evaluate(particles, context)
+            return evaluation["increment"]
+
+        def log_prob(self, particles, context, *, evaluation=None):
+            evaluation = evaluation or self.evaluate(particles, context)
+            beta = float(context.metadata.get("temperature", 0.0))
+            return evaluation["base"] + beta * evaluation["increment"]
+
+    context = context_factory(metadata={"temperature": 0.0})
+    initial_log_weights = particle_state.log_weights.copy()
+
+    target = LinearTarget()
+    invalid_tempered_target: Any = target
+    with pytest.raises(TypeError, match="log_increment_fn must be callable"):
+        FixedTemperedWeighting(
+            invalid_tempered_target,
+            temperature_increment=0.25,
+        )
+
+    updated = IncrementalWeighting(
+        target,
+        normalize_after=False,
+    )(particle_state, context, rng)
+
+    np.testing.assert_allclose(
+        updated.log_weights,
+        initial_log_weights + particle_state.particles[:, 0],
+    )
+    assert updated.evaluation is not None
+    assert updated.evaluation.components.keys() == {"base", "increment"}
+
+
 def test_tempered_weighting_can_refresh_only_likelihood(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
@@ -222,7 +283,9 @@ def test_tempered_weighting_can_refresh_only_likelihood(
     )
 
     assert calls == {"prior": 1, "likelihood": 2}
-    np.testing.assert_allclose(updated.evaluation.log_likelihood, 2.0)
+    evaluation = updated.evaluation
+    assert evaluation is not None
+    np.testing.assert_allclose(evaluation["log_likelihood"], 2.0)
 
 
 def test_evolving_target_ess_ratio_uses_clipped_temperature_progress() -> None:
@@ -340,6 +403,18 @@ def test_adaptive_tempered_weighting_supports_evolving_target(
     assert scheduled_context.metadata["target_ess_ratio"] == pytest.approx(
         0.95
     )
+    delta = scheduled_context.metadata["temperature_delta"]
+    increments = log_like(state.particles, scheduled_context)
+    expected_ess_ratio = ess_ratio_from_log_weights(
+        state.log_weights + delta * increments
+    )
+    expected_cess_ratio = cess_ratio_from_log_weights_and_increments(
+        state.log_weights, delta * increments
+    )
+    for metadata in (scheduled_context.metadata, updated.metadata):
+        assert metadata["temperature_delta"] == pytest.approx(delta)
+        assert metadata["ess_ratio"] == pytest.approx(expected_ess_ratio)
+        assert metadata["cess_ratio"] == pytest.approx(expected_cess_ratio)
 
 
 @pytest.mark.parametrize("invalid_target", [0.0, 1.1, np.nan])
@@ -373,16 +448,21 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
 
     result_state = step(state, context, rng)
 
-    expected_state = state.with_updates(
-        metadata=dict(state.metadata, temperature=1.0)
+    assert np.array_equal(result_state.particles, state.particles)
+    assert result_state.metadata["temperature"] == 1.0
+    assert result_state.metadata["temperature_delta"] == 0.0
+    assert result_state.metadata["ess_ratio"] == pytest.approx(
+        ess_ratio_from_log_weights(state.log_weights)
     )
-
-    assert np.array_equal(result_state.particles, expected_state.particles)
-    assert result_state.metadata == expected_state.metadata
+    assert result_state.metadata["cess_ratio"] == 1.0
     assert context.metadata["stop_requested"] is True
     assert context.metadata["stop_immediately"] is True
     assert context.metadata["temperature"] == 1.0
     assert context.metadata["temperature_delta"] == 0.0
+    assert context.metadata["ess_ratio"] == pytest.approx(
+        ess_ratio_from_log_weights(state.log_weights)
+    )
+    assert context.metadata["cess_ratio"] == 1.0
 
 
 def test_tempered_posterior_custom_increment_is_used_by_weighting(
@@ -392,19 +472,31 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
         def log_increment(
             self,
             particles: np.ndarray,
-            evaluation,
             context: StepContext,
             *,
-            log_proposal_override=None,
+            evaluation=None,
         ) -> np.ndarray:
             context.metadata["custom_increment_called"] = True
+            context.metadata["received_proposal_override"] = (
+                context.metadata.get(self.log_proposal_override_key)
+            )
             return np.full(particles.shape[0], 2.0)
 
     posterior = CustomPosterior(
         log_prior=lambda particles, context: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles, context: np.ones(particles.shape[0]),
+        log_proposal_override_key="custom_proposal_override",
     )
-    context = context_factory(metadata={"temperature": 0.0})
+
+    def proposal_override(particles):
+        return np.zeros(particles.shape[0])
+
+    context = context_factory(
+        metadata={
+            "temperature": 0.0,
+            "custom_proposal_override": proposal_override,
+        }
+    )
     step = FixedTemperedWeighting(
         posterior,
         temperature_increment=0.25,
@@ -414,6 +506,7 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
     updated = step(particle_state, context, rng)
 
     assert context.metadata["custom_increment_called"] is True
+    assert context.metadata["received_proposal_override"] is proposal_override
     expected = particle_state.log_weights + 0.5
     assert np.allclose(updated.log_weights, expected)
 
@@ -426,10 +519,33 @@ def test_systematic_resampling_skips_when_not_required(
     step = SystematicResampling(ess_threshold=0.2, always_resample=False)
     result = step(normalized, context, rng)
     assert result is normalized  # no resampling expected
-    assert result.metadata["ess_before_resampling"] == pytest.approx(
-        normalized.effective_sample_size()
+
+
+@pytest.mark.parametrize("resampled", [False, True])
+def test_mutate_if_resampled(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    resampled: bool,
+) -> None:
+    class TrackingMutation(SMCStep):
+        def apply(self, state, context, rng):
+            context.metadata["mutation_called"] = True
+            return state.with_updates(particles=state.particles + 1.0)
+
+    context = context_factory(metadata={"resampled": resampled})
+    step = MutateIfResampled(TrackingMutation())
+    updated = step(particle_state, context, rng)
+
+    assert context.metadata["mutation_skipped"] is not resampled
+    assert updated.metadata["mutation_skipped"] is not resampled
+    assert context.metadata.get("mutation_called", False) is resampled
+    expected_particles = (
+        particle_state.particles + 1.0
+        if resampled
+        else particle_state.particles
     )
-    assert result.metadata["resampled"] is False
+    assert np.array_equal(updated.particles, expected_particles)
 
 
 def test_multinomial_resampling_resamples_particles(
@@ -686,68 +802,6 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
         scale == context.metadata["proposal_scale"]
         for scale in context.metadata["factory_scales"]
     )  # noqa: PLR2004
-
-
-def test_dimensionality_expansion_appends_block(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    class AppendingTransformation(SMCTransformation):
-        def forward(
-            self,
-            state: ParticleState,
-            context: StepContext,
-            rng: "RandomGenerator",
-        ) -> ParticleState:
-            n = state.particles.shape[0]
-            new_block = np.full((n, 2), fill_value=0.5)
-            particles = np.concatenate([state.particles, new_block], axis=1)
-            return state.with_updates(particles=particles)
-
-    context = context_factory(metadata={"temperature": 0.8})
-    initial_state = particle_state.with_updates(
-        metadata=dict(particle_state.metadata, temperature=0.8)
-    )
-
-    step = ExpandDimensions(
-        AppendingTransformation(),
-        expected_block_size=2,
-        metadata_key="dims",
-        added_dimensions_key="dims_added",
-        dimension_delta_key="dims_delta",
-    )
-    expanded = step(initial_state, context, rng)
-
-    assert expanded.particles.shape[1] == initial_state.particles.shape[1] + 2
-    assert np.allclose(expanded.particles[:, -2:], 0.5)
-    assert expanded.metadata["dims"] == expanded.particles.shape[1]
-    assert expanded.metadata["dims_added"] == 2
-    assert expanded.metadata["dims_delta"] == 2
-    assert context.metadata["dims"] == expanded.particles.shape[1]
-    assert context.metadata["dims_added"] == 2
-    assert context.metadata["dims_delta"] == 2
-    assert expanded.metadata["temperature"] == 0.8
-    assert context.metadata["temperature"] == 0.8
-    assert "temperature_delta" not in context.metadata
-
-
-def test_metadata_transformation_updates_state_and_context(
-    particle_state: ParticleState, context_factory, rng
-) -> None:
-    context = context_factory(metadata={"stage": 0})
-
-    transformation = MetadataTransformation(
-        state_metadata_fn=lambda state, context, rng: {
-            "stage": context.metadata["stage"] + 1
-        },
-        context_metadata_fn=lambda state, context, rng: {
-            "stage": context.metadata["stage"] + 1
-        },
-    )
-
-    transformed = transformation.forward(particle_state, context, rng)
-
-    assert transformed.metadata["stage"] == 1
-    assert context.metadata["stage"] == 1
 
 
 def test_continue_while_overrides_stop_request(

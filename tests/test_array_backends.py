@@ -82,6 +82,6 @@ def test_torch_gpu_particles_remain_on_device() -> None:
     )
     evaluation = posterior.evaluate(state.particles, context)
     log_inc: Any = posterior.log_increment(
-        state.particles, evaluation, context
+        state.particles, context, evaluation=evaluation
     )
     assert log_inc.device == device

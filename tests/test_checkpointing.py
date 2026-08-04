@@ -117,46 +117,20 @@ def _assert_states_equal(left: ParticleState, right: ParticleState) -> None:
     assert left.log_evidence == pytest.approx(right.log_evidence)
     assert (left.evaluation is None) == (right.evaluation is None)
     if left.evaluation is not None and right.evaluation is not None:
-        np.testing.assert_allclose(
-            left.evaluation.log_prior,
-            right.evaluation.log_prior,
+        assert left.evaluation.components.keys() == (
+            right.evaluation.components.keys()
         )
-        np.testing.assert_allclose(
-            left.evaluation.log_likelihood,
-            right.evaluation.log_likelihood,
-        )
-        assert (left.evaluation.log_proposal is None) == (
-            right.evaluation.log_proposal is None
-        )
-        if (
-            left.evaluation.log_proposal is not None
-            and right.evaluation.log_proposal is not None
-        ):
+        for component in left.evaluation.components:
             np.testing.assert_allclose(
-                left.evaluation.log_proposal,
-                right.evaluation.log_proposal,
+                left.evaluation[component],
+                right.evaluation[component],
             )
-    assert left.metadata.keys() == right.metadata.keys()
-    for key in left.metadata:
-        left_value = left.metadata[key]
-        right_value = right.metadata[key]
-        if isinstance(left_value, np.ndarray) or isinstance(
-            right_value, np.ndarray
-        ):
-            np.testing.assert_allclose(
-                left_value,
-                right_value,
-                equal_nan=True,
-            )
-        else:
-            assert left_value == right_value
+    assert left.metadata == right.metadata
 
 
 def _assert_results_equal(
     left: SMCResult,
     right: SMCResult,
-    *,
-    compare_observation: bool = True,
 ) -> None:
     assert len(left.states) == len(right.states)
     for left_state, right_state in zip(left.states, right.states):
@@ -169,8 +143,7 @@ def _assert_results_equal(
         left.context.next_observation_index
         == right.context.next_observation_index
     )
-    if compare_observation:
-        assert left.context.observation == right.context.observation
+    assert left.context.observation == right.context.observation
     assert dict(left.context.shared) == dict(right.context.shared)
     assert left.context.metadata == right.context.metadata
     assert left.context.outputs == right.context.outputs
@@ -264,12 +237,32 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
     assert restored.initial_state is not None
     assert checkpoint.metadata == restored.metadata
     assert checkpoint.outputs == restored.outputs
+    assert restored.observation == {"batch": 2}
     restored_rng = restored.restore_rng()
     assert restored_rng is not None
     np.testing.assert_allclose(
         rng.normal(size=4),
         restored_rng.normal(size=4),
     )
+
+
+def test_checkpoint_version_one_payload_without_observation_still_loads(
+    particle_state: ParticleState,
+) -> None:
+    context = StepContext(t=0, observation={"batch": 1})
+    checkpoint = SMCCheckpoint.from_runtime(
+        state=particle_state,
+        context=context,
+        result=SMCResult(states=[particle_state], context=context),
+        steps=[],
+    )
+    payload = checkpoint.to_dict()
+    payload.pop("observation")
+
+    restored = SMCCheckpoint.from_dict(payload)
+
+    assert restored.observation is None
+    assert restored.result().context.observation is None
 
 
 def test_checkpoint_round_trip_allows_missing_rng_state(
@@ -364,9 +357,7 @@ def test_hdf5_checkpoint_writer_writes_latest_checkpoint(
         checkpoint = SMCCheckpoint.load_hdf5(h5_file, path="checkpoint")
 
     _assert_states_equal(checkpoint.state, result.final_state)
-    _assert_results_equal(
-        checkpoint.result(), result, compare_observation=False
-    )
+    _assert_results_equal(checkpoint.result(), result)
     assert checkpoint.next_iteration == 3
     assert checkpoint.next_observation_index == 3
     assert checkpoint.rng_state is not None
@@ -419,6 +410,26 @@ def test_hdf5_checkpoint_can_omit_result_history(
     assert len(checkpoint.result()) == 1
 
 
+def test_hdf5_writer_replaces_history_when_reused_for_a_fresh_run(
+    particle_state: ParticleState,
+    tmp_path,
+) -> None:
+    file_path = tmp_path / "reused_writer.h5"
+    writer = HDF5CheckpointWriter(file_path, every=2)
+    smc = SequentialMonteCarlo(steps=[], checkpoint_writers=[writer])
+
+    smc.run(particle_state, num_steps=2, rng=1)
+    replacement_state = particle_state.with_updates(
+        particles=np.full_like(particle_state.particles, 9.0)
+    )
+    replacement_result = smc.run(replacement_state, num_steps=2, rng=2)
+
+    with h5py.File(file_path, "r") as h5_file:
+        checkpoint = SMCCheckpoint.load_hdf5(h5_file)
+
+    _assert_results_equal(checkpoint.result(), replacement_result)
+
+
 def test_pickle_checkpoint_writer_writes_latest_checkpoint(
     particle_state: ParticleState,
     tmp_path,
@@ -435,9 +446,7 @@ def test_pickle_checkpoint_writer_writes_latest_checkpoint(
     checkpoint = SMCCheckpoint.load_pickle(file_path)
 
     _assert_states_equal(checkpoint.state, result.final_state)
-    _assert_results_equal(
-        checkpoint.result(), result, compare_observation=False
-    )
+    _assert_results_equal(checkpoint.result(), result)
     assert checkpoint.next_iteration == 3
     assert checkpoint.next_observation_index == 3
     assert checkpoint.rng_state is not None
@@ -505,6 +514,34 @@ def test_resume_without_saved_rng_works_for_deterministic_steps(
 
     _assert_results_equal(full_result, resumed_result)
     assert recorder.checkpoints[-1].rng_state is None
+
+
+@pytest.mark.parametrize("immediate", [False, True])
+def test_resume_clears_transient_stop_controls(
+    particle_state: ParticleState,
+    immediate: bool,
+) -> None:
+    step = DeterministicStep()
+    context = StepContext(t=0)
+    if immediate:
+        context.request_stop_immediately()
+    else:
+        context.request_stop()
+    checkpoint = SMCCheckpoint.from_runtime(
+        state=particle_state,
+        context=context,
+        result=SMCResult(states=[particle_state], context=context),
+        steps=[step],
+        rng=123,
+    )
+    resumed_smc = _make_smc(step=DeterministicStep())
+
+    runtime = resumed_smc.resume_from(checkpoint)
+
+    assert not runtime.metadata.get("stop_requested", False)
+    assert not runtime.metadata.get("stop_immediately", False)
+    result = resumed_smc.run(runtime=runtime, num_steps=2)
+    assert len(result.states) == 3
 
 
 def test_resume_restores_stateful_step(particle_state: ParticleState) -> None:

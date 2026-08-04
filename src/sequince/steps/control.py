@@ -179,15 +179,6 @@ class RepeatStep(SMCStep):
 
         return state
 
-    def state_dict(self) -> dict[str, Any]:
-        return {"step": self.step.state_dict()}
-
-    def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        nested_state = state.get("step", {})
-        if not isinstance(nested_state, Mapping):
-            raise TypeError("RepeatStep state 'step' must be a mapping.")
-        self.step.load_state_dict(nested_state)
-
 
 class SequentialStep(SMCStep):
     """Apply several SMC steps in order.
@@ -208,21 +199,3 @@ class SequentialStep(SMCStep):
                 break
 
         return state
-
-    def state_dict(self) -> dict[str, Any]:
-        return {"steps": [step.state_dict() for step in self.steps]}
-
-    def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        nested_states = state.get("steps", [])
-        if not isinstance(nested_states, Sequence):
-            raise TypeError("SequentialStep state 'steps' must be a sequence.")
-        if len(nested_states) != len(self.steps):
-            raise ValueError(
-                "SequentialStep state does not match the configured steps."
-            )
-        for step, nested_state in zip(self.steps, nested_states, strict=True):
-            if not isinstance(nested_state, Mapping):
-                raise TypeError(
-                    "SequentialStep nested states must be mappings."
-                )
-            step.load_state_dict(nested_state)
