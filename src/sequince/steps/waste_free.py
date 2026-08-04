@@ -6,8 +6,8 @@ import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .._array_api import arange, asarray, full, namespace
 from .._typing import Array
+from ..array_api import arange, asarray, full, namespace
 from ..target import SequentialTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext

@@ -7,18 +7,18 @@ from dataclasses import dataclass, field
 from numbers import Real
 from typing import TYPE_CHECKING, Any, MutableMapping
 
-from ._array_api import (
+from ._typing import Array
+from .array_api import (
     asarray,
     full,
     namespace,
 )
-from ._array_api import (
+from .array_api import (
     copy as array_copy,
 )
-from ._array_api import (
+from .array_api import (
     logsumexp as xp_logsumexp,
 )
-from ._typing import Array
 
 if TYPE_CHECKING:
     from .target import TargetEvaluation

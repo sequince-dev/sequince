@@ -8,7 +8,7 @@ from typing import Any, Mapping, Sequence
 
 import array_api_extra as xpx
 
-from ._array_api import asarray, namespace, to_numpy
+from .array_api import asarray, namespace, to_numpy
 from .flows import (
     NormalizingFlow,
     clone_flow,

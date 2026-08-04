@@ -5,8 +5,8 @@ import math
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
-from .._array_api import asarray, logsumexp, namespace, to_numpy
 from .._typing import Array
+from ..array_api import asarray, logsumexp, namespace, to_numpy
 from ..stats import (
     cess_ratio_from_log_weights_and_increments,
     ess_from_log_weights,

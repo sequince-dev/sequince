@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 import numpy as np
 from orng import RandomGenerator
 
-from ._array_api import namespace
 from ._typing import Array
+from .array_api import namespace
 
 if TYPE_CHECKING:
     from .steps.base import StepContext

@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 import array_api_extra as xpx
 
-from .._array_api import arange, asarray, namespace
 from .._typing import Array
+from ..array_api import arange, asarray, namespace
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:

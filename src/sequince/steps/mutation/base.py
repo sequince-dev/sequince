@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 import numpy as np
 
-from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
+from ...array_api import asarray, namespace, to_numpy
 from ...target import SequentialTarget
 from ...transforms import ParticleTransform
 from ..base import SMCStep

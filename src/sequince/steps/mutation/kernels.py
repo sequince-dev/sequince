@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import numpy as np
 
-from ..._array_api import asarray, full, namespace, to_numpy
 from ..._typing import Array
+from ...array_api import asarray, full, namespace, to_numpy
 from ..base import StepContext
 
 if TYPE_CHECKING:

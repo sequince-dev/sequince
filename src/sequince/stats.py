@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import math
 
-from ._array_api import asarray, full, logsumexp, namespace, to_numpy
 from ._typing import Array
+from .array_api import asarray, full, logsumexp, namespace, to_numpy
 
 
 def ess_from_log_weights(log_weights: Array) -> float:

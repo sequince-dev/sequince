@@ -8,8 +8,8 @@ from typing import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ._array_api import namespace, to_numpy
 from ._typing import Array
+from .array_api import namespace, to_numpy
 
 
 def plot_chains(

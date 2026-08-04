@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
-from ._array_api import asarray, full, namespace
-from ._array_api import copy as array_copy
 from ._typing import Array
+from .array_api import asarray, full, namespace
+from .array_api import copy as array_copy
 from .utils import call_with_optional_context
 
 if TYPE_CHECKING:

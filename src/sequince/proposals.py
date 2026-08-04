@@ -4,8 +4,8 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from ._array_api import asarray, full, namespace, to_numpy
 from ._typing import Array
+from .array_api import asarray, full, namespace, to_numpy
 from .flows import (
     NormalizingFlow,
     clone_flow,

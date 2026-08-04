@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any, Callable
 import numpy as np
 from numpy.random import Generator as NumPyGenerator
 
-from ._array_api import asarray, namespace, to_numpy
 from ._typing import Array
+from .array_api import asarray, namespace, to_numpy
 from .state import ParticleState
 from .steps.context import StepContext
 from .steps.nested import NESTED_SMC_OUTPUT_KEY
