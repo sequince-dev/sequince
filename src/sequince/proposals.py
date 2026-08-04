@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from ._array_api import asarray, full, namespace, to_numpy
 from ._typing import Array
@@ -13,11 +13,13 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
+from .utils import call_with_optional_context
 
 if TYPE_CHECKING:
     from .posterior import TemperedPosterior
     from .state import ParticleState
     from .steps.context import StepContext
+    from .target import SequentialTarget
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,53 @@ class FlowProposal(ProposalDistribution):
         return samples, self.log_prob(samples, context=context)
 
 
+def _proposal_batch(
+    proposal: ProposalDistribution,
+    n_particles: int,
+    context: StepContext,
+) -> tuple[Array, Array]:
+    """Draw and validate one proposal batch."""
+    particles, log_proposal = proposal.sample_and_log_prob(
+        n_particles,
+        context=context,
+    )
+    xp = namespace(particles, log_proposal)
+    particles = asarray(particles, xp=xp)
+    if particles.ndim == 0 or particles.shape[0] != n_particles:
+        raise ValueError(
+            "Proposal must return exactly one particle per requested sample."
+        )
+    if not bool(to_numpy(xp.all(xp.isfinite(particles)))):
+        raise ValueError("Proposal returned non-finite particles.")
+
+    log_proposal = _particle_values(
+        log_proposal,
+        particles,
+        name="Proposal log densities",
+    )
+    if not bool(to_numpy(xp.all(xp.isfinite(log_proposal)))):
+        raise ValueError("Proposal returned non-finite log densities.")
+    return particles, log_proposal
+
+
+def _particle_values(values: Any, particles: Array, *, name: str) -> Array:
+    """Return one scalar value per particle."""
+    xp = namespace(particles, values)
+    array = asarray(values, xp=xp, like=particles)
+    n_particles = particles.shape[0]
+    if array.ndim == 0:
+        array = full(
+            (n_particles,),
+            float(array),
+            xp=xp,
+            dtype=array.dtype,
+            like=particles,
+        )
+    if array.shape != (n_particles,):
+        raise ValueError(f"{name} must contain one value per particle.")
+    return array
+
+
 def draw_initial_state(
     proposal: ProposalDistribution,
     n_particles: int,
@@ -136,34 +185,12 @@ def draw_initial_state(
         raise ValueError("n_particles must be positive.")
 
     evaluation_context = context or StepContext(t=0)
-    particles, log_proposal = proposal.sample_and_log_prob(
+    particles, log_proposal = _proposal_batch(
+        proposal,
         n_particles,
-        context=evaluation_context,
+        evaluation_context,
     )
     xp = namespace(particles, log_proposal)
-    particles = asarray(particles, xp=xp)
-    if particles.ndim == 0 or particles.shape[0] != n_particles:
-        raise ValueError(
-            "Proposal must return exactly one particle per requested sample."
-        )
-    if not bool(to_numpy(xp.all(xp.isfinite(particles)))):
-        raise ValueError("Proposal returned non-finite particles.")
-
-    log_proposal = asarray(log_proposal, xp=xp, like=particles)
-    if log_proposal.ndim == 0:
-        log_proposal = full(
-            (n_particles,),
-            float(log_proposal),
-            xp=xp,
-            dtype=log_proposal.dtype,
-            like=particles,
-        )
-    if log_proposal.shape != (n_particles,):
-        raise ValueError(
-            "Proposal must return one log density per requested sample."
-        )
-    if not bool(to_numpy(xp.all(xp.isfinite(log_proposal)))):
-        raise ValueError("Proposal returned non-finite log densities.")
 
     evaluation = None
     if posterior is not None:
@@ -183,4 +210,95 @@ def draw_initial_state(
         ):
             raise ValueError("Posterior evaluation returned NaN values.")
 
+    return ParticleState(particles=particles, evaluation=evaluation)
+
+
+def draw_mcmc_initial_state(
+    proposal: ProposalDistribution,
+    n_particles: int,
+    log_prob_fn: Callable[..., Array | float] | SequentialTarget,
+    *,
+    context: StepContext | None = None,
+    max_batches: int = 100,
+) -> "ParticleState":
+    """Draw finite-target starting particles for standalone MCMC.
+
+    Unlike :func:`draw_initial_state`, this function conditions the proposal by
+    rejecting particles whose target log density is ``-inf``. It must not be
+    used to initialize an evidence estimator.
+    """
+    from .state import ParticleState
+    from .steps.context import StepContext
+    from .target import SequentialTarget, TargetEvaluation
+
+    if n_particles < 1:
+        raise ValueError("n_particles must be positive.")
+    if max_batches < 1:
+        raise ValueError("max_batches must be positive.")
+
+    evaluation_context = context or StepContext(t=0)
+    accepted: list[Array] = []
+    accepted_evaluations: list[TargetEvaluation] = []
+    n_accepted = 0
+    for _ in range(max_batches):
+        particles, _ = _proposal_batch(
+            proposal,
+            n_particles,
+            evaluation_context,
+        )
+        xp = namespace(particles)
+        evaluation = None
+        if isinstance(log_prob_fn, SequentialTarget):
+            evaluation = log_prob_fn.prepare_evaluation(
+                particles,
+                evaluation_context,
+            )
+            log_prob = log_prob_fn.log_prob(
+                particles,
+                evaluation_context,
+                evaluation=evaluation,
+            )
+        else:
+            log_prob = call_with_optional_context(
+                log_prob_fn,
+                (particles,),
+                evaluation_context,
+            )
+        log_prob = _particle_values(
+            log_prob,
+            particles,
+            name="Target log densities",
+        )
+        numerical_error = xp.isnan(log_prob) | (log_prob == float("inf"))
+        if bool(to_numpy(xp.any(numerical_error))):
+            raise ValueError(
+                "Target log densities contain NaN or +inf values."
+            )
+
+        valid = xp.isfinite(log_prob)
+        if bool(to_numpy(xp.any(valid))):
+            indices = xp.nonzero(valid)[0]
+            batch = particles[indices]
+            accepted.append(batch)
+            if evaluation is not None:
+                accepted_evaluations.append(evaluation.take(indices))
+            n_accepted += batch.shape[0]
+        if n_accepted >= n_particles:
+            break
+
+    if n_accepted < n_particles:
+        raise RuntimeError(
+            f"Could only draw {n_accepted} finite-target particles after "
+            f"{max_batches} proposal batches."
+        )
+
+    xp = namespace(*accepted)
+    particles = (
+        accepted[0] if len(accepted) == 1 else xp.concat(accepted, axis=0)
+    )[:n_particles]
+    evaluation = None
+    if accepted_evaluations:
+        evaluation = TargetEvaluation.concatenate(accepted_evaluations).take(
+            xp.arange(n_particles)
+        )
     return ParticleState(particles=particles, evaluation=evaluation)

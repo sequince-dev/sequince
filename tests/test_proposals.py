@@ -5,7 +5,11 @@ import math
 import numpy as np
 import pytest
 
-from sequince import TemperedPosterior, draw_initial_state
+from sequince import (
+    TemperedPosterior,
+    draw_initial_state,
+    draw_mcmc_initial_state,
+)
 from sequince.steps import FixedTemperedWeighting
 from sequince.steps.context import StepContext
 
@@ -84,3 +88,55 @@ def test_draw_initial_state_rejects_invalid_proposal_output():
 
     with pytest.raises(ValueError, match="non-finite particles"):
         draw_initial_state(proposal, 2)
+
+
+def test_draw_mcmc_initial_state_refills_rejected_particles():
+    class BatchedProposal(DeterministicProposal):
+        def __init__(self):
+            super().__init__([[-1.0], [0.0], [-2.0]])
+            self.batches = [
+                np.array([[-1.0], [0.0], [-2.0]]),
+                np.array([[1.0], [2.0], [3.0]]),
+            ]
+
+        def sample_and_log_prob(self, n_samples, context=None):
+            batch = self.batches[self.sample_calls]
+            self.sample_calls += 1
+            return batch.copy(), np.zeros(n_samples)
+
+    proposal = BatchedProposal()
+
+    state = draw_mcmc_initial_state(
+        proposal,
+        3,
+        lambda particles: np.where(particles[:, 0] < 0.0, -np.inf, 0.0),
+    )
+
+    np.testing.assert_allclose(state.particles[:, 0], [0.0, 1.0, 2.0])
+    assert proposal.sample_calls == 2
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf])
+def test_draw_mcmc_initial_state_raises_on_target_numerical_errors(invalid):
+    proposal = DeterministicProposal([[0.0], [1.0]])
+
+    with pytest.raises(ValueError, match=r"NaN or \+inf"):
+        draw_mcmc_initial_state(
+            proposal,
+            2,
+            lambda particles: np.array([0.0, invalid]),
+        )
+
+
+def test_draw_mcmc_initial_state_has_bounded_rejection():
+    proposal = DeterministicProposal([[-1.0], [-2.0]])
+
+    with pytest.raises(RuntimeError, match="after 2 proposal batches"):
+        draw_mcmc_initial_state(
+            proposal,
+            2,
+            lambda particles: np.full(len(particles), -np.inf),
+            max_batches=2,
+        )
+
+    assert proposal.sample_calls == 2

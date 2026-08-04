@@ -6,7 +6,7 @@ import logging
 from .mcmc import MarkovChainMonteCarlo, MCMCResult, make_mcmc
 from .posterior import TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
-from .proposals import draw_initial_state
+from .proposals import draw_initial_state, draw_mcmc_initial_state
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .state import ParticleState
@@ -33,4 +33,5 @@ __all__ = [
     "make_standard_bayesian_smc",
     "make_mcmc",
     "draw_initial_state",
+    "draw_mcmc_initial_state",
 ]
