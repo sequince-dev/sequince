@@ -1,19 +1,39 @@
 from __future__ import annotations
 
 import inspect
+import math
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
 from orng import RandomGenerator
 
 from ._typing import Array
-from .array_api import namespace
+from .array_api import asarray, full, logsumexp, namespace, to_numpy
 
 if TYPE_CHECKING:
     from .steps.base import StepContext
 
 
 RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
+
+
+def normalize_log_weights(log_weights: Any, *, xp: Any | None = None):
+    """Normalize log weights, falling back to uniform weights if degenerate."""
+    xp = xp or namespace(log_weights)
+    values = asarray(log_weights, xp=xp)
+    log_norm = logsumexp(values, xp=xp)
+    log_norm_scalar = float(to_numpy(log_norm))
+    if math.isfinite(log_norm_scalar):
+        return values - log_norm_scalar, log_norm_scalar, True
+    n_weights = values.shape[0]
+    normalized = full(
+        (n_weights,),
+        -math.log(n_weights),
+        xp=xp,
+        dtype=values.dtype,
+        like=values,
+    )
+    return normalized, 0.0, False
 
 
 def resolve_rng(

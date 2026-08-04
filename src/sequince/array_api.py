@@ -28,7 +28,6 @@ __all__ = [
     "full",
     "logsumexp",
     "namespace",
-    "normalize_log_weights",
     "resolve_dtype",
     "to_numpy",
 ]
@@ -240,22 +239,3 @@ def logsumexp(array: Any, *, xp: Any | None = None):
         return max_value
     stable = xp.exp(arr - max_value)
     return xp.log(xp.sum(stable)) + max_value
-
-
-def normalize_log_weights(log_weights: Any, *, xp: Any | None = None):
-    xp = xp or namespace(log_weights)
-    values = asarray(log_weights, xp=xp)
-    log_norm = logsumexp(values, xp=xp)
-    log_norm_scalar = float(to_numpy(log_norm))
-    if math.isfinite(log_norm_scalar):
-        return values - log_norm_scalar, log_norm_scalar, True
-    n_weights = values.shape[0]
-    fill_value = -math.log(n_weights)
-    normalized = full(
-        (n_weights,),
-        fill_value,
-        xp=xp,
-        dtype=values.dtype,
-        like=values,
-    )
-    return normalized, 0.0, False
