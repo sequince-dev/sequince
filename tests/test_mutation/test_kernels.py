@@ -5,7 +5,6 @@ import pytest
 from orng import RandomGenerator
 
 from sequince._array_api import namespace
-from sequince.state import ParticleState
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import (
     AdaptiveMaskedGaussianRandomWalk,
@@ -167,20 +166,21 @@ def test_gaussian_random_walk_mutation_preserves_backend(
     backend: str,
     backend_factory,
 ) -> None:
-    _, particles, log_weights, row_sum = backend_factory(backend)
+    case = backend_factory(backend)
+    xp = case.xp
+    particles = case.particles
     backend_ns = namespace(particles)
-    state = ParticleState(particles=particles, log_weights=log_weights)
     step = MetropolisHastingsMutation(
-        lambda values, context: -0.5 * row_sum(values**2),
+        lambda values, context: -0.5 * xp.sum(values**2, axis=1),
         GaussianRandomWalk(scale=0.1),
         n_steps=2,
         store_chains=True,
     )
 
     updated = step(
-        state,
+        case.state(),
         StepContext(t=0),
-        RandomGenerator(backend=backend, seed=2468),
+        case.rng(2468),
     )
 
     assert updated.particles.shape == particles.shape
@@ -246,7 +246,8 @@ def test_mixture_mutation_kernel_preserves_backend(
     backend: str,
     backend_factory,
 ) -> None:
-    _, particles, _, _ = backend_factory(backend)
+    case = backend_factory(backend)
+    particles = case.particles
     backend_ns = namespace(particles)
     kernel = get_mutation_kernel(
         "mixture",
@@ -265,7 +266,7 @@ def test_mixture_mutation_kernel_preserves_backend(
 
     proposals = kernel.sample(
         particles,
-        RandomGenerator(backend=backend, seed=1357),
+        case.rng(1357),
     )
 
     assert proposals.shape == particles.shape

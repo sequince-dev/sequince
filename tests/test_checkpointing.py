@@ -571,26 +571,25 @@ def test_resume_restores_stateful_step(particle_state: ParticleState) -> None:
 
 def test_emcee_resume_uses_checkpointed_master_rng(
     particle_state: ParticleState,
+    standard_normal_log_prob,
 ) -> None:
     pytest.importorskip("emcee")
     from sequince.steps.mutation import EmceeMutation
 
-    def log_prob(particles):
-        values = np.asarray(particles)
-        return -0.5 * np.sum(values**2, axis=-1)
-
     full_result = _make_smc(
-        step=EmceeMutation(log_prob, n_steps=2, vectorize=True)
+        step=EmceeMutation(standard_normal_log_prob, n_steps=2, vectorize=True)
     ).run(particle_state, num_steps=3, rng=123)
 
     recorder = CheckpointRecorder()
     _make_smc(
         recorder,
-        step=EmceeMutation(log_prob, n_steps=2, vectorize=True),
+        step=EmceeMutation(
+            standard_normal_log_prob, n_steps=2, vectorize=True
+        ),
     ).run(particle_state, num_steps=1, rng=123)
 
     resumed_smc = _make_smc(
-        step=EmceeMutation(log_prob, n_steps=2, vectorize=True)
+        step=EmceeMutation(standard_normal_log_prob, n_steps=2, vectorize=True)
     )
     runtime = resumed_smc.resume_from(recorder.checkpoints[-1])
     resumed_result = resumed_smc.run(runtime=runtime, num_steps=2)

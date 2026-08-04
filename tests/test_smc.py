@@ -89,9 +89,11 @@ def test_smc_respects_stop_request(particle_state: ParticleState, rng) -> None:
 
     assert len(states) == 3
     assert states[-1].metadata["calls"] == 3
-    assert states.initial_state is not particle_state
+    initial_state = states.initial_state
+    assert initial_state is not None
+    assert initial_state is not particle_state
     np.testing.assert_allclose(
-        states.initial_state.particles,
+        initial_state.particles,
         particle_state.particles,
     )
 
@@ -164,13 +166,10 @@ def test_smc_immediate_stop_skips_remaining_steps(
 
 
 def test_smc_with_adaptive_tempering_stops_at_max_temperature(
-    particle_state: ParticleState, rng
+    particle_state: ParticleState, rng, unit_log_likelihood
 ) -> None:
-    def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        return np.ones(particles.shape[0])
-
     adaptive = AdaptiveTemperedWeighting(
-        log_like,
+        unit_log_likelihood,
         target_ess_ratio=0.8,
         max_temperature=0.5,
         min_delta=0.05,

@@ -61,22 +61,11 @@ def test_dimensionality_expansion_appends_block(
 
 
 def test_transformation_step_composes_proposal_distribution_density(
-    particle_state: ParticleState, context_factory, rng
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    analytic_proposal_factory,
 ) -> None:
-    class QuadraticProposal:
-        def log_prob(self, particles: np.ndarray, context=None) -> np.ndarray:
-            values = np.atleast_2d(particles)
-            return -0.5 * np.sum(values**2, axis=1)
-
-        def sample(self, n_samples: int, context=None) -> np.ndarray:
-            return np.zeros((n_samples, particle_state.particles.shape[1]))
-
-        def sample_and_log_prob(
-            self, n_samples: int, context=None
-        ) -> tuple[np.ndarray, np.ndarray]:
-            samples = self.sample(n_samples, context=context)
-            return samples, self.log_prob(samples, context=context)
-
     class ScalingTransformation(SMCTransformation):
         def forward(
             self,
@@ -105,7 +94,9 @@ def test_transformation_step_composes_proposal_distribution_density(
     posterior = TemperedPosterior(
         log_prior=lambda particles: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles: np.zeros(particles.shape[0]),
-        log_proposal=QuadraticProposal(),
+        log_proposal=analytic_proposal_factory(
+            n_dim=particle_state.particles.shape[1], quadratic_scale=0.5
+        ),
         log_proposal_override_key="transformed_log_proposal",
     )
     context = context_factory()

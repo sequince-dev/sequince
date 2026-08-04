@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -87,27 +86,12 @@ def test_target_replaces_evaluation_from_another_target(
 
 def test_annealed_posterior_accepts_proposal_distribution_object(
     context_factory,
+    analytic_proposal_factory,
 ) -> None:
-    class QuadraticProposal:
-        def log_prob(self, particles: np.ndarray, context=None) -> np.ndarray:
-            values = np.asarray(particles, dtype=float)
-            if values.ndim == 1:
-                values = values[:, np.newaxis]
-            return -0.25 * np.sum(values**2, axis=1)
-
-        def sample(self, n_samples: int, context=None) -> np.ndarray:
-            return np.zeros((n_samples, 1), dtype=float)
-
-        def sample_and_log_prob(
-            self, n_samples: int, context=None
-        ) -> tuple[np.ndarray, np.ndarray]:
-            samples = self.sample(n_samples, context=context)
-            return samples, self.log_prob(samples, context=context)
-
     posterior = TemperedPosterior(
         log_prior=lambda particles, context: np.zeros(particles.shape[0]),
         log_likelihood=lambda particles, context: np.ones(particles.shape[0]),
-        log_proposal=QuadraticProposal(),
+        log_proposal=analytic_proposal_factory(n_dim=1, quadratic_scale=0.25),
     )
     particles = np.array([[0.0], [2.0]], dtype=float)
     context = context_factory(metadata={"temperature": 0.25})
@@ -298,42 +282,11 @@ def test_target_evaluation_rejects_different_particle_count(
         )
 
 
-def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
-    class DummyFlow:
-        def __init__(self, shift: float = 0.75) -> None:
-            self.xp: Any = np
-            self.shift = shift
-            self.fitted_particles: Any = None
-
-        def fit(self, particles, context=None, **kwargs: Any) -> "DummyFlow":
-            self.fitted_particles = np.asarray(particles, dtype=float).copy()
-            return self
-
-        def forward(self, particles, context=None):
-            arr = np.asarray(particles, dtype=float)
-            return arr + self.shift, np.zeros(arr.shape[0], dtype=float)
-
-        def inverse(self, particles, context=None):
-            arr = np.asarray(particles, dtype=float)
-            return arr - self.shift, np.zeros(arr.shape[0], dtype=float)
-
-        def log_prob(self, particles, context=None):
-            arr = np.asarray(particles, dtype=float)
-            if arr.ndim == 1:
-                arr = arr[:, np.newaxis]
-            return -0.5 * np.sum((arr - self.shift) ** 2, axis=1)
-
-        def sample(self, num_samples: int = 1, context=None):
-            return np.full((num_samples, 2), self.shift, dtype=float)
-
-        def state_dict(self):
-            return {"fitted_particles": self.fitted_particles}
-
-        def load_state_dict(self, state):
-            self.fitted_particles = np.asarray(state["fitted_particles"])
-
+def test_flow_proposal_delegates_sampling_and_density(
+    context_factory, shift_flow_factory
+) -> None:
     training_particles = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=float)
-    proposal = FlowProposal(DummyFlow()).fit(
+    proposal = FlowProposal(shift_flow_factory(n_dim=2, shift=0.75)).fit(
         training_particles,
         context=context_factory(),
     )
@@ -349,7 +302,7 @@ def test_flow_proposal_delegates_sampling_and_density(context_factory) -> None:
         sampled_log_prob,
         proposal.log_prob(sampled_particles, context=context_factory()),
     )
-    restored_proposal = FlowProposal(DummyFlow())
+    restored_proposal = FlowProposal(shift_flow_factory(n_dim=2, shift=0.75))
     restored_proposal.load_state_dict(proposal.state_dict())
     np.testing.assert_allclose(
         getattr(restored_proposal.flow, "fitted_particles"), training_particles

@@ -14,13 +14,9 @@ from sequince.steps.mutation import MutationStep, get_mutation_step
 from sequince.transforms import AffineTransform
 
 
-def log_prob(particles, context=None):
-    return -0.5 * np.sum(np.asarray(particles) ** 2, axis=-1)
-
-
-def make_runner(*, n_steps=4, checkpoint_writers=None, transform=None):
+def make_runner(target, *, n_steps=4, checkpoint_writers=None, transform=None):
     return make_mcmc(
-        log_prob,
+        target,
         mutation="metropolis-hastings",
         n_steps=n_steps,
         mutation_kwargs={
@@ -32,10 +28,14 @@ def make_runner(*, n_steps=4, checkpoint_writers=None, transform=None):
     )
 
 
-def test_mcmc_returns_chain_and_processed_samples(simple_particles):
+def test_mcmc_returns_chain_and_processed_samples(
+    simple_particles, standard_normal_log_prob
+):
     state = ParticleState(simple_particles)
 
-    result = make_runner(n_steps=4).run(state, rng=123)
+    result = make_runner(standard_normal_log_prob, n_steps=4).run(
+        state, rng=123
+    )
 
     assert isinstance(result, MCMCResult)
     assert result.chain.shape == (4, len(simple_particles), 2)
@@ -47,10 +47,13 @@ def test_mcmc_returns_chain_and_processed_samples(simple_particles):
     assert "metropolis_hastings_acceptance" in result.diagnostics
 
 
-def test_mcmc_stores_chain_in_particle_coordinates(simple_particles):
+def test_mcmc_stores_chain_in_particle_coordinates(
+    simple_particles, standard_normal_log_prob
+):
     state = ParticleState(simple_particles)
 
     result = make_runner(
+        standard_normal_log_prob,
         n_steps=3,
         transform=AffineTransform(),
     ).run(state, rng=456)
@@ -62,12 +65,14 @@ def test_mcmc_stores_chain_in_particle_coordinates(simple_particles):
 def test_mcmc_checkpoint_resume_concatenates_chains(
     simple_particles,
     tmp_path,
+    standard_normal_log_prob,
 ):
     checkpoint_path = tmp_path / "mcmc.h5"
     writer = HDF5CheckpointWriter(checkpoint_path)
     state = ParticleState(simple_particles)
 
     first = make_runner(
+        standard_normal_log_prob,
         n_steps=2,
         checkpoint_writers=[writer],
     ).run(state, rng=789)
@@ -75,7 +80,7 @@ def test_mcmc_checkpoint_resume_concatenates_chains(
     with h5py.File(checkpoint_path, "r") as h5_file:
         checkpoint = SMCCheckpoint.load_hdf5(h5_file)
 
-    resumed_runner = make_runner(n_steps=2)
+    resumed_runner = make_runner(standard_normal_log_prob, n_steps=2)
     runtime = resumed_runner.resume_from(checkpoint)
     resumed = resumed_runner.run(runtime=runtime)
 
@@ -84,9 +89,11 @@ def test_mcmc_checkpoint_resume_concatenates_chains(
     np.testing.assert_allclose(resumed.chain[:2], first.chain)
 
 
-def test_minipcn_chain_contains_requested_number_of_steps(simple_particles):
+def test_minipcn_chain_contains_requested_number_of_steps(
+    simple_particles, standard_normal_log_prob
+):
     runner = make_mcmc(
-        log_prob,
+        standard_normal_log_prob,
         mutation="minipcn",
         n_steps=3,
     )
@@ -96,10 +103,12 @@ def test_minipcn_chain_contains_requested_number_of_steps(simple_particles):
     assert result.chain.shape == (3, len(simple_particles), 2)
 
 
-def test_direct_mutation_step_is_configured_to_store_chains(simple_particles):
+def test_direct_mutation_step_is_configured_to_store_chains(
+    simple_particles, standard_normal_log_prob
+):
     mutation = get_mutation_step(
         "metropolis-hastings",
-        target=log_prob,
+        target=standard_normal_log_prob,
         mutation_n_steps=2,
         mutation_kwargs={
             "kernel": "gaussian-random-walk",

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from orng import RandomGenerator
 
 from sequince._array_api import namespace
 from sequince.posterior import TemperedPosterior
@@ -16,25 +15,21 @@ from sequince.steps.base import StepContext
 def test_sequince_runs_with_array_backends(
     backend: str, backend_factory
 ) -> None:
-    out = backend_factory(backend)
-    xp, particles, log_weights, row_sum = out
+    case = backend_factory(backend)
+    xp = case.xp
+    particles = case.particles
     backend_ns = namespace(particles)
-
-    initial_state = ParticleState(
-        particles=particles,
-        log_weights=log_weights,
-    )
 
     smc, _, _ = make_standard_bayesian_smc(
         log_prior=lambda x, ctx: xp.zeros(x.shape[0], dtype=x.dtype),
-        log_likelihood=lambda x, ctx: -0.5 * row_sum(x**2),
+        log_likelihood=lambda x, ctx: -0.5 * xp.sum(x**2, axis=1),
         mutation="none",
     )
 
     results = smc.run(
-        initial_state,
+        case.state(),
         num_steps=1,
-        rng=RandomGenerator(backend=backend, seed=1234),
+        rng=case.rng(1234),
     )
 
     assert len(results) == 1
@@ -45,7 +40,7 @@ def test_sequince_runs_with_array_backends(
 
     samples = results.posterior_samples(
         n_samples=particles.shape[0],
-        rng=RandomGenerator(backend=backend, seed=4321),
+        rng=case.rng(4321),
     )
     assert samples.shape[0] == particles.shape[0]
     assert namespace(samples) is backend_ns
@@ -64,6 +59,7 @@ def test_torch_gpu_particles_remain_on_device() -> None:
     particles = torch.arange(8, device=device, dtype=dtype).reshape(4, 2)
     log_weights = torch.full((4,), float("-inf"), dtype=dtype, device=device)
     state = ParticleState(particles=particles, log_weights=log_weights)
+    xp = namespace(particles)
 
     normalized, _ = state.normalize()
     assert normalized.log_weights.device == device
@@ -77,8 +73,8 @@ def test_torch_gpu_particles_remain_on_device() -> None:
 
     context = StepContext(t=0)
     posterior = TemperedPosterior(
-        log_prior=lambda x, ctx: torch.sum(x, dim=1),
-        log_likelihood=lambda x, ctx: torch.sum(x, dim=1),
+        log_prior=lambda x, ctx: xp.sum(x, axis=1),
+        log_likelihood=lambda x, ctx: xp.sum(x, axis=1),
     )
     evaluation = posterior.evaluate(state.particles, context)
     log_inc: Any = posterior.log_increment(

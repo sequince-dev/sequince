@@ -1,18 +1,123 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
 import numpy as np
 import pytest
+from orng import RandomGenerator
 
+from sequince._array_api import namespace
+from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
 from sequince.utils import resolve_rng
 
-BackendFactoryReturn = tuple[Any, Any, Any, Callable[[Any], Any]]
+
+def _standard_normal_log_prob(values: Any, context: Any = None) -> Any:
+    del context
+    array = np.asarray(values)
+    return -0.5 * np.sum(array**2, axis=-1)
 
 
-def _backend_factory(backend: str) -> BackendFactoryReturn:
+def _unit_log_likelihood(values: Any, context: Any = None) -> np.ndarray:
+    del context
+    return np.ones(np.asarray(values).shape[0])
+
+
+def _zero_log_likelihood(values: Any, context: Any = None) -> np.ndarray:
+    del context
+    return np.zeros(np.asarray(values).shape[0])
+
+
+@dataclass(frozen=True)
+class BackendCase:
+    name: str
+    xp: Any
+    particles: Any
+    log_weights: Any
+
+    def state(self) -> ParticleState:
+        return ParticleState(
+            particles=self.particles,
+            log_weights=self.log_weights,
+        )
+
+    def rng(self, seed: int) -> RandomGenerator:
+        return RandomGenerator(backend=self.name, seed=seed)
+
+
+class AnalyticProposal:
+    def __init__(self, n_dim: int, quadratic_scale: float = 0.0) -> None:
+        self.n_dim = n_dim
+        self.quadratic_scale = quadratic_scale
+
+    def log_prob(self, particles: Any, context: Any = None) -> np.ndarray:
+        del context
+        values = np.asarray(particles, dtype=float)
+        if values.ndim == 1:
+            values = values[:, np.newaxis]
+        return -self.quadratic_scale * np.sum(values**2, axis=1)
+
+    def sample(self, n_samples: int, context: Any = None) -> np.ndarray:
+        del context
+        return np.zeros((n_samples, self.n_dim), dtype=float)
+
+    def sample_and_log_prob(
+        self, n_samples: int, context: Any = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        samples = self.sample(n_samples, context=context)
+        return samples, self.log_prob(samples, context=context)
+
+
+class ShiftFlow:
+    xp = np
+
+    def __init__(self, n_dim: int, shift: float = 1.5) -> None:
+        self.n_dim = n_dim
+        self.shift = shift
+        self.fitted_particles: np.ndarray | None = None
+
+    def fit(
+        self, values: Any, context: Any = None, **kwargs: Any
+    ) -> ShiftFlow:
+        del context, kwargs
+        self.fitted_particles = np.asarray(values, dtype=float).copy()
+        return self
+
+    def forward(
+        self, values: Any, context: Any = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del context
+        array = np.asarray(values, dtype=float)
+        return array + self.shift, np.zeros(array.shape[0], dtype=float)
+
+    def inverse(
+        self, values: Any, context: Any = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del context
+        array = np.asarray(values, dtype=float)
+        return array - self.shift, np.zeros(array.shape[0], dtype=float)
+
+    def log_prob(self, values: Any, context: Any = None) -> np.ndarray:
+        del context
+        array = np.asarray(values, dtype=float)
+        if array.ndim == 1:
+            array = array[:, np.newaxis]
+        return -0.5 * np.sum((array - self.shift) ** 2, axis=1)
+
+    def sample(self, num_samples: int = 1, context: Any = None) -> np.ndarray:
+        del context
+        return np.full((num_samples, self.n_dim), self.shift, dtype=float)
+
+    def state_dict(self) -> dict[str, np.ndarray | None]:
+        return {"fitted_particles": self.fitted_particles}
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self.fitted_particles = np.asarray(state["fitted_particles"])
+
+
+def _backend_factory(backend: str) -> BackendCase:
     if backend == "numpy":
         np = pytest.importorskip("numpy")
         particles = np.array(
@@ -21,10 +126,9 @@ def _backend_factory(backend: str) -> BackendFactoryReturn:
         )
         log_weights = np.zeros(particles.shape[0], dtype=np.float64)
 
-        def row_sum(arr: Any) -> Any:
-            return np.sum(arr, axis=1)
-
-        return np, particles, log_weights, row_sum
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     if backend == "torch":
         torch = pytest.importorskip("torch")
@@ -34,10 +138,9 @@ def _backend_factory(backend: str) -> BackendFactoryReturn:
         )
         log_weights = torch.zeros(particles.shape[0], dtype=torch.float32)
 
-        def row_sum(arr: Any) -> Any:
-            return torch.sum(arr, dim=1)
-
-        return torch, particles, log_weights, row_sum
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     if backend == "jax":
         jnp = pytest.importorskip("jax.numpy")
@@ -47,10 +150,9 @@ def _backend_factory(backend: str) -> BackendFactoryReturn:
         )
         log_weights = jnp.zeros(particles.shape[0], dtype=jnp.float32)
 
-        def row_sum(arr: Any) -> Any:
-            return jnp.sum(arr, axis=1)
-
-        return jnp, particles, log_weights, row_sum
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     if backend == "cupy":
         cupy = pytest.importorskip("cupy")
@@ -64,18 +166,37 @@ def _backend_factory(backend: str) -> BackendFactoryReturn:
         )
         log_weights = cupy.zeros(particles.shape[0], dtype=cupy.float32)
 
-        def row_sum(arr: Any) -> Any:
-            return cupy.sum(arr, axis=1)
-
-        return cupy, particles, log_weights, row_sum
+        return BackendCase(
+            backend, namespace(particles), particles, log_weights
+        )
 
     raise ValueError(f"Unsupported backend '{backend}'.")
 
 
 @pytest.fixture
-def backend_factory() -> Callable[[str], BackendFactoryReturn]:
+def backend_factory() -> Callable[[str], BackendCase]:
     """Return the shared Array API backend constructor."""
     return _backend_factory
+
+
+@pytest.fixture
+def standard_normal_log_prob() -> Callable[..., Any]:
+    return _standard_normal_log_prob
+
+
+@pytest.fixture
+def unit_log_likelihood() -> Callable[..., np.ndarray]:
+    return _unit_log_likelihood
+
+
+@pytest.fixture
+def analytic_proposal_factory() -> type[AnalyticProposal]:
+    return AnalyticProposal
+
+
+@pytest.fixture
+def shift_flow_factory() -> type[ShiftFlow]:
+    return ShiftFlow
 
 
 @pytest.fixture
@@ -106,6 +227,23 @@ def particle_state(simple_particles: np.ndarray) -> ParticleState:
     metadata = {"temperature": 0.0}
     return ParticleState(
         particles=simple_particles, log_weights=log_weights, metadata=metadata
+    )
+
+
+@pytest.fixture
+def quadratic_posterior() -> TemperedPosterior:
+    """Posterior with non-constant components for mutation tests."""
+    return TemperedPosterior(
+        log_prior=lambda particles: -np.sum(particles**2, axis=-1),
+        log_likelihood=lambda particles: np.sum(particles, axis=-1),
+    )
+
+
+@pytest.fixture
+def standard_normal_posterior() -> TemperedPosterior:
+    return TemperedPosterior(
+        _standard_normal_log_prob,
+        _zero_log_likelihood,
     )
 
 
