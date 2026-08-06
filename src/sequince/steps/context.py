@@ -4,10 +4,23 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from ..utils import pytree_dataclass
+
 LOG_PROPOSAL_OVERRIDE_KEY = "log_proposal_override"
 SMC_TRANSFORMATION_KEY = "smc_transformation"
 
 
+@pytree_dataclass(
+    data_fields=(
+        "t",
+        "next_observation_index",
+        "observation",
+        "shared",
+        "metadata",
+        "stop_requested",
+        "stop_immediately",
+    )
+)
 @dataclass(frozen=True)
 class StepContext:
     """Runtime context passed to each SMC step."""

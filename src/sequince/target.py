@@ -11,7 +11,7 @@ from uuid import uuid4
 from ._typing import Array
 from .array_api import asarray, namespace
 from .array_api import copy as array_copy
-from .utils import call_with_optional_context
+from .utils import call_with_optional_context, pytree_dataclass
 
 if TYPE_CHECKING:
     from .steps.context import StepContext
@@ -39,6 +39,10 @@ def _evaluate_component(
     return array
 
 
+@pytree_dataclass(
+    data_fields=("components",),
+    meta_fields=("target_id", "evaluation_key"),
+)
 @dataclass(frozen=True)
 class TargetEvaluation:
     """Named, particle-aligned values evaluated by an annealed target."""

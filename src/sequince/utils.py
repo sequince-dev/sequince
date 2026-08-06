@@ -17,6 +17,21 @@ if TYPE_CHECKING:
 RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
 
 
+def pytree_dataclass(*, data_fields, meta_fields=()):
+    try:
+        import jax
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"jax", "jaxlib"}:
+            raise
+        return lambda cls: cls
+
+    return lambda cls: jax.tree_util.register_dataclass(
+        cls,
+        data_fields=data_fields,
+        meta_fields=meta_fields,
+    )
+
+
 def enable_scipy_array_api() -> None:
     """Enable SciPy Array API support; normally done during package import."""
     _enable_scipy_array_api()

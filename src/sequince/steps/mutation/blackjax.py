@@ -11,6 +11,7 @@ from array_api_compat import is_jax_namespace
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...transforms import ParticleTransform
+from ...utils import pytree_dataclass
 from ..context import StepContext
 from .base import MutationStep, TransformRefit
 
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 BlackJAXAlgorithmFactory = Callable[..., Any]
 
 
+@pytree_dataclass(
+    data_fields=("acceptance", "divergence", "chain"),
+    meta_fields=("algorithm", "steps"),
+)
 @dataclass(frozen=True)
 class BlackJAXOutput(Mapping[str, Any]):
     """Fixed-structure BlackJAX diagnostics returned by a mutation step."""

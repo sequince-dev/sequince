@@ -12,12 +12,25 @@ from array_api_compat import device as get_device
 from ._typing import Array
 from .array_api import asarray, namespace
 from .array_api import copy as array_copy
-from .utils import _validate_log_normalizer, normalize_log_weights
+from .utils import (
+    _validate_log_normalizer,
+    normalize_log_weights,
+    pytree_dataclass,
+)
 
 if TYPE_CHECKING:
     from .target import TargetEvaluation
 
 
+@pytree_dataclass(
+    data_fields=(
+        "particles",
+        "log_weights",
+        "log_evidence",
+        "evaluation",
+        "metadata",
+    )
+)
 @dataclass(init=False)
 class ParticleState:
     """Container for particle locations, log weights, and auxiliary information."""
