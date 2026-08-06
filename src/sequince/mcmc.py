@@ -25,13 +25,12 @@ class MCMCResult:
 
     states: Sequence[ParticleState]
     context: StepContext
+    outputs: Sequence[tuple[Any, ...]]
 
     def __post_init__(self) -> None:
         if not self.states:
             raise ValueError("MCMCResult requires at least one ParticleState.")
-        if not any(
-            "mutation_chains" in state.metadata for state in self.states
-        ):
+        if not self._chains():
             raise ValueError(
                 "MCMCResult requires mutation steps configured with "
                 "store_chains=True."
@@ -40,7 +39,24 @@ class MCMCResult:
     @classmethod
     def from_smc_result(cls, result: SMCResult) -> MCMCResult:
         """Build an MCMC result from a mutation-only sequential run."""
-        return cls(states=result.states, context=result.context)
+        return cls(
+            states=result.states,
+            context=result.context,
+            outputs=result.outputs,
+        )
+
+    def _chains(self) -> list[Array]:
+        chains: list[Array] = []
+        for iteration_outputs in self.outputs:
+            for output in iteration_outputs:
+                if not isinstance(output, Mapping):
+                    continue
+                chain = output.get("chain")
+                if isinstance(chain, Mapping):
+                    chains.extend(chain.values())
+                elif chain is not None:
+                    chains.append(chain)
+        return chains
 
     @property
     def final_state(self) -> ParticleState:
@@ -49,28 +65,23 @@ class MCMCResult:
     @property
     def chain(self) -> Array:
         """Return mutation blocks concatenated as ``(steps, chains, dims)``."""
-        chains: list[Array] = []
-        for state in self.states:
-            chain = state.metadata.get("mutation_chains")
-            if isinstance(chain, Mapping):
-                chains.extend(chain.values())
-            elif chain is not None:
-                chains.append(chain)
+        chains = self._chains()
         xp = namespace(*chains)
         arrays = [asarray(chain, xp=xp, like=chains[0]) for chain in chains]
         return xp.concat(arrays, axis=0)
 
     @property
     def diagnostics(self) -> dict[str, Any]:
-        """Return diagnostics recorded on the final mutation state."""
-        return {
-            key: value
-            for key, value in self.final_state.metadata.items()
-            if key.startswith(
-                ("blocked_", "emcee_", "minipcn_", "metropolis_")
-            )
-            and key != "mutation_chains"
-        }
+        """Return diagnostics from the final mutation output."""
+        for iteration_outputs in reversed(self.outputs):
+            for output in reversed(iteration_outputs):
+                if isinstance(output, Mapping) and "chain" in output:
+                    return {
+                        key: value
+                        for key, value in output.items()
+                        if key != "chain"
+                    }
+        return {}
 
     def samples(
         self,

@@ -197,12 +197,9 @@ class MetropolisHastingsMutation(MutationStep):
 
         new_particles, _ = self._inverse_transform(current, transform, context)
         acceptance = accepted_total / (n_particles * self._n_steps)
-        metadata = dict(state.metadata)
-        metadata["metropolis_hastings_acceptance"] = acceptance
-        metadata["metropolis_hastings_acceptance_by_step"] = acceptance_by_step
-        metadata["metropolis_hastings_steps"] = self._n_steps
+        stored_chain = None
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
+            stored_chain = self._inverse_chain(
                 xp.stack(chain, axis=0),
                 transform,
                 context,
@@ -221,13 +218,13 @@ class MetropolisHastingsMutation(MutationStep):
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": tuple(acceptance_by_step),
-            "chain": metadata.get("mutation_chains"),
+            "steps": self._n_steps,
+            "chain": stored_chain,
         }
         return (
             state.replace_particles(
                 new_particles,
                 evaluation=current_evaluation,
-                metadata=metadata,
             ),
             context,
             output,

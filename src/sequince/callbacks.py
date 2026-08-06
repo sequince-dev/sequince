@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -250,6 +251,10 @@ class MutationChainPlot(PlotCallback):
         be appended to the base filename.  Default is ``"chain"``.
     plot_kwargs:
         Additional keyword arguments to pass to the `plot_chain` function.
+    step_index:
+        Index of the mutation step in the current iteration's outputs.
+    output_key:
+        Key containing the chain in the selected step output.
     """
 
     def __init__(
@@ -259,12 +264,14 @@ class MutationChainPlot(PlotCallback):
         parameter_inds: list[int] | None = None,
         parameter_labels: list[str] | None = None,
         plot_kwargs: dict[str, Any] | None = None,
-        metadata_key: str = "mutation_chains",
+        step_index: int = -1,
+        output_key: str = "chain",
     ):
         self.base_filename = base_filename
         self.parameter_labels = parameter_labels
         self.parameter_inds = parameter_inds
-        self.metadata_key = metadata_key
+        self.step_index = step_index
+        self.output_key = output_key
         filename = f"{base_filename}_0.png"
         super().__init__(outdir, filename, plot_kwargs)
 
@@ -274,7 +281,29 @@ class MutationChainPlot(PlotCallback):
         context: "StepContext",
         results: "SMCResult",
     ) -> None:
-        chains = state.metadata.get(self.metadata_key)
+        del state
+        chains = None
+        if results.outputs:
+            iteration_outputs = results.outputs[-1]
+            try:
+                output = iteration_outputs[self.step_index]
+            except IndexError:
+                output = None
+            if isinstance(output, Mapping):
+                chains = output.get(self.output_key)
+        if isinstance(chains, Mapping):
+            from .array_api import asarray, namespace
+
+            chain_values = list(chains.values())
+            if chain_values:
+                xp = namespace(*chain_values)
+                chains = xp.concat(
+                    [
+                        asarray(chain, xp=xp, like=chain_values[0])
+                        for chain in chain_values
+                    ],
+                    axis=0,
+                )
         if chains is not None:
             filename = f"{self.base_filename}_{context.iteration}.png"
             self.full_path = self.outdir / filename
@@ -289,7 +318,9 @@ class MutationChainPlot(PlotCallback):
                 **self.plot_kwargs,
             )
         else:
-            logger.debug("No mutation chains found in state metadata.")
+            logger.debug(
+                "No mutation chain found in the selected step output."
+            )
 
 
 class PlotParticleTransform(PlotCallback):

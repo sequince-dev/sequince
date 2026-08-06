@@ -97,7 +97,7 @@ class MutationStep(SMCStep):
 
     @property
     def store_chains(self) -> bool:
-        """Whether full mutation chains are retained in state metadata."""
+        """Whether full mutation chains are included in step outputs."""
         return self._store_chains
 
     @store_chains.setter

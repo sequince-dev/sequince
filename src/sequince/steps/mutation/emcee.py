@@ -257,15 +257,11 @@ class EmceeMutation(MutationStep):
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
-        metadata = dict(state.metadata)
-        metadata["emcee_acceptance"] = float(
-            np.mean(sampler.acceptance_fraction)
-        )
-        metadata["emcee_steps"] = self._n_steps
-        acceptance = metadata["emcee_acceptance"]
+        acceptance = float(np.mean(sampler.acceptance_fraction))
+        stored_chain = None
         if self._store_chains:
             chains = sampler.get_chain(flat=False, discard=0, thin=1)
-            metadata["mutation_chains"] = self._inverse_chain(
+            stored_chain = self._inverse_chain(
                 chains,
                 transform,
                 context,
@@ -279,13 +275,13 @@ class EmceeMutation(MutationStep):
         )
         output = {
             "acceptance": acceptance,
-            "chain": metadata.get("mutation_chains"),
+            "steps": self._n_steps,
+            "chain": stored_chain,
         }
         return (
             state.replace_particles(
                 new_particles,
                 evaluation=final_evaluation,
-                metadata=metadata,
             ),
             context,
             output,

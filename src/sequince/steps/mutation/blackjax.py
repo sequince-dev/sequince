@@ -49,8 +49,7 @@ class BlackJAXMutation(MutationStep):
     transform_refit
         Policy controlling when the particle transform is refitted.
     store_chains
-        Whether to retain all BlackJAX positions in ``mutation_chains`` state
-        metadata.
+        Whether to include all BlackJAX positions in the step output.
 
     Notes
     -----
@@ -207,23 +206,17 @@ class BlackJAXMutation(MutationStep):
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
-        metadata = dict(state.metadata)
         acceptance = getattr(infos, "acceptance_rate", None)
         if acceptance is None:
             acceptance = getattr(infos, "is_accepted", None)
         if acceptance is not None:
-            metadata["blackjax_acceptance"] = float(
-                to_numpy(jnp.mean(acceptance))
-            )
+            acceptance = float(to_numpy(jnp.mean(acceptance)))
         divergence = getattr(infos, "is_divergent", None)
         if divergence is not None:
-            metadata["blackjax_divergence"] = float(
-                to_numpy(jnp.mean(divergence))
-            )
-        metadata["blackjax_algorithm"] = self.algorithm_name
-        metadata["blackjax_steps"] = self._n_steps
+            divergence = float(to_numpy(jnp.mean(divergence)))
+        stored_chain = None
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
+            stored_chain = self._inverse_chain(
                 chain_states.position,
                 transform,
                 context,
@@ -236,15 +229,16 @@ class BlackJAXMutation(MutationStep):
             self._n_steps,
         )
         output = {
-            "acceptance": metadata.get("blackjax_acceptance"),
-            "divergence": metadata.get("blackjax_divergence"),
-            "chain": metadata.get("mutation_chains"),
+            "acceptance": acceptance,
+            "divergence": divergence,
+            "algorithm": self.algorithm_name,
+            "steps": self._n_steps,
+            "chain": stored_chain,
         }
         return (
             state.replace_particles(
                 new_particles,
                 evaluation=final_evaluation,
-                metadata=metadata,
             ),
             context,
             output,

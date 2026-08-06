@@ -36,14 +36,8 @@ class AdaptGaussianProposal(SMCStep):
         ``0.05``–``0.2`` typically work well.
     min_scale, max_scale:
         Bounds applied to the adapted scale to guard against degeneracy.
-    acceptance_metadata_key:
-        Metadata field read from the particle state for the last acceptance
-        statistic (defaults to ``"waste_free_acceptance"``).
     acceptance_context_key:
-        Fallback key looked up in ``context.metadata`` when the metadata entry is
-        missing.
-    scale_metadata_key:
-        Optional metadata entry that mirrors the adapted scale for inspection.
+        Key looked up in ``context.metadata`` for the last acceptance statistic.
     covariance_key:
         When supplied, the empirical covariance of the current particles is
         stored at this ``context.metadata`` entry after applying diagonal jitter.
@@ -61,9 +55,7 @@ class AdaptGaussianProposal(SMCStep):
     adaptation_rate: float = 0.1
     min_scale: float = 1e-3
     max_scale: float = 10.0
-    acceptance_metadata_key: str = "waste_free_acceptance"
     acceptance_context_key: str | None = "waste_free_acceptance"
-    scale_metadata_key: str | None = "waste_free_scale"
     covariance_key: str | None = None
     mean_key: str | None = None
     covariance_jitter: float = 1e-6
@@ -77,9 +69,11 @@ class AdaptGaussianProposal(SMCStep):
         del rng  # Step does not require randomness.
 
         scale = float(context.metadata.get(self.scale_key, self.initial_scale))
-        acceptance = state.metadata.get(self.acceptance_metadata_key)
-        if acceptance is None and self.acceptance_context_key is not None:
-            acceptance = context.metadata.get(self.acceptance_context_key)
+        acceptance = (
+            None
+            if self.acceptance_context_key is None
+            else context.metadata.get(self.acceptance_context_key)
+        )
         if (
             acceptance is not None
             and self.target_acceptance is not None
@@ -89,12 +83,6 @@ class AdaptGaussianProposal(SMCStep):
             scale *= float(np.exp(self.adaptation_rate * delta))
         scale = float(np.clip(scale, self.min_scale, self.max_scale))
         context_updates: dict[str, object] = {self.scale_key: scale}
-
-        updated_state = state
-        if self.scale_metadata_key is not None:
-            metadata = dict(state.metadata)
-            metadata[self.scale_metadata_key] = scale
-            updated_state = state.with_updates(metadata=metadata)
 
         if self.covariance_key is not None:
             particles = np.asarray(state.particles, dtype=float)
@@ -122,4 +110,4 @@ class AdaptGaussianProposal(SMCStep):
                 context_updates[self.mean_key] = mean
 
         context = context.with_metadata(**context_updates)
-        return updated_state, context, context_updates
+        return state, context, context_updates

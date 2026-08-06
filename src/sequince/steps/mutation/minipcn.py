@@ -101,22 +101,17 @@ class MiniPCNMutation(MutationStep):
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
-        metadata = dict(state.metadata)
-        metadata["minipcn_acceptance"] = float(
-            np.mean(history.acceptance_rate)
-        )
-        metadata["minipcn_step_fn"] = self._step_fn
-        metadata["minipcn_steps"] = self._n_steps
+        acceptance = float(np.mean(history.acceptance_rate))
 
+        stored_chain = None
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
+            stored_chain = self._inverse_chain(
                 chain[-self._n_steps :],
                 transform,
                 context,
                 like=latent_particles,
             )
 
-        acceptance = metadata["minipcn_acceptance"]
         logger.debug(
             "MiniPCNMutation completed: acceptance=%.3f after %d steps.",
             acceptance,
@@ -124,13 +119,14 @@ class MiniPCNMutation(MutationStep):
         )
         output = {
             "acceptance": acceptance,
-            "chain": metadata.get("mutation_chains"),
+            "step_fn": self._step_fn,
+            "steps": self._n_steps,
+            "chain": stored_chain,
         }
         return (
             state.replace_particles(
                 new_particles,
                 evaluation=final_evaluation,
-                metadata=metadata,
             ),
             context,
             output,

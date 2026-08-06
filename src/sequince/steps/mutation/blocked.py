@@ -118,33 +118,20 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         chains: dict[str, Array] = {}
 
         for block, step in zip(self._blocks, self._steps, strict=True):
-            updated, context, _ = step(updated, context, rng)
-            acceptance[block.name] = float(
-                updated.metadata["metropolis_hastings_acceptance"]
-            )
+            updated, context, block_output = step(updated, context, rng)
+            acceptance[block.name] = float(block_output["acceptance"])
             acceptance_by_step[block.name] = list(
-                updated.metadata["metropolis_hastings_acceptance_by_step"]
+                block_output["acceptance_by_step"]
             )
             if self._store_chains:
-                chains[block.name] = updated.metadata["mutation_chains"]
+                chains[block.name] = block_output["chain"]
 
-        metadata = dict(updated.metadata)
-        metadata["blocked_metropolis_hastings_acceptance"] = acceptance
-        metadata["blocked_metropolis_hastings_acceptance_by_step"] = (
-            acceptance_by_step
-        )
-        metadata["blocked_metropolis_hastings_steps"] = {
-            block.name: block.n_steps for block in self._blocks
-        }
-        if self._store_chains:
-            metadata["blocked_metropolis_hastings_chains"] = chains
+        steps = {block.name: block.n_steps for block in self._blocks}
 
-        context = context.with_metadata(
-            blocked_metropolis_hastings_acceptance=acceptance
-        )
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": acceptance_by_step,
-            "chains": chains if self._store_chains else None,
+            "steps": steps,
+            "chain": chains if self._store_chains else None,
         }
-        return updated.with_updates(metadata=metadata), context, output
+        return updated, context, output

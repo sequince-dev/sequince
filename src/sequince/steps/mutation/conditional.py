@@ -17,8 +17,7 @@ class MutateIfResampled(SMCStep):
 
     This step reads the ``resampled`` flag written to the current
     :class:`StepContext` by Sequince's resampling steps. The resulting
-    ``mutation_skipped`` flag is recorded in both the context and particle-state
-    metadata.
+    execution decision is returned explicitly in the step output.
 
     Parameters
     ----------
@@ -36,16 +35,13 @@ class MutateIfResampled(SMCStep):
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, ConditionalStepOutput]:
         mutation_skipped = not bool(context.metadata.get("resampled", False))
-        context = context.with_metadata(mutation_skipped=mutation_skipped)
         child_output = None
         if mutation_skipped:
             updated = state
         else:
             updated, context, child_output = self.mutation(state, context, rng)
-        metadata = dict(updated.metadata)
-        metadata["mutation_skipped"] = mutation_skipped
         return (
-            updated.with_updates(metadata=metadata),
+            updated,
             context,
             ConditionalStepOutput(not mutation_skipped, child_output),
         )
