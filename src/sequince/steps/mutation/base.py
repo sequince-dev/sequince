@@ -180,7 +180,9 @@ class MutationStep(SMCStep):
         if should_fit:
             xp = namespace(particles)
             transform = self._transform.clone()
-            transform.fit(asarray(particles, xp=xp), context=context)
+            transform = transform.fit(
+                asarray(particles, xp=xp), context=context
+            )
             self._prepared_transform = transform
             self._prepared_context = context
         else:

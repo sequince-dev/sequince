@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 import array_api_extra as xpx
@@ -16,8 +16,14 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
+from .utils import pytree_dataclass
 
 logger = logging.getLogger(__name__)
+
+Bounds = (
+    Mapping[int, tuple[float, float]]
+    | tuple[tuple[int, tuple[float, float]], ...]
+)
 
 
 def _to_index(columns):
@@ -109,7 +115,7 @@ class ParticleTransform:
         return copy.deepcopy(self)
 
     def fit(self, particles, context=None):
-        """Fit the transform to the supplied ``particles`` and return ``self``."""
+        """Return a transform fitted to the supplied ``particles``."""
         return self
 
     def forward(self, particles, context=None):
@@ -127,57 +133,49 @@ class ParticleTransform:
         return arr, zeros
 
 
+@pytree_dataclass(data_fields=())
+@dataclass(frozen=True)
 class IdentityTransform(ParticleTransform):
     """No-op transform that simply returns the input particles."""
 
 
+@dataclass(frozen=True)
 class FlowTransform(ParticleTransform):
     """Adapt a normalizing flow to the ``ParticleTransform`` interface."""
 
-    def __init__(
-        self,
-        flow: NormalizingFlow,
-        *,
-        fit_kwargs: Mapping[str, Any] | None = None,
-    ):
-        self._flow = flow
-        self._fit_kwargs = dict(fit_kwargs or {})
+    flow: NormalizingFlow
+    fit_kwargs: Mapping[str, Any] | None = field(default=None, kw_only=True)
 
-    @property
-    def flow(self) -> NormalizingFlow:
-        return self._flow
-
-    @property
-    def fit_kwargs(self) -> Mapping[str, Any]:
-        return dict(self._fit_kwargs)
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fit_kwargs", dict(self.fit_kwargs or {}))
 
     def clone(self) -> "FlowTransform":
-        return FlowTransform(
-            clone_flow(self._flow),
-            fit_kwargs=self._fit_kwargs,
-        )
+        return replace(self, flow=clone_flow(self.flow))
 
     def state_dict(self):
-        return {"flow": flow_state_dict(self._flow)}
+        return {"flow": flow_state_dict(self.flow)}
 
     def load_state_dict(self, state):
         flow_state = state.get("flow", {})
         if not isinstance(flow_state, Mapping):
             raise TypeError("FlowTransform state 'flow' must be a mapping.")
-        load_flow_state_dict(self._flow, flow_state)
+        load_flow_state_dict(self.flow, flow_state)
 
     def fit(self, particles, context=None):
-        backend_particles = flow_asarray(self._flow, particles)
+        flow = clone_flow(self.flow)
+        backend_particles = flow_asarray(flow, particles)
         logger.debug(
             "Fitting flow transform to %d particles.",
             backend_particles.shape[0],
         )
-        self._flow.fit(
+        fitted_flow = flow.fit(
             backend_particles,
             context=context,
-            **self._fit_kwargs,
+            **(self.fit_kwargs or {}),
         )
-        return self
+        if fitted_flow is None:
+            fitted_flow = flow
+        return replace(self, flow=fitted_flow)
 
     @staticmethod
     def _restore_namespace(values, like):
@@ -190,27 +188,27 @@ class FlowTransform(ParticleTransform):
         return asarray(to_numpy(values), xp=xp, like=like)
 
     def forward(self, particles, context=None):
-        backend_particles = flow_asarray(self._flow, particles)
-        values, log_det = self._flow.forward(
-            backend_particles, context=context
-        )
+        backend_particles = flow_asarray(self.flow, particles)
+        values, log_det = self.flow.forward(backend_particles, context=context)
         return (
             self._restore_namespace(values, particles),
             self._restore_namespace(log_det, particles),
         )
 
     def inverse(self, values, context=None):
-        backend_values = flow_asarray(self._flow, values)
-        particles, log_det = self._flow.inverse(
-            backend_values, context=context
-        )
+        backend_values = flow_asarray(self.flow, values)
+        particles, log_det = self.flow.inverse(backend_values, context=context)
         return (
             self._restore_namespace(particles, values),
             self._restore_namespace(log_det, values),
         )
 
 
-@dataclass
+@pytree_dataclass(
+    data_fields=("_mean", "_scale"),
+    meta_fields=("eps", "columns"),
+)
+@dataclass(frozen=True)
 class AffineTransform(ParticleTransform):
     """Standardize coordinates using batch mean and variance statistics.
 
@@ -225,38 +223,35 @@ class AffineTransform(ParticleTransform):
 
     eps: float = 1e-6
     columns: Sequence[int] | None = None
-    _mean: object | None = field(init=False, default=None)
-    _scale: object | None = field(init=False, default=None)
-    _column_index: Sequence[int] | None = field(init=False, default=None)
+    _mean: object | None = field(default=None, repr=False)
+    _scale: object | None = field(default=None, repr=False)
 
-    def __post_init__(self):
-        self._column_index = _to_index(self.columns)
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "columns", _to_index(self.columns))
 
     def fit(self, particles, context=None):
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
-        idx = self._column_index
+        idx = self.columns
         focus = arr if idx is None else arr[..., idx]
         mean = xp.mean(focus, axis=0)
         var = xp.var(focus, axis=0)
         scale = xp.sqrt(var + self.eps)
-        self._mean = mean
-        self._scale = scale
-        return self
+        return replace(self, _mean=mean, _scale=scale)
 
     def forward(self, particles, context=None):
         xp = namespace(particles, self._mean, self._scale)
         arr = asarray(particles, xp=xp)
-        if self._column_index is None:
+        if self.columns is None:
             centered = arr - self._mean
             scaled = centered / self._scale
             log_det = -xp.sum(xp.log(self._scale))
             log_det_vec = _log_det_entries(log_det, arr, xp)
             return scaled, log_det_vec
-        subset = arr[..., self._column_index]
+        subset = arr[..., self.columns]
         centered = subset - self._mean
         scaled_subset = centered / self._scale
-        scaled = _replace_columns(arr, self._column_index, scaled_subset)
+        scaled = _replace_columns(arr, self.columns, scaled_subset)
         log_det = -xp.sum(xp.log(self._scale))
         log_det_vec = _log_det_entries(log_det, arr, xp)
         return scaled, log_det_vec
@@ -264,19 +259,21 @@ class AffineTransform(ParticleTransform):
     def inverse(self, values, context=None):
         xp = namespace(values, self._mean, self._scale)
         arr = asarray(values, xp=xp)
-        if self._column_index is None:
+        if self.columns is None:
             restored = arr * self._scale + self._mean
             log_det = xp.sum(xp.log(self._scale))
             log_det_vec = _log_det_entries(log_det, arr, xp)
             return restored, log_det_vec
-        subset = arr[..., self._column_index]
+        subset = arr[..., self.columns]
         restored_subset = subset * self._scale + self._mean
-        restored = _replace_columns(arr, self._column_index, restored_subset)
+        restored = _replace_columns(arr, self.columns, restored_subset)
         log_det = xp.sum(xp.log(self._scale))
         log_det_vec = _log_det_entries(log_det, arr, xp)
         return restored, log_det_vec
 
 
+@pytree_dataclass(data_fields=(), meta_fields=("bounds",))
+@dataclass(frozen=True)
 class BoundedToUnitHypercubeTransform(ParticleTransform):
     """Linearly rescale specified coordinates into the unit hypercube.
 
@@ -287,17 +284,29 @@ class BoundedToUnitHypercubeTransform(ParticleTransform):
         lower bound must be strictly smaller than the corresponding upper bound.
     """
 
-    def __init__(self, bounds: Mapping[int, tuple[float, float]]):
-        self._bounds, self._indices = self._normalize_bounds(bounds)
+    bounds: Bounds
+
+    def __post_init__(self) -> None:
+        normalized, _ = self._normalize_bounds(self.bounds)
+        object.__setattr__(self, "bounds", tuple(normalized.items()))
+
+    @property
+    def _bounds(self) -> dict[int, tuple[float, float]]:
+        return dict(self.bounds)
+
+    @property
+    def _indices(self) -> tuple[int, ...]:
+        return tuple(self._bounds)
 
     @staticmethod
-    def _normalize_bounds(bounds: Mapping[int, tuple[float, float]]):
+    def _normalize_bounds(bounds: Bounds):
         """Validate ``bounds`` and normalize indices to integers."""
         if not bounds:
             raise ValueError("bounds must contain at least one entry.")
         normalized = {}
         indices = []
-        for idx, (lo, hi) in bounds.items():
+        items = bounds.items() if isinstance(bounds, Mapping) else bounds
+        for idx, (lo, hi) in items:
             if not hi > lo:
                 raise ValueError(
                     f"Upper bound must exceed lower bound for index {idx}."
@@ -346,6 +355,8 @@ class BoundedToUnitHypercubeTransform(ParticleTransform):
         return updated, log_det_vec
 
 
+@pytree_dataclass(data_fields=(), meta_fields=("bounds", "eps"))
+@dataclass(frozen=True)
 class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
     """Send bounded coordinates to the real line via an independent logit.
 
@@ -359,11 +370,7 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         before applying the logit.
     """
 
-    def __init__(
-        self, bounds: Mapping[int, tuple[float, float]], *, eps: float = 1e-6
-    ):
-        super().__init__(bounds)
-        self._eps = eps
+    eps: float = field(default=1e-6, kw_only=True)
 
     def forward(self, particles, context=None):
         scaled, base_log_det = super().forward(particles, context=context)
@@ -373,7 +380,7 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         xp = namespace(scaled, base_log_det)
         arr = asarray(scaled, xp=xp)
         subset = arr[..., idx]
-        u = xp.clip(subset, self._eps, 1 - self._eps)
+        u = xp.clip(subset, self.eps, 1 - self.eps)
         transformed_subset = xp.log(u) - xp.log1p(-u)
         updated = _replace_columns(arr, idx, transformed_subset)
         jac = -xp.log(u) - xp.log1p(-u)
@@ -398,6 +405,8 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         return restored, log_abs_det
 
 
+@pytree_dataclass(data_fields=(), meta_fields=("bounds",))
+@dataclass(frozen=True)
 class PeriodicBoundaryTransform(ParticleTransform):
     """Wrap selected coordinates so they stay within ``[lower, upper)``.
 
@@ -408,16 +417,32 @@ class PeriodicBoundaryTransform(ParticleTransform):
         interval for each coordinate.
     """
 
-    def __init__(self, bounds: Mapping[int, tuple[float, float]]):
-        if not bounds:
+    bounds: Bounds
+
+    def __post_init__(self) -> None:
+        if not self.bounds:
             raise ValueError("bounds must contain at least one entry.")
-        self._bounds = dict(bounds)
-        self._indices = tuple(self._bounds.keys())
-        for idx, (lo, hi) in self._bounds.items():
+        normalized = []
+        items = (
+            self.bounds.items()
+            if isinstance(self.bounds, Mapping)
+            else self.bounds
+        )
+        for idx, (lo, hi) in items:
             if not hi > lo:
                 raise ValueError(
                     f"Upper bound must exceed lower bound for index {idx}."
                 )
+            normalized.append((int(idx), (float(lo), float(hi))))
+        object.__setattr__(self, "bounds", tuple(normalized))
+
+    @property
+    def _bounds(self) -> dict[int, tuple[float, float]]:
+        return dict(self.bounds)
+
+    @property
+    def _indices(self) -> tuple[int, ...]:
+        return tuple(self._bounds)
 
     def forward(self, particles, context=None):
         xp = namespace(particles)
@@ -444,6 +469,8 @@ class PeriodicBoundaryTransform(ParticleTransform):
         return self.forward(values, context=context)
 
 
+@pytree_dataclass(data_fields=("transforms",))
+@dataclass(frozen=True)
 class CompositeTransform(ParticleTransform):
     """Compose multiple transforms while tracking cumulative log-Jacobians.
 
@@ -455,27 +482,31 @@ class CompositeTransform(ParticleTransform):
         reverse.
     """
 
-    def __init__(self, transforms: Sequence[ParticleTransform]):
-        if not transforms:
+    transforms: Sequence[ParticleTransform]
+
+    def __post_init__(self) -> None:
+        if not self.transforms:
             raise ValueError(
                 "CompositeTransform requires at least one transform."
             )
-        self._transforms = [t.clone() for t in transforms]
+        object.__setattr__(self, "transforms", tuple(self.transforms))
 
     def clone(self):
-        return CompositeTransform([t.clone() for t in self._transforms])
+        return CompositeTransform([t.clone() for t in self.transforms])
 
     def fit(self, particles, context=None):
         data = particles
-        for transform in self._transforms:
-            transform.fit(data, context=context)
-            data, _ = transform.forward(data, context=context)
-        return self
+        fitted_transforms = []
+        for transform in self.transforms:
+            fitted = transform.fit(data, context=context)
+            fitted_transforms.append(fitted)
+            data, _ = fitted.forward(data, context=context)
+        return replace(self, transforms=tuple(fitted_transforms))
 
     def forward(self, particles, context=None):
         data = particles
         total_log_det = None
-        for transform in self._transforms:
+        for transform in self.transforms:
             data, log_det = transform.forward(data, context=context)
             xp = namespace(data)
             if total_log_det is None:
@@ -492,7 +523,7 @@ class CompositeTransform(ParticleTransform):
     def inverse(self, values, context=None):
         data = values
         total_log_det = None
-        for transform in reversed(self._transforms):
+        for transform in reversed(self.transforms):
             data, log_det = transform.inverse(data, context=context)
             xp = namespace(data)
             if total_log_det is None:
