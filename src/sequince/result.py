@@ -13,7 +13,7 @@ from ._typing import Array
 from .array_api import asarray, namespace, to_numpy
 from .state import ParticleState
 from .steps.context import StepContext
-from .steps.nested import NESTED_SMC_OUTPUT_KEY
+from .steps.meta import META_SMC_OUTPUT_KEY
 from .utils import resolve_rng
 
 if TYPE_CHECKING:
@@ -55,16 +55,16 @@ class SMCResult:
             initial_state=self.initial_state,
         )
 
-    def get_nested_results(
+    def get_meta_results(
         self,
-        key: str = NESTED_SMC_OUTPUT_KEY,
-    ) -> NestedSMCResult | None:
-        """Return a NestedSMCResult if the specified key is present in the
+        key: str = META_SMC_OUTPUT_KEY,
+    ) -> MetaSMCResult | None:
+        """Return a MetaSMCResult if the specified key is present in the
         context outputs.
         """
-        nested_results = self.context.outputs.get(key)
-        if nested_results is not None:
-            return NestedSMCResult(results=nested_results)
+        meta_results = self.context.outputs.get(key)
+        if meta_results is not None:
+            return MetaSMCResult(results=meta_results)
         return None
 
     @property
@@ -431,15 +431,15 @@ class SMCResult:
 
 
 @dataclass(frozen=True)
-class NestedSMCResult:
-    """Aggregate results from a SMC run with a nested SMC step."""
+class MetaSMCResult:
+    """Aggregate results from a SMC run with a meta SMC step."""
 
     results: Sequence[SMCResult]
 
     def __post_init__(self) -> None:
         if not self.results:
             raise ValueError(
-                "NestedSMCResult requires at least one nested step result."
+                "MetaSMCResult requires at least one meta-step result."
             )
 
     def __len__(self) -> int:

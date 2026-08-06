@@ -1,4 +1,4 @@
-"""Nested SMC steps."""
+"""Meta SMC steps that run another SMC loop in the same target space."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from .context import StepContext
 
 logger = logging.getLogger(__name__)
 
-NESTED_SMC_OUTPUT_KEY = "smc_mutation_results"
+META_SMC_OUTPUT_KEY = "smc_mutation_results"
 
 
-class NestedSMCStep(SMCStep):
+class MetaSMCStep(SMCStep):
     """SMC step that runs another SMC loop in the same target space."""
 
     def __init__(
@@ -28,7 +28,7 @@ class NestedSMCStep(SMCStep):
         *,
         record_outputs=False,
         run_kwargs=None,
-        output_key=NESTED_SMC_OUTPUT_KEY,
+        output_key=META_SMC_OUTPUT_KEY,
     ):
         self.runner = smc_runner
         self.run_kwargs = run_kwargs or {}
@@ -43,11 +43,11 @@ class NestedSMCStep(SMCStep):
         rng: "RandomGenerator",
     ) -> "ParticleState":
         if self.runner is None:
-            raise ValueError("NestedSMCStep requires an SMC runner.")
+            raise ValueError("MetaSMCStep requires an SMC runner.")
 
         input_state = state
         logger.debug(
-            "Running nested SMC loop with %d particles.",
+            "Running meta SMC loop with %d particles.",
             len(input_state.particles),
         )
         # TODO: is there a better way to do this? Avoid copying?
@@ -82,5 +82,11 @@ class NestedSMCStep(SMCStep):
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
         runner_state = state.get("runner", {})
         if not isinstance(runner_state, Mapping):
-            raise TypeError("NestedSMCStep state 'runner' must be a mapping.")
+            raise TypeError("MetaSMCStep state 'runner' must be a mapping.")
         self.runner.load_state_dict(runner_state)
+
+
+__all__ = [
+    "META_SMC_OUTPUT_KEY",
+    "MetaSMCStep",
+]
