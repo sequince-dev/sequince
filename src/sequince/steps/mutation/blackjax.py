@@ -210,10 +210,10 @@ class BlackJAXMutation(MutationStep):
         if acceptance is None:
             acceptance = getattr(infos, "is_accepted", None)
         if acceptance is not None:
-            acceptance = float(to_numpy(jnp.mean(acceptance)))
+            acceptance = jnp.mean(acceptance)
         divergence = getattr(infos, "is_divergent", None)
         if divergence is not None:
-            divergence = float(to_numpy(jnp.mean(divergence)))
+            divergence = jnp.mean(divergence)
         stored_chain = None
         if self._store_chains:
             stored_chain = self._inverse_chain(

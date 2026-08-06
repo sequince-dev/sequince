@@ -109,6 +109,41 @@ def test_blackjax_jax_key_consumption_can_be_jitted() -> None:
     )
 
 
+def test_blackjax_array_boundary_accepts_dynamic_temperature_under_jit() -> (
+    None
+):
+    mutation = BlackJAXMutation(
+        _posterior(),
+        algorithm="random-walk",
+        algorithm_kwargs={"sigma": 0.1},
+        n_steps=2,
+    )
+
+    @jax.jit
+    def compiled_step(particles, temperature, random_state):
+        state = ParticleState(particles=particles)
+        context = StepContext(t=0, metadata={"temperature": temperature})
+        updated, _, next_state, output = mutation.functional_step(
+            state,
+            context,
+            random_state,
+        )
+        return updated.particles, next_state, output["acceptance"]
+
+    particles, next_state, acceptance = compiled_step(
+        _state().particles,
+        jnp.asarray(0.5),
+        jax.random.key(42),
+    )
+
+    assert particles.shape == (4, 2)
+    assert acceptance.shape == ()
+    assert not np.array_equal(
+        jax.random.key_data(next_state),
+        jax.random.key_data(jax.random.key(42)),
+    )
+
+
 def test_blackjax_runs_in_standard_smc() -> None:
     posterior = _posterior()
     smc, _, metadata = make_standard_bayesian_smc(

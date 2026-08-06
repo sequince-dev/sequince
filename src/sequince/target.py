@@ -4,6 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Mapping
 from dataclasses import dataclass
+from numbers import Real
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
@@ -393,11 +394,16 @@ class TemperedTarget(SequentialTarget):
         if evaluation is None:
             evaluation = self.evaluate(particles, context)
         self.validate_evaluation(evaluation, particles, context)
-        beta = float(context.metadata.get("temperature", 0.0))
-        if beta == 0.0:
-            return self.log_initial(particles, context, evaluation=evaluation)
-        if beta == 1.0:
-            return self.log_terminal(particles, context, evaluation=evaluation)
+        beta = context.metadata.get("temperature", 0.0)
+        if isinstance(beta, Real):
+            if beta == 0.0:
+                return self.log_initial(
+                    particles, context, evaluation=evaluation
+                )
+            if beta == 1.0:
+                return self.log_terminal(
+                    particles, context, evaluation=evaluation
+                )
         initial = self.log_initial(particles, context, evaluation=evaluation)
         terminal = self.log_terminal(particles, context, evaluation=evaluation)
         return (1.0 - beta) * initial + beta * terminal
