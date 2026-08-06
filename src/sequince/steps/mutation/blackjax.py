@@ -143,6 +143,11 @@ class BlackJAXMutation(MutationStep):
     def _jax_key(rng: "RandomGenerator") -> Any:
         import jax
 
+        if rng.backend.lower() == "jax":
+            key, next_state = jax.random.split(rng.state())
+            rng.set_state(next_state)
+            return key
+
         draw = float(to_numpy(rng.random((1,)))[0])
         seed = int(draw * np.iinfo(np.uint32).max)
         return jax.random.key(seed)

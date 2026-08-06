@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from orng import RandomGenerator
 
 from sequince import make_standard_bayesian_smc
 from sequince.posterior import TemperedPosterior
@@ -75,6 +76,37 @@ def test_blackjax_rejects_non_jax_particles() -> None:
 
     with pytest.raises(TypeError, match="JAX-backed"):
         mutation(state, StepContext(t=0), resolve_rng(42))
+
+
+def test_blackjax_consumes_jax_rng_key() -> None:
+    initial_key = jax.random.key(42)
+    expected_key, expected_state = jax.random.split(initial_key)
+    rng = RandomGenerator(backend="jax", generator=initial_key)
+
+    key = BlackJAXMutation._jax_key(rng)
+
+    np.testing.assert_array_equal(
+        jax.random.key_data(key),
+        jax.random.key_data(expected_key),
+    )
+    np.testing.assert_array_equal(
+        jax.random.key_data(rng.state()),
+        jax.random.key_data(expected_state),
+    )
+
+
+def test_blackjax_jax_key_consumption_can_be_jitted() -> None:
+    def consume_key(random_state):
+        rng = RandomGenerator(backend="jax", generator=random_state)
+        key = BlackJAXMutation._jax_key(rng)
+        return key, rng.state()
+
+    key, next_state = jax.jit(consume_key)(jax.random.key(42))
+
+    assert not np.array_equal(
+        jax.random.key_data(key),
+        jax.random.key_data(next_state),
+    )
 
 
 def test_blackjax_runs_in_standard_smc() -> None:
