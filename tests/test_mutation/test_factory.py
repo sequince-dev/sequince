@@ -6,6 +6,7 @@ import pytest
 
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.mutation import (
+    BlackJAXMutation,
     GaussianRandomWalk,
     MetropolisHastingsMutation,
     MiniPCNMutation,
@@ -15,6 +16,24 @@ from sequince.steps.mutation import (
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
+
+
+def test_get_mutation_step_constructs_blackjax(
+    standard_normal_posterior,
+) -> None:
+    mutation = get_mutation_step(
+        "blackjax",
+        standard_normal_posterior,
+        mutation_n_steps=3,
+        mutation_kwargs={
+            "algorithm": "random-walk",
+            "algorithm_kwargs": {"sigma": 0.25},
+        },
+    )
+
+    assert isinstance(mutation, BlackJAXMutation)
+    assert mutation.algorithm_name == "random-walk"
+    assert mutation._n_steps == 3  # noqa: SLF001
 
 
 def test_get_mutation_step_constructs_minipcn(

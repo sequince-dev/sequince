@@ -37,6 +37,9 @@ include = ["sequince*"]
 [tool.setuptools_scm]
 
 [project.optional-dependencies]
+blackjax = [
+    "blackjax>=1.2",
+]
 emcee = [
     "emcee>=3.0",
 ]
@@ -52,6 +55,7 @@ test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "corner",
+    "blackjax>=1.2",
     "emcee>=3.0",
     "h5py>=3",
 ]

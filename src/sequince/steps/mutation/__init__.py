@@ -5,6 +5,7 @@ from .base import (
     MutationStep,
     TransformRefit,
 )
+from .blackjax import BlackJAXAlgorithmFactory, BlackJAXMutation
 from .blocked import (
     BlockedMetropolisHastingsMutation,
     MetropolisBlock,
@@ -35,6 +36,8 @@ from .minipcn import MiniPCNMutation
 __all__ = [
     "AdaptiveMaskedGaussianRandomWalk",
     "BlockedMetropolisHastingsMutation",
+    "BlackJAXAlgorithmFactory",
+    "BlackJAXMutation",
     "CallableMutationKernel",
     "EMCEE_MOVES",
     "EmceeMutation",

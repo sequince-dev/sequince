@@ -9,6 +9,7 @@ from .control import ContinueWhile
 from .log import LoggingStep
 from .mutation import (
     AdaptiveMaskedGaussianRandomWalk,
+    BlackJAXMutation,
     BlockedMetropolisHastingsMutation,
     EmceeMutation,
     MaskedGaussianRandomWalk,
@@ -41,6 +42,7 @@ from .weighting import (
 
 __all__ = [
     "AdaptiveMaskedGaussianRandomWalk",
+    "BlackJAXMutation",
     "BlockedMetropolisHastingsMutation",
     "StepContext",
     "LOG_PROPOSAL_OVERRIDE_KEY",
