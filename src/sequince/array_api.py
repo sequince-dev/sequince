@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import numpy as _np
@@ -199,11 +198,9 @@ def to_numpy(
 
 
 def logsumexp(array: Any, *, xp: Any | None = None):
+    from scipy.special import logsumexp as scipy_logsumexp
+
     if xp is None:
         xp = _namespace_or_numpy(array)
     arr = asarray(array, xp=xp)
-    max_value = xp.max(arr)
-    if not math.isfinite(float(to_numpy(max_value))):
-        return max_value
-    stable = xp.exp(arr - max_value)
-    return xp.log(xp.sum(stable)) + max_value
+    return scipy_logsumexp(arr)
