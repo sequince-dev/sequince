@@ -56,11 +56,7 @@ class SMCStep:
             generator=random_state,
         )
         state, context, output = self.apply(state, context, rng)
-        state_method = getattr(rng, "state", None)
-        if state_method is not None:
-            new_random_state = state_method()
-        else:  # ORNG before the public state() convenience method.
-            _, new_random_state = rng.to_functional()
+        new_random_state = rng.state()
         return state, context, new_random_state, output
 
     def state_dict(self) -> dict[str, Any]:
