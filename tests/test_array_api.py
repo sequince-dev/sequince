@@ -7,6 +7,7 @@ from array_api_compat import device
 from sequince.array_api import (
     asarray,
     convert_dtype,
+    full,
     logsumexp,
     namespace,
     resolve_dtype,
@@ -16,7 +17,9 @@ from sequince.array_api import (
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
 def test_to_numpy_from_supported_backends(backend, backend_factory):
-    xp, particles, _, _ = backend_factory(backend)
+    case = backend_factory(backend)
+    xp = case.xp
+    particles = case.particles
 
     result = to_numpy(particles, dtype=np.float64, copy=True)
 
@@ -29,7 +32,9 @@ def test_to_numpy_from_supported_backends(backend, backend_factory):
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
 def test_asarray_matches_reference_namespace_device(backend, backend_factory):
-    xp, particles, _, _ = backend_factory(backend)
+    case = backend_factory(backend)
+    xp = case.xp
+    particles = case.particles
     source = np.arange(np.prod(particles.shape), dtype=np.float64).reshape(
         particles.shape
     )
@@ -68,3 +73,16 @@ def test_logsumexp_handles_all_negative_infinity():
     values = np.array([-np.inf, -np.inf])
 
     assert logsumexp(values) == -np.inf
+
+
+def test_array_like_inputs_default_to_numpy():
+    vector = asarray([1, 2], dtype="float32")
+    scalar = asarray(1.0)
+    filled = full((2,), 3.0)
+
+    assert isinstance(vector, np.ndarray)
+    assert vector.dtype == np.float32
+    np.testing.assert_array_equal(vector, [1.0, 2.0])
+    assert isinstance(scalar, np.ndarray)
+    np.testing.assert_array_equal(filled, [3.0, 3.0])
+    assert np.isclose(logsumexp([0.0, 0.0]), np.log(2.0))

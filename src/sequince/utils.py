@@ -19,8 +19,11 @@ RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
 
 def normalize_log_weights(log_weights: Any, *, xp: Any | None = None):
     """Normalize log weights, falling back to uniform weights if degenerate."""
-    xp = xp or namespace(log_weights)
-    values = asarray(log_weights, xp=xp)
+    if xp is None:
+        values = asarray(log_weights)
+        xp = namespace(values)
+    else:
+        values = asarray(log_weights, xp=xp)
     log_norm = logsumexp(values, xp=xp)
     log_norm_scalar = float(to_numpy(log_norm))
     if math.isfinite(log_norm_scalar):

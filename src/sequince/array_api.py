@@ -41,6 +41,14 @@ def namespace(*arrays: Any):
     return _array_namespace(*filtered)
 
 
+def _namespace_or_numpy(array: Any):
+    """Infer an array namespace, defaulting array-like inputs to NumPy."""
+    try:
+        return namespace(array)
+    except (TypeError, ValueError):
+        return _np
+
+
 def _dtype_name(dtype: Any) -> str:
     """Return a backend-independent name for a dtype-like object."""
     if isinstance(dtype, str):
@@ -132,7 +140,10 @@ def asarray(
     like: Any | None = None,
 ):
     """Convert an array while preserving the requested namespace and device."""
-    xp = xp or (namespace(like) if like is not None else namespace(array))
+    if xp is None:
+        xp = (
+            namespace(like) if like is not None else _namespace_or_numpy(array)
+        )
     resolved_dtype = resolve_dtype(dtype, xp)
     try:
         source_namespace = namespace(array)
@@ -153,7 +164,8 @@ def asarray(
 
 def copy(array: Any, *, xp: Any | None = None):
     """Copy an array without changing its namespace or device."""
-    xp = xp or namespace(array)
+    if xp is None:
+        xp = _namespace_or_numpy(array)
     arr = asarray(array, xp=xp)
     if hasattr(xp, "copy"):
         try:
@@ -207,7 +219,12 @@ def full(
     dtype: Any | str | None = None,
     like: Any | None = None,
 ):
-    xp = xp or (namespace(like) if like is not None else namespace(fill_value))
+    if xp is None:
+        xp = (
+            namespace(like)
+            if like is not None
+            else _namespace_or_numpy(fill_value)
+        )
     arr = xp.full(
         tuple(shape),
         fill_value,
@@ -224,7 +241,8 @@ def arange(
     dtype: Any | str | None = None,
     like: Any | None = None,
 ):
-    xp = xp or (namespace(like) if like is not None else _np)
+    if xp is None:
+        xp = namespace(like) if like is not None else _np
     arr = xp.arange(*range_args, dtype=resolve_dtype(dtype, xp))
     if like is None:
         return arr
@@ -232,7 +250,8 @@ def arange(
 
 
 def logsumexp(array: Any, *, xp: Any | None = None):
-    xp = xp or namespace(array)
+    if xp is None:
+        xp = _namespace_or_numpy(array)
     arr = asarray(array, xp=xp)
     max_value = xp.max(arr)
     if not math.isfinite(float(to_numpy(max_value))):

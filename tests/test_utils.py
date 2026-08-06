@@ -4,7 +4,7 @@ from sequince.utils import in_bounds, normalize_log_weights
 
 
 def test_normalize_log_weights():
-    log_weights = np.log([1.0, 3.0])
+    log_weights = np.log([1.0, 3.0]).tolist()
 
     normalized, log_norm, valid = normalize_log_weights(log_weights)
 
