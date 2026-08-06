@@ -6,8 +6,6 @@ from array_api_compat import device
 
 from sequince.array_api import (
     asarray,
-    convert_dtype,
-    full,
     logsumexp,
     namespace,
     resolve_dtype,
@@ -27,7 +25,6 @@ def test_to_numpy_from_supported_backends(backend, backend_factory):
     assert result.dtype == np.float64
     np.testing.assert_allclose(result, np.asarray(to_numpy(particles)))
     assert resolve_dtype("float32", xp) is not None
-    assert convert_dtype(np.dtype("float32"), xp) is not None
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
@@ -78,11 +75,9 @@ def test_logsumexp_handles_all_negative_infinity():
 def test_array_like_inputs_default_to_numpy():
     vector = asarray([1, 2], dtype="float32")
     scalar = asarray(1.0)
-    filled = full((2,), 3.0)
 
     assert isinstance(vector, np.ndarray)
     assert vector.dtype == np.float32
     np.testing.assert_array_equal(vector, [1.0, 2.0])
     assert isinstance(scalar, np.ndarray)
-    np.testing.assert_array_equal(filled, [3.0, 3.0])
     assert np.isclose(logsumexp([0.0, 0.0]), np.log(2.0))

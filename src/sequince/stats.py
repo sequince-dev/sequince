@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-import math
-
 from ._typing import Array
-from .array_api import asarray, full, logsumexp, namespace, to_numpy
+from .array_api import asarray, logsumexp, namespace, to_numpy
+from .utils import normalize_log_weights
 
 
 def ess_from_log_weights(log_weights: Array) -> float:
     """Return the effective sample size (ESS) given log weights."""
     xp = namespace(log_weights)
     lw = asarray(log_weights, xp=xp)
-    log_norm = logsumexp(lw, xp=xp)
-    log_norm_scalar = float(log_norm)
-    if math.isfinite(log_norm_scalar):
-        weights = xp.exp(lw - log_norm_scalar)
-    else:
-        n = lw.shape[0]
-        weights = full((n,), 1.0 / n, xp=xp, dtype=lw.dtype, like=lw)
+    normalized_lw, _ = normalize_log_weights(lw, xp=xp)
+    weights = xp.exp(normalized_lw)
     ess = 1.0 / float(to_numpy(xp.sum(xp.square(weights))))
     return ess
 

@@ -4,8 +4,10 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+from array_api_compat import device as get_device
+
 from ._typing import Array
-from .array_api import asarray, full, namespace, to_numpy
+from .array_api import asarray, namespace, to_numpy
 from .flows import (
     NormalizingFlow,
     clone_flow,
@@ -151,12 +153,11 @@ def _particle_values(values: Any, particles: Array, *, name: str) -> Array:
     array = asarray(values, xp=xp, like=particles)
     n_particles = particles.shape[0]
     if array.ndim == 0:
-        array = full(
+        array = xp.full(
             (n_particles,),
             float(array),
-            xp=xp,
             dtype=array.dtype,
-            like=particles,
+            device=get_device(particles),
         )
     if array.shape != (n_particles,):
         raise ValueError(f"{name} must contain one value per particle.")
@@ -299,6 +300,6 @@ def draw_mcmc_initial_state(
     evaluation = None
     if accepted_evaluations:
         evaluation = TargetEvaluation.concatenate(accepted_evaluations).take(
-            xp.arange(n_particles)
+            xp.arange(n_particles, device=get_device(particles))
         )
     return ParticleState(particles=particles, evaluation=evaluation)

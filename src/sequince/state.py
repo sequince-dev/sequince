@@ -7,15 +7,11 @@ from dataclasses import dataclass, field
 from numbers import Real
 from typing import TYPE_CHECKING, Any, MutableMapping
 
+from array_api_compat import device as get_device
+
 from ._typing import Array
-from .array_api import (
-    asarray,
-    full,
-    namespace,
-)
-from .array_api import (
-    copy as array_copy,
-)
+from .array_api import asarray, namespace
+from .array_api import copy as array_copy
 from .utils import normalize_log_weights
 
 if TYPE_CHECKING:
@@ -61,8 +57,8 @@ class ParticleState:
             value = (
                 float(log_weights) if log_weights is not None else -math.log(n)
             )
-            log_weights = full(
-                (n,), value, xp=xp, dtype=float, like=self.particles
+            log_weights = xp.full(
+                (n,), value, device=get_device(self.particles)
             )
         self.log_weights = log_weights
 
@@ -133,12 +129,11 @@ class ParticleState:
         new_particles = particles[indices]
         n = indices.shape[0]
         log_weight_template = asarray(self.log_weights, xp=xp)
-        log_weights = full(
+        log_weights = xp.full(
             (n,),
             -math.log(n),
-            xp=xp,
             dtype=log_weight_template.dtype,
-            like=log_weight_template,
+            device=get_device(log_weight_template),
         )
         return ParticleState(
             particles=new_particles,

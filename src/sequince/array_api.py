@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as _np
 from array_api_compat import (
     array_namespace as _array_namespace,
 )
-from array_api_compat import (
-    device as get_device,
-)
+from array_api_compat import device as get_device
 from array_api_compat import (
     is_cupy_namespace,
     is_jax_array,
@@ -21,11 +19,8 @@ from array_api_compat import (
 )
 
 __all__ = [
-    "arange",
     "asarray",
-    "convert_dtype",
     "copy",
-    "full",
     "logsumexp",
     "namespace",
     "resolve_dtype",
@@ -86,14 +81,6 @@ def resolve_dtype(dtype: Any | str | None, xp: Any) -> Any | None:
             f"Unknown dtype {dtype!r} for namespace "
             f"{getattr(xp, '__name__', xp)!r}."
         ) from exc
-
-
-def convert_dtype(
-    dtype: Any | str | None,
-    target_xp: Any,
-) -> Any | None:
-    """Convert a dtype-like value to one understood by ``target_xp``."""
-    return resolve_dtype(dtype, target_xp)
 
 
 def _same_namespace(first: Any, second: Any) -> bool:
@@ -209,44 +196,6 @@ def to_numpy(
     if hasattr(array, "numpy"):
         array = array.numpy()
     return _numpy_result(array, dtype=dtype, copy=copy)
-
-
-def full(
-    shape: Iterable[int],
-    fill_value: Any,
-    *,
-    xp: Any | None = None,
-    dtype: Any | str | None = None,
-    like: Any | None = None,
-):
-    if xp is None:
-        xp = (
-            namespace(like)
-            if like is not None
-            else _namespace_or_numpy(fill_value)
-        )
-    arr = xp.full(
-        tuple(shape),
-        fill_value,
-        dtype=resolve_dtype(dtype, xp),
-    )
-    if like is None:
-        return arr
-    return to_device(arr, get_device(like))
-
-
-def arange(
-    *range_args: Any,
-    xp: Any | None = None,
-    dtype: Any | str | None = None,
-    like: Any | None = None,
-):
-    if xp is None:
-        xp = namespace(like) if like is not None else _np
-    arr = xp.arange(*range_args, dtype=resolve_dtype(dtype, xp))
-    if like is None:
-        return arr
-    return to_device(arr, get_device(like))
 
 
 def logsumexp(array: Any, *, xp: Any | None = None):

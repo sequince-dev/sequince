@@ -6,8 +6,10 @@ import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from array_api_compat import device as get_device
+
 from .._typing import Array
-from ..array_api import arange, asarray, full, namespace
+from ..array_api import asarray, namespace
 from ..target import SequentialTarget
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
@@ -127,7 +129,7 @@ class WasteFreeResampleMove(SMCStep):
                     state.effective_sample_size(),
                 )
         else:
-            ancestor_indices = arange(n, xp=xp, like=particles)
+            ancestor_indices = xp.arange(n, device=get_device(particles))
 
         parent_particles = particles[ancestor_indices]
         parent_evaluation = (
@@ -144,12 +146,11 @@ class WasteFreeResampleMove(SMCStep):
         kernel = self._resolve_kernel(parent_particles, context)
 
         log_base_weight = -math.log(n)
-        remaining_log_mass = full(
+        remaining_log_mass = xp.full(
             (n,),
             log_base_weight,
-            xp=xp,
             dtype=log_prob_parents.dtype,
-            like=log_prob_parents,
+            device=get_device(log_prob_parents),
         )
 
         candidate_particles = [parent_particles]
@@ -183,12 +184,11 @@ class WasteFreeResampleMove(SMCStep):
 
             log_r = log_prob_proposals - log_prob_parents + transition_ratio
             log_r = xp.clip(log_r, -1e12, 1e12)
-            zeros = full(
+            zeros = xp.full(
                 log_r.shape,
                 0.0,
-                xp=xp,
                 dtype=log_r.dtype,
-                like=log_r,
+                device=get_device(log_r),
             )
             log_accept = xp.minimum(log_r, zeros)
             accept_prob = xp.exp(log_accept)
@@ -275,12 +275,11 @@ class WasteFreeResampleMove(SMCStep):
         context.metadata["waste_free_total_proposals"] = n * self._n_proposals
 
         log_weight_template = asarray(state.log_weights, xp=xp)
-        log_weights = full(
+        log_weights = xp.full(
             (n,),
             -math.log(n),
-            xp=xp,
             dtype=log_weight_template.dtype,
-            like=log_weight_template,
+            device=get_device(log_weight_template),
         )
         return state.replace_particles(
             new_particles,

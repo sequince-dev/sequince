@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
+from array_api_compat import device as get_device
+
 from ._typing import Array
-from .array_api import asarray, full, namespace
+from .array_api import asarray, namespace
 from .array_api import copy as array_copy
 from .utils import call_with_optional_context
 
@@ -32,12 +34,11 @@ def _evaluate_component(
     array = asarray(values, xp=xp, like=particles)
     if array.ndim == 0:
         n_particles = 1 if particles.ndim == 1 else particles.shape[0]
-        array = full(
+        array = xp.full(
             (n_particles,),
             float(array),
-            xp=xp,
             dtype=array.dtype,
-            like=particles,
+            device=get_device(particles),
         )
     if array.ndim > 1:
         array = xp.reshape(array, (array.shape[0],))

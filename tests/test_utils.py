@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from sequince import DegenerateWeightsError
+from sequince.stats import ess_from_log_weights
 from sequince.utils import in_bounds, normalize_log_weights
 
 
@@ -27,6 +28,11 @@ def test_normalize_degenerate_log_weights_raises(log_weights, message):
         normalize_log_weights(log_weights)
 
     assert not np.isfinite(exc_info.value.log_normalizer)
+
+
+def test_ess_rejects_degenerate_log_weights():
+    with pytest.raises(DegenerateWeightsError, match="zero weight"):
+        ess_from_log_weights(np.array([-np.inf, -np.inf]))
 
 
 def test_in_bounds():
