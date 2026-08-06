@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -22,6 +23,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 BlackJAXAlgorithmFactory = Callable[..., Any]
+
+
+@dataclass(frozen=True)
+class BlackJAXOutput(Mapping[str, Any]):
+    """Fixed-structure BlackJAX diagnostics returned by a mutation step."""
+
+    acceptance: Any
+    divergence: Any
+    algorithm: str
+    steps: int
+    chain: Any
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in {
+            "acceptance",
+            "divergence",
+            "algorithm",
+            "steps",
+            "chain",
+        }:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self):
+        return iter(
+            ("acceptance", "divergence", "algorithm", "steps", "chain")
+        )
+
+    def __len__(self) -> int:
+        return 5
 
 
 class BlackJAXMutation(MutationStep):
@@ -156,7 +187,7 @@ class BlackJAXMutation(MutationStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> tuple["ParticleState", StepContext, dict[str, Any]]:
+    ) -> tuple["ParticleState", StepContext, BlackJAXOutput]:
         import jax
         import jax.numpy as jnp
 
@@ -228,13 +259,13 @@ class BlackJAXMutation(MutationStep):
             self.algorithm_name,
             self._n_steps,
         )
-        output = {
-            "acceptance": acceptance,
-            "divergence": divergence,
-            "algorithm": self.algorithm_name,
-            "steps": self._n_steps,
-            "chain": stored_chain,
-        }
+        output = BlackJAXOutput(
+            acceptance=acceptance,
+            divergence=divergence,
+            algorithm=self.algorithm_name,
+            steps=self._n_steps,
+            chain=stored_chain,
+        )
         return (
             state.replace_particles(
                 new_particles,
