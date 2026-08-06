@@ -21,6 +21,14 @@ class CountingTransform(ParticleTransform):
         return self
 
 
+class ReplacingTransform(ParticleTransform):
+    def __init__(self, fitted: bool = False):
+        self.fitted = fitted
+
+    def fit(self, particles, context=None):
+        return ReplacingTransform(fitted=True)
+
+
 class PreparingMutation(MutationStep):
     def apply(self, state, context, rng):
         _, context = self._prepare_transform(state.particles, context)
@@ -54,6 +62,21 @@ def test_always_refits_transform_for_each_application(
     mutation(particle_state, context, rng)
 
     assert len(fits) == 2
+
+
+def test_mutation_retains_transform_returned_by_fit(
+    particle_state, context_factory, rng
+) -> None:
+    mutation = PreparingMutation(
+        lambda particles, context: np.zeros(particles.shape[0]),
+        transform=ReplacingTransform(),
+    )
+
+    _, context, _ = mutation(particle_state, context_factory(), rng)
+
+    fitted = context.metadata["particle_transform"]
+    assert isinstance(fitted, ReplacingTransform)
+    assert fitted.fitted
 
 
 def test_per_context_refit_reuses_transform_across_alternating_rounds(

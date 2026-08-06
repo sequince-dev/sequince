@@ -25,7 +25,11 @@ def particles():
 
 def test_affine_all_columns(particles):
     transform = AffineTransform()
-    transform.fit(particles)
+    fitted = transform.fit(particles)
+    assert fitted is not transform
+    assert transform._mean is None
+    assert transform._scale is None
+    transform = fitted
     latent, log_det = transform.forward(particles)
     restored, restore_log_det = transform.inverse(latent)
     np.testing.assert_allclose(restored, particles)
@@ -35,7 +39,7 @@ def test_affine_all_columns(particles):
 
 def test_affine_subset(particles):
     transform = AffineTransform(columns=[0, 2])
-    transform.fit(particles)
+    transform = transform.fit(particles)
     latent, _ = transform.forward(particles)
     restored, _ = transform.inverse(latent)
     np.testing.assert_allclose(restored, particles)
@@ -93,7 +97,9 @@ def test_composite_transform(particles):
             BoundedToUnboundedTransform(bounds),
         ]
     )
-    composite.fit(particles)
+    fitted = composite.fit(particles)
+    assert fitted is not composite
+    composite = fitted
     latent, log_det = composite.forward(particles)
     restored, restore_log_det = composite.inverse(latent)
     np.testing.assert_allclose(restored, particles)
@@ -102,7 +108,10 @@ def test_composite_transform(particles):
 
 def test_flow_transform_round_trip_and_clone(particles, shift_flow_factory):
     transform = FlowTransform(shift_flow_factory(n_dim=3))
-    transform.fit(particles)
+    fitted = transform.fit(particles)
+    assert fitted is not transform
+    assert transform.flow.fitted_particles is None
+    transform = fitted
     latent, log_det = transform.forward(particles)
     restored, restore_log_det = transform.inverse(latent)
 
@@ -146,10 +155,11 @@ def test_flow_transform_passes_fit_kwargs(particles):
         fit_kwargs={"n_epochs": 7, "batch_size": 2},
     )
 
-    transform.fit(particles)
+    fitted = transform.fit(particles)
 
-    assert transform.flow.fit_options == {"n_epochs": 7, "batch_size": 2}
-    assert transform.fit_kwargs == {"n_epochs": 7, "batch_size": 2}
+    assert transform.flow.fit_options is None
+    assert fitted.flow.fit_options == {"n_epochs": 7, "batch_size": 2}
+    assert fitted.fit_kwargs == {"n_epochs": 7, "batch_size": 2}
 
 
 def test_flow_transform_preserves_input_namespace(particles):
@@ -172,7 +182,7 @@ def test_flow_transform_preserves_input_namespace(particles):
     transform = CompositeTransform(
         [AffineTransform(), FlowTransform(TorchFlow())]
     )
-    transform.fit(particles)
+    transform = transform.fit(particles)
 
     latent, log_det = transform.forward(particles)
     restored, inverse_log_det = transform.inverse(latent)
@@ -181,3 +191,28 @@ def test_flow_transform_preserves_input_namespace(particles):
     assert isinstance(log_det, np.ndarray)
     np.testing.assert_allclose(restored, particles, atol=1e-12)
     np.testing.assert_allclose(log_det + inverse_log_det, 0.0)
+
+
+def test_builtin_transforms_are_jittable_dataclass_pytrees():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+
+    particles = jnp.asarray([[0.2, 1.0], [0.8, 3.0]])
+    transform = CompositeTransform(
+        [
+            BoundedToUnboundedTransform({0: (0.0, 1.0)}),
+            AffineTransform(columns=[1]),
+        ]
+    )
+    fitted = jax.jit(lambda current, values: current.fit(values))(
+        transform, particles
+    )
+    latent, log_det = jax.jit(lambda current, values: current.forward(values))(
+        fitted, particles
+    )
+    restored, inverse_log_det = jax.jit(
+        lambda current, values: current.inverse(values)
+    )(fitted, latent)
+
+    np.testing.assert_allclose(restored, particles, atol=1e-6)
+    np.testing.assert_allclose(log_det + inverse_log_det, 0.0, atol=1e-6)

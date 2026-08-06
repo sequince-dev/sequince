@@ -29,7 +29,9 @@ class CheckpointRecorder(CheckpointWriter):
         self.checkpoints.append(checkpoint)
 
 
-def _fixed_blackjax_sampler(*, checkpoint_writers=None):
+def _fixed_blackjax_sampler(
+    *, checkpoint_writers=None, particle_transform=None
+):
     from sequince import make_standard_bayesian_smc
 
     def log_prior(x, context):
@@ -49,7 +51,7 @@ def _fixed_blackjax_sampler(*, checkpoint_writers=None):
             "algorithm": "random-walk",
             "algorithm_kwargs": {"sigma": 0.1},
         },
-        particle_transform=None,
+        particle_transform=particle_transform,
         logging_frequency=0,
         checkpoint_writers=checkpoint_writers,
     )
@@ -245,6 +247,30 @@ def test_functional_iteration_can_be_jitted() -> None:
         jax.random.key_data(key),
         jax.random.key_data(next_key),
     )
+
+
+def test_functional_iteration_with_affine_transform_can_be_jitted() -> None:
+    from sequince.transforms import AffineTransform
+
+    smc, _, metadata = _fixed_blackjax_sampler(
+        particle_transform=AffineTransform()
+    )
+    state = ParticleState(jnp.zeros((4, 2)))
+    context = StepContext(
+        t=jnp.asarray(0),
+        metadata=smc.initialize_functional_metadata(state, metadata),
+    )
+    iteration = jax.jit(smc.functional_iteration)
+
+    state, context, key, _ = iteration(state, context, jax.random.key(42))
+    state, context, _, _ = iteration(
+        state,
+        replace(context, t=context.t + 1),
+        key,
+    )
+    jax.block_until_ready(state)
+
+    assert isinstance(context.metadata["particle_transform"], AffineTransform)
 
 
 def test_functional_iteration_matches_host_iteration() -> None:
