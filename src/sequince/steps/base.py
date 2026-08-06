@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from orng import RandomGenerator
+
+from ..array_api import namespace
 from ..utils import resolve_rng
 from .context import StepContext
 
@@ -30,6 +33,35 @@ class SMCStep:
         rng: "RandomGenerator",
     ) -> tuple["ParticleState", StepContext, Any]:
         raise NotImplementedError("SMCStep subclasses must implement apply().")
+
+    def functional_step(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        random_state: Any,
+    ) -> tuple["ParticleState", StepContext, Any, Any]:
+        """Apply the step while explicitly threading backend random state.
+
+        The generator is local to this call, making the external transition
+        pure when :meth:`apply` is itself free of mutation. Backend selection is
+        resolved from the random state's array namespace during tracing. This
+        RNG boundary is suitable for JAX transformations, but it does not make
+        Python control flow over tracers, host scalar conversions, mutation,
+        dynamic dictionaries or outputs, shape-changing operations, non-JAX
+        third-party code, host logging or callbacks, traced-value exceptions,
+        or NumPy operations on tracers JIT-compatible.
+        """
+        rng = RandomGenerator.from_xp(
+            namespace(random_state),
+            generator=random_state,
+        )
+        state, context, output = self.apply(state, context, rng)
+        state_method = getattr(rng, "state", None)
+        if state_method is not None:
+            new_random_state = state_method()
+        else:  # ORNG before the public state() convenience method.
+            _, new_random_state = rng.to_functional()
+        return state, context, new_random_state, output
 
     def state_dict(self) -> dict[str, Any]:
         """Return mutable state required by subsequent SMC iterations."""
