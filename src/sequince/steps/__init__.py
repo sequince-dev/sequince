@@ -7,6 +7,7 @@ from .context import (
 )
 from .control import ContinueWhile
 from .log import LoggingStep
+from .meta import MetaSMCStep
 from .mutation import (
     AdaptiveMaskedGaussianRandomWalk,
     BlockedMetropolisHastingsMutation,
@@ -17,7 +18,6 @@ from .mutation import (
     MiniPCNMutation,
     MutateIfResampled,
 )
-from .nested import NestedSMCStep
 from .proposal import AdaptGaussianProposal
 from .resampling import (
     MultinomialResampling,
@@ -56,7 +56,7 @@ __all__ = [
     "MetropolisBlock",
     "MiniPCNMutation",
     "MutateIfResampled",
-    "NestedSMCStep",
+    "MetaSMCStep",
     "AdaptGaussianProposal",
     "MultinomialResampling",
     "StratifiedResampling",

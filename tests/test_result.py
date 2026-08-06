@@ -1,6 +1,7 @@
 import pytest
 
-from sequince.result import SMCResult
+from sequince.result import MetaSMCResult, SMCResult
+from sequince.steps.meta import META_SMC_OUTPUT_KEY
 
 
 @pytest.fixture
@@ -39,6 +40,14 @@ def test_smc_results_append_state(
 
 def test_smc_results_summary(dummy_results: SMCResult) -> None:
     dummy_results.summary()
+
+
+def test_get_meta_smc_results(dummy_results: SMCResult) -> None:
+    dummy_results.context.outputs[META_SMC_OUTPUT_KEY] = [dummy_results]
+
+    meta_result = dummy_results.get_meta_results()
+
+    assert isinstance(meta_result, MetaSMCResult)
 
 
 def test_smc_results_plot_metadata_history(dummy_results: SMCResult) -> None:

@@ -7,11 +7,11 @@ import numpy as np
 from sequince.posterior import TemperedPosterior
 from sequince.result import SMCResult
 from sequince.state import ParticleState
+from sequince.steps import MetaSMCStep
 from sequince.steps.context import LOG_PROPOSAL_OVERRIDE_KEY
-from sequince.steps.nested import NestedSMCStep
 
 
-def test_nested_smc_invalidates_evaluation_after_changing_proposal(
+def test_meta_smc_invalidates_evaluation_after_changing_proposal(
     context_factory,
     rng,
 ) -> None:
@@ -27,7 +27,7 @@ def test_nested_smc_invalidates_evaluation_after_changing_proposal(
     runner.run.return_value = SMCResult([final_state], inner_context)
     outer_context = context_factory(metadata={"temperature": 0.0})
 
-    updated = NestedSMCStep(runner, posterior)(
+    updated = MetaSMCStep(runner, posterior)(
         ParticleState(particles),
         outer_context,
         rng,
