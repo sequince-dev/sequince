@@ -43,7 +43,11 @@ def test_smc_results_summary(dummy_results: SMCResult) -> None:
 
 
 def test_get_meta_smc_results(dummy_results: SMCResult) -> None:
-    dummy_results.context.outputs[META_SMC_OUTPUT_KEY] = [dummy_results]
+    dummy_results = SMCResult(
+        states=dummy_results.states,
+        context=dummy_results.context,
+        outputs=(((None, {META_SMC_OUTPUT_KEY: dummy_results}),),),
+    )
 
     meta_result = dummy_results.get_meta_results()
 

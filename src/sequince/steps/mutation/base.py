@@ -131,9 +131,9 @@ class MutationStep(SMCStep):
 
     def _prepare_transform(
         self, particles: Array, context: StepContext
-    ) -> ParticleTransform | None:
+    ) -> tuple[ParticleTransform | None, StepContext]:
         if self._transform is None:
-            return None
+            return None, context
         triggered = (
             bool(self._transform_refit(particles, context))
             if callable(self._transform_refit)
@@ -145,7 +145,12 @@ class MutationStep(SMCStep):
             or triggered
             or (
                 self._transform_refit == "per-context"
-                and self._prepared_context is not context
+                and (
+                    self._prepared_context is None
+                    or self._prepared_context.t != context.t
+                    or self._prepared_context.next_observation_index
+                    != context.next_observation_index
+                )
             )
         )
         if should_fit:
@@ -159,8 +164,8 @@ class MutationStep(SMCStep):
             if cached_transform is None:  # pragma: no cover - guarded above
                 raise RuntimeError("Prepared transform cache is empty.")
             transform = cached_transform
-        context.metadata[PARTICLE_TRANSFORM_KEY] = transform
-        return transform
+        context = context.with_metadata(**{PARTICLE_TRANSFORM_KEY: transform})
+        return transform, context
 
     @staticmethod
     def _forward_transform(

@@ -56,7 +56,7 @@ def test_blackjax_mutates_jax_particles(algorithm, algorithm_kwargs) -> None:
     )
     context = StepContext(t=0, metadata={"temperature": 0.5})
 
-    result = mutation(_state(), context, resolve_rng(42))
+    result, _, output = mutation(_state(), context, resolve_rng(42))
 
     assert result.particles.shape == (4, 2)
     assert isinstance(result.particles, jax.Array)
@@ -65,6 +65,7 @@ def test_blackjax_mutates_jax_particles(algorithm, algorithm_kwargs) -> None:
     assert result.metadata["blackjax_steps"] == 2
     assert 0.0 <= result.metadata["blackjax_acceptance"] <= 1.0
     assert result.metadata["mutation_chains"].shape == (2, 4, 2)
+    assert output["chain"].shape == (2, 4, 2)
     assert np.all(np.isfinite(np.asarray(result.particles)))
 
 

@@ -106,7 +106,7 @@ class WasteFreeResampleMove(SMCStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, dict[str, Any]]:
         n = state.log_weights.shape[0]
         if n == 0:
             raise ValueError(
@@ -263,16 +263,13 @@ class WasteFreeResampleMove(SMCStep):
         metadata["waste_free_selected_proposals_by_round"] = proposal_counts
         metadata["waste_free_proposal_repeats"] = self._n_proposals
 
-        context.metadata["waste_free_acceptance"] = metadata[
-            "waste_free_acceptance"
-        ]
-        context.metadata["waste_free_acceptance_by_round"] = (
-            acceptance_by_round
+        context = context.with_metadata(
+            waste_free_acceptance=metadata["waste_free_acceptance"],
+            waste_free_selected_proposals=metadata[
+                "waste_free_selected_proposals"
+            ],
+            waste_free_total_proposals=n * self._n_proposals,
         )
-        context.metadata["waste_free_selected_proposals"] = metadata[
-            "waste_free_selected_proposals"
-        ]
-        context.metadata["waste_free_total_proposals"] = n * self._n_proposals
 
         log_weight_template = asarray(state.log_weights, xp=xp)
         log_weights = xp.full(
@@ -281,11 +278,22 @@ class WasteFreeResampleMove(SMCStep):
             dtype=log_weight_template.dtype,
             device=get_device(log_weight_template),
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=new_evaluation,
-            log_weights=log_weights,
-            metadata=metadata,
+        output = {
+            "acceptance": mean_acceptance,
+            "acceptance_by_round": tuple(acceptance_by_round),
+            "selected_proposals": metadata["waste_free_selected_proposals"],
+            "selected_parents": metadata["waste_free_selected_parents"],
+            "selected_proposals_by_round": tuple(proposal_counts),
+        }
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=new_evaluation,
+                log_weights=log_weights,
+                metadata=metadata,
+            ),
+            context,
+            output,
         )
 
     def _evaluate_log_prob(

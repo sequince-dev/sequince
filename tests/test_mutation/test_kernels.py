@@ -177,7 +177,7 @@ def test_gaussian_random_walk_mutation_preserves_backend(
         store_chains=True,
     )
 
-    updated = step(
+    updated, _, _ = step(
         case.state(),
         StepContext(t=0),
         case.rng(2468),

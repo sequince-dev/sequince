@@ -41,7 +41,7 @@ class MiniPCNMutation(MutationStep):
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(
             log_prob_fn,
             transform=transform,
@@ -61,11 +61,11 @@ class MiniPCNMutation(MutationStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ):
+    ) -> tuple[ParticleState, StepContext, dict[str, object]]:
         from minipcn import Sampler
 
         xp = namespace(state.particles)
-        transform = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(state.particles, context)
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
@@ -122,8 +122,16 @@ class MiniPCNMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=final_evaluation,
-            metadata=metadata,
+        output = {
+            "acceptance": acceptance,
+            "chain": metadata.get("mutation_chains"),
+        }
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=final_evaluation,
+                metadata=metadata,
+            ),
+            context,
+            output,
         )

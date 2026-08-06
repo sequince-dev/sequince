@@ -293,7 +293,7 @@ class SMCCheckpoint:
     next_iteration: int
     next_observation_index: int
     metadata: dict[str, Any]
-    outputs: dict[str, Any]
+    outputs: tuple[tuple[Any, ...], ...]
     step_states: tuple[StepState, ...]
     rng_state: dict[str, Any] | None = None
     history: tuple[ParticleState, ...] | None = None
@@ -328,7 +328,7 @@ class SMCCheckpoint:
                     if key != "particle_transform"
                 }
             ),
-            outputs=copy.deepcopy(dict(context.outputs)),
+            outputs=copy.deepcopy(tuple(result.outputs)),
             step_states=capture_step_states(steps),
             rng_state=None if rng is None else resolve_rng(rng).state_dict(),
             history=history,
@@ -395,9 +395,12 @@ class SMCCheckpoint:
             raise TypeError(
                 "SMCCheckpoint 'rng_state' must be a mapping or None."
             )
-        for key in ("metadata", "outputs"):
-            if not isinstance(payload[key], Mapping):
-                raise TypeError(f"SMCCheckpoint '{key}' must be a mapping.")
+        if not isinstance(payload["metadata"], Mapping):
+            raise TypeError("SMCCheckpoint 'metadata' must be a mapping.")
+        if not isinstance(payload["outputs"], Sequence) or isinstance(
+            payload["outputs"], (str, bytes)
+        ):
+            raise TypeError("SMCCheckpoint 'outputs' must be a sequence.")
         step_payload = payload["step_states"]
         if not isinstance(step_payload, Sequence) or isinstance(
             step_payload, (str, bytes)
@@ -430,7 +433,9 @@ class SMCCheckpoint:
             next_iteration=next_iteration,
             next_observation_index=next_observation_index,
             metadata=copy.deepcopy(dict(payload["metadata"])),
-            outputs=copy.deepcopy(dict(payload["outputs"])),
+            outputs=tuple(
+                tuple(iteration) for iteration in payload["outputs"]
+            ),
             step_states=tuple(
                 StepState.from_dict(item) for item in step_payload
             ),
@@ -473,12 +478,12 @@ class SMCCheckpoint:
             observation=copy.deepcopy(self.observation),
             shared=dict(shared_context or {}),
             metadata=copy.deepcopy(self.metadata),
-            outputs=copy.deepcopy(self.outputs),
         )
         return SMCResult(
             states=states,
             context=context,
             initial_state=self.initial_state,
+            outputs=copy.deepcopy(self.outputs),
         )
 
     def save_pickle(

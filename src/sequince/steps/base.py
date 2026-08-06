@@ -13,14 +13,14 @@ if TYPE_CHECKING:
 
 
 class SMCStep:
-    """Base class for composable SMC steps."""
+    """Base class for steps with explicit context and output returns."""
 
     def __call__(
         self,
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator" | int | None = None,
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, Any]:
         return self.apply(state, context, resolve_rng(rng))
 
     def apply(
@@ -28,7 +28,7 @@ class SMCStep:
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, Any]:
         raise NotImplementedError("SMCStep subclasses must implement apply().")
 
     def state_dict(self) -> dict[str, Any]:

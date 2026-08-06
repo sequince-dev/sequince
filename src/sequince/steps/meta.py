@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -41,7 +40,7 @@ class MetaSMCStep(SMCStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, dict[str, Any] | None]:
         if self.runner is None:
             raise ValueError("MetaSMCStep requires an SMC runner.")
 
@@ -51,9 +50,7 @@ class MetaSMCStep(SMCStep):
             len(input_state.particles),
         )
         # TODO: is there a better way to do this? Avoid copying?
-        metadata = copy.deepcopy(context.metadata)
-        metadata.pop("stop_requested", None)
-        metadata.pop("stop_immediately", None)
+        metadata = dict(context.metadata)
         result = self.runner.run(
             input_state,
             rng=rng,
@@ -67,14 +64,17 @@ class MetaSMCStep(SMCStep):
             final_context,
             log_proposal_override=final_context.metadata.get(override_key),
         )
-        context.metadata[override_key] = output_log_proposal
-        if self.record_outputs:
-            context.record_output(self.output_key, result)
+        context = context.with_metadata(**{override_key: output_log_proposal})
+        output = {self.output_key: result} if self.record_outputs else None
         # The retained evaluation was computed using the inner loop's proposal.
         # Installing the terminal density as the next proposal changes the
         # target components required by the outer context, so that evaluation
         # must not be reused by a subsequent weighting or mutation step.
-        return result.final_state.with_updates(evaluation=None)
+        return (
+            result.final_state.with_updates(evaluation=None),
+            context,
+            output,
+        )
 
     def state_dict(self) -> dict[str, Any]:
         return {"runner": self.runner.state_dict()}

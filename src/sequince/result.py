@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -36,6 +36,7 @@ class SMCResult:
     states: Sequence[ParticleState]
     context: StepContext
     initial_state: ParticleState | None = None
+    outputs: Sequence[tuple[Any, ...]] = ()
 
     def __post_init__(self) -> None:
         if not self.states:
@@ -52,6 +53,7 @@ class SMCResult:
         return SMCResult(
             states=[*self.states, state],
             context=self.context,
+            outputs=self.outputs,
             initial_state=self.initial_state,
         )
 
@@ -59,11 +61,22 @@ class SMCResult:
         self,
         key: str = META_SMC_OUTPUT_KEY,
     ) -> MetaSMCResult | None:
-        """Return a MetaSMCResult if the specified key is present in the
-        context outputs.
-        """
-        meta_results = self.context.outputs.get(key)
-        if meta_results is not None:
+        """Return nested SMC results recorded by meta steps."""
+
+        def find_nested(output: Any):
+            if isinstance(output, Mapping):
+                if key in output:
+                    yield output[key]
+                for value in output.values():
+                    yield from find_nested(value)
+            elif isinstance(output, (tuple, list)):
+                for value in output:
+                    yield from find_nested(value)
+            elif hasattr(output, "child_output"):
+                yield from find_nested(output.child_output)
+
+        meta_results = list(find_nested(self.outputs))
+        if meta_results:
             return MetaSMCResult(results=meta_results)
         return None
 

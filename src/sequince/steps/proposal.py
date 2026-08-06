@@ -73,7 +73,7 @@ class AdaptGaussianProposal(SMCStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, dict[str, object]]:
         del rng  # Step does not require randomness.
 
         scale = float(context.metadata.get(self.scale_key, self.initial_scale))
@@ -88,7 +88,7 @@ class AdaptGaussianProposal(SMCStep):
             delta = float(acceptance) - float(self.target_acceptance)
             scale *= float(np.exp(self.adaptation_rate * delta))
         scale = float(np.clip(scale, self.min_scale, self.max_scale))
-        context.metadata[self.scale_key] = scale
+        context_updates: dict[str, object] = {self.scale_key: scale}
 
         updated_state = state
         if self.scale_metadata_key is not None:
@@ -117,8 +117,9 @@ class AdaptGaussianProposal(SMCStep):
             if not np.all(np.isfinite(cov)):
                 cov = np.eye(dim, dtype=float)
             cov += float(self.covariance_jitter) * np.eye(dim, dtype=float)
-            context.metadata[self.covariance_key] = cov
+            context_updates[self.covariance_key] = cov
             if self.mean_key is not None:
-                context.metadata[self.mean_key] = mean
+                context_updates[self.mean_key] = mean
 
-        return updated_state
+        context = context.with_metadata(**context_updates)
+        return updated_state, context, context_updates

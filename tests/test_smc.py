@@ -23,13 +23,13 @@ class StopAfterNStep(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, int]:
         count = state.metadata.get("calls", 0) + 1
         metadata = dict(state.metadata)
         metadata["calls"] = count
         if count >= self._limit:
-            context.request_stop()
-        return state.with_updates(metadata=metadata)
+            context = context.request_stop()
+        return state.with_updates(metadata=metadata), context, count
 
 
 class RecordObservationStep(SMCStep):
@@ -38,10 +38,14 @@ class RecordObservationStep(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, object]:
         metadata = dict(state.metadata)
         metadata.setdefault("observations", []).append(context.observation)
-        return state.with_updates(metadata=metadata)
+        return (
+            state.with_updates(metadata=metadata),
+            context,
+            context.observation,
+        )
 
 
 class RecordStep(SMCStep):
@@ -53,12 +57,12 @@ class RecordStep(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, str]:
         metadata = dict(state.metadata)
         history = list(metadata.get("executed_steps", []))
         history.append(self._name)
         metadata["executed_steps"] = history
-        return state.with_updates(metadata=metadata)
+        return state.with_updates(metadata=metadata), context, self._name
 
 
 class RecordingCallback:
@@ -124,9 +128,8 @@ def test_smc_deferred_stop_finishes_current_iteration(
             state: ParticleState,
             context: StepContext,
             rng: "RandomGenerator",
-        ) -> ParticleState:
-            context.request_stop()
-            return state
+        ) -> tuple[ParticleState, StepContext, None]:
+            return state, context.request_stop(), None
 
     smc = SequentialMonteCarlo(
         steps=[
@@ -138,6 +141,7 @@ def test_smc_deferred_stop_finishes_current_iteration(
 
     assert len(result) == 1
     assert result.final_state.metadata["executed_steps"] == ["after_stop"]
+    assert result.outputs == ((None, "after_stop"),)
 
 
 def test_smc_immediate_stop_skips_remaining_steps(
@@ -149,9 +153,8 @@ def test_smc_immediate_stop_skips_remaining_steps(
             state: ParticleState,
             context: StepContext,
             rng: "RandomGenerator",
-        ) -> ParticleState:
-            context.request_stop_immediately()
-            return state
+        ) -> tuple[ParticleState, StepContext, None]:
+            return state, context.request_stop_immediately(), None
 
     smc = SequentialMonteCarlo(
         steps=[
@@ -163,6 +166,7 @@ def test_smc_immediate_stop_skips_remaining_steps(
 
     assert len(result) == 1
     assert "executed_steps" not in result.final_state.metadata
+    assert result.outputs == ((None,),)
 
 
 def test_smc_with_adaptive_tempering_stops_at_max_temperature(
@@ -185,7 +189,7 @@ def test_smc_with_adaptive_tempering_stops_at_max_temperature(
     states = smc.run(initial_state, num_steps=None, rng=rng, metadata=metadata)
 
     assert states[-1].metadata["temperature"] == pytest.approx(0.5, abs=1e-6)
-    assert metadata["temperature"] == pytest.approx(
+    assert states.context.metadata["temperature"] == pytest.approx(
         states[-1].metadata["temperature"]
     )
     assert states[-1].metadata["executed_steps"] == [
@@ -199,13 +203,13 @@ def test_smc_invokes_callbacks_with_incremental_results(
 ) -> None:
     def annotate_iteration(
         state: ParticleState, context: StepContext, rng: "RandomGenerator"
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, int]:
         metadata = dict(state.metadata)
         history = list(metadata.get("history", []))
         history.append(context.t)
         metadata["history"] = history
         metadata["iteration"] = context.t
-        return state.with_updates(metadata=metadata)
+        return state.with_updates(metadata=metadata), context, context.t
 
     callback = RecordingCallback()
     smc = SequentialMonteCarlo(
@@ -235,6 +239,7 @@ def test_smc_invokes_callbacks_with_incremental_results(
     ]
     assert len(result) == 3
     assert result.final_state.metadata["iteration"] == 2
+    assert result.outputs == ((0,), (1,), (2,))
 
 
 def test_callback_can_request_stop(particle_state: ParticleState, rng) -> None:
@@ -247,14 +252,14 @@ def test_callback_can_request_stop(particle_state: ParticleState, rng) -> None:
             state: ParticleState,
             context: StepContext,
             result,
-        ) -> None:
+        ) -> StepContext:
             self.calls += 1
-            context.request_stop()
+            return context.request_stop()
 
     def identity_step(
         state: ParticleState, context: StepContext, rng: "RandomGenerator"
-    ) -> ParticleState:
-        return state
+    ) -> tuple[ParticleState, StepContext, None]:
+        return state, context, None
 
     callback = StopViaCallback()
     smc = SequentialMonteCarlo(

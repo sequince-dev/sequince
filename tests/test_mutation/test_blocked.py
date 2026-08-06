@@ -39,7 +39,7 @@ def test_blocked_metropolis_updates_each_block_and_records_diagnostics(
         store_chains=True,
     )
 
-    updated = mutation(state, context, rng)
+    updated, context, output = mutation(state, context, rng)
 
     assert np.any(updated.particles[:, :2] != particles[:, :2])
     assert np.any(updated.particles[:, 2:] != particles[:, 2:])
@@ -61,6 +61,10 @@ def test_blocked_metropolis_updates_each_block_and_records_diagnostics(
         "intrinsic": 1.0,
         "extrinsic": 1.0,
     }
+    assert (
+        output["acceptance"]
+        == context.metadata["blocked_metropolis_hastings_acceptance"]
+    )
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])

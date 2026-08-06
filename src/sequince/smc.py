@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -34,9 +34,9 @@ class SMCRuntime:
     initial_state: ParticleState | None
     t: int
     next_observation_index: int
-    shared_context: dict[str, Any]
-    metadata: MutableMapping[str, Any]
-    outputs: MutableMapping[str, Any]
+    shared_context: Mapping[str, Any]
+    metadata: Mapping[str, Any]
+    outputs: list[tuple[Any, ...]]
     rng: Any
 
 
@@ -44,19 +44,22 @@ class SequentialMonteCarlo:
     """Composable Sequential Monte Carlo runner.
 
     Users supply an ordered collection of SMC steps that will be called in sequence at
-    each iteration. Steps can mutate the state or return a new one.
+    each iteration. Steps return the updated particle state, context, and an
+    explicit output describing the completed work.
 
     Parameters
     ----------
     steps:
         A sequence of callables implementing SMC steps.  Each callable should accept
         three arguments: the current ``ParticleState``, the current ``StepContext``,
-        and an ``orng.RandomGenerator`` instance, and return a new ``ParticleState``.
+        and an ``orng.RandomGenerator`` instance, and return ``(state, context,
+        output)``.
     callbacks:
         Optional sequence of callables that will be invoked at the end of each iteration
         with the current state, context, and an ``SMCResult`` containing all states
         produced so far.  Callbacks can be used for logging, diagnostics, or custom
         stopping criteria that require access to the full history of states.
+        A callback may return an updated context, or ``None`` when observational.
     checkpoint_writers:
         Optional persistence hooks invoked with a committed checkpoint after all
         ordinary callbacks have completed.
@@ -70,11 +73,11 @@ class SequentialMonteCarlo:
         steps: Sequence[
             Callable[
                 [ParticleState, StepContext, "RandomGenerator"],
-                ParticleState,
+                tuple[ParticleState, StepContext, Any],
             ]
         ],
         *,
-        callbacks: Sequence[Callable[..., None]] | None = None,
+        callbacks: Sequence[Callable[..., StepContext | None]] | None = None,
         checkpoint_writers: Sequence[CheckpointWriter] | None = None,
         auto_normalize: bool = True,
     ):
@@ -108,8 +111,8 @@ class SequentialMonteCarlo:
         num_steps: int | None = None,
         rng: "RandomGenerator" | np.random.Generator | int | None = None,
         shared_context: Mapping[str, Any] | None = None,
-        metadata: MutableMapping[str, Any] | None = None,
-        outputs: MutableMapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        outputs: Sequence[tuple[Any, ...]] | None = None,
         runtime: SMCRuntime | None = None,
     ) -> SMCResult:
         """Run the SMC algorithm.
@@ -134,10 +137,10 @@ class SequentialMonteCarlo:
             each step via the context. This can be used to provide global
             information that steps may need access to.
         metadata:
-            Optional mutable dictionary for storing metadata that can be used
+            Optional mapping of metadata that can be used
             for communication between steps and callbacks.
         outputs:
-            Optional mutable dictionary for storing outputs from steps.
+            Optional previous per-iteration step outputs.
         runtime:
             Optional prepared runtime returned by :meth:`resume_from`.
         """
@@ -165,9 +168,11 @@ class SequentialMonteCarlo:
                 initial_state=initial_state.copy(),
                 t=0,
                 next_observation_index=0,
-                shared_context=dict(shared_context or {}),
-                metadata=metadata or {},
-                outputs=outputs or {},
+                shared_context=shared_context
+                if shared_context is not None
+                else {},
+                metadata=metadata if metadata is not None else {},
+                outputs=list(outputs or ()),
                 rng=resolve_rng(rng),
             )
 
@@ -250,13 +255,14 @@ class SequentialMonteCarlo:
                 observation=observation,
                 shared=shared_context,
                 metadata=metadata,
-                outputs=outputs,
             )
+            iteration_outputs = []
             for step in self._steps:
                 step_name = getattr(step, "__name__", step.__class__.__name__)
                 logger.debug("Iteration %d: applying step %s.", t, step_name)
-                state = step(state, context, rng)
-                if context.metadata.get("stop_immediately", False):
+                state, context, output = step(state, context, rng)
+                iteration_outputs.append(output)
+                if context.stop_immediately:
                     logger.info(
                         "Immediate stop requested by step %s at iteration %d; terminating iteration early.",
                         step_name,
@@ -272,11 +278,13 @@ class SequentialMonteCarlo:
                     pre_log_evidence,
                     state.log_evidence,
                 )
+            outputs.append(tuple(iteration_outputs))
             produced_states.append(state)
             result = SMCResult(
                 states=list(produced_states),
                 context=context,
                 initial_state=runtime.initial_state,
+                outputs=tuple(outputs),
             )
 
             for callback in self._callbacks:
@@ -286,7 +294,16 @@ class SequentialMonteCarlo:
                 logger.debug(
                     "Iteration %d: invoking callback %s.", t, callback_name
                 )
-                callback(state, context, result)
+                updated_context = callback(state, context, result)
+                if updated_context is not None:
+                    context = updated_context
+
+            result = SMCResult(
+                states=result.states,
+                context=context,
+                initial_state=result.initial_state,
+                outputs=result.outputs,
+            )
 
             next_iteration = context.t + 1
             checkpoint_writers = [
@@ -312,7 +329,8 @@ class SequentialMonteCarlo:
                 for writer in checkpoint_writers:
                     writer.write(checkpoint)
 
-            if context.metadata["stop_requested"]:
+            metadata = context.metadata
+            if context.stop_requested:
                 logger.info(
                     "Stop requested after iteration %d; terminating SMC run.",
                     t,
@@ -332,6 +350,7 @@ class SequentialMonteCarlo:
             states=list(produced_states),
             context=context,
             initial_state=runtime.initial_state,
+            outputs=tuple(outputs),
         )
 
     def resume_from(
@@ -352,8 +371,6 @@ class SequentialMonteCarlo:
         state = checkpoint_obj.state.copy()
         history = checkpoint_obj.history or (checkpoint_obj.state,)
         restored_metadata = copy.deepcopy(checkpoint_obj.metadata)
-        restored_metadata.pop("stop_requested", None)
-        restored_metadata.pop("stop_immediately", None)
         return SMCRuntime(
             state=state,
             produced_states=[item.copy() for item in history],
@@ -364,8 +381,10 @@ class SequentialMonteCarlo:
             ),
             t=checkpoint_obj.next_iteration,
             next_observation_index=checkpoint_obj.next_observation_index,
-            shared_context=dict(shared_context or {}),
+            shared_context=shared_context
+            if shared_context is not None
+            else {},
             metadata=restored_metadata,
-            outputs=copy.deepcopy(checkpoint_obj.outputs),
+            outputs=list(copy.deepcopy(checkpoint_obj.outputs)),
             rng=restored_rng if restored_rng is not None else resolve_rng(rng),
         )

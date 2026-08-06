@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..._typing import Array
 from ...transforms import ParticleTransform
@@ -111,14 +111,14 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: RandomGenerator,
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         updated = state
         acceptance: dict[str, float] = {}
         acceptance_by_step: dict[str, list[float]] = {}
         chains: dict[str, Array] = {}
 
         for block, step in zip(self._blocks, self._steps, strict=True):
-            updated = step(updated, context, rng)
+            updated, context, _ = step(updated, context, rng)
             acceptance[block.name] = float(
                 updated.metadata["metropolis_hastings_acceptance"]
             )
@@ -139,8 +139,12 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         if self._store_chains:
             metadata["blocked_metropolis_hastings_chains"] = chains
 
-        context.metadata["blocked_metropolis_hastings_acceptance"] = acceptance
-        context.metadata["blocked_metropolis_hastings_acceptance_by_step"] = (
-            acceptance_by_step
+        context = context.with_metadata(
+            blocked_metropolis_hastings_acceptance=acceptance
         )
-        return updated.with_updates(metadata=metadata)
+        output = {
+            "acceptance": acceptance,
+            "acceptance_by_step": acceptance_by_step,
+            "chains": chains if self._store_chains else None,
+        }
+        return updated.with_updates(metadata=metadata), context, output

@@ -152,7 +152,7 @@ class BlackJAXMutation(MutationStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, dict[str, Any]]:
         import jax
         import jax.numpy as jnp
 
@@ -160,7 +160,7 @@ class BlackJAXMutation(MutationStep):
         if not is_jax_namespace(xp):
             raise TypeError("BlackJAXMutation requires JAX-backed particles.")
 
-        transform = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(state.particles, context)
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
@@ -230,8 +230,17 @@ class BlackJAXMutation(MutationStep):
             self.algorithm_name,
             self._n_steps,
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=final_evaluation,
-            metadata=metadata,
+        output = {
+            "acceptance": metadata.get("blackjax_acceptance"),
+            "divergence": metadata.get("blackjax_divergence"),
+            "chain": metadata.get("mutation_chains"),
+        }
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=final_evaluation,
+                metadata=metadata,
+            ),
+            context,
+            output,
         )

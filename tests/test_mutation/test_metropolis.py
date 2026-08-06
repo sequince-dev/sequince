@@ -26,7 +26,7 @@ def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
         store_chains=True,
     )
 
-    updated = step(particle_state, context_factory(), rng)
+    updated, _, output = step(particle_state, context_factory(), rng)
 
     np.testing.assert_allclose(
         updated.particles, particle_state.particles + 1.0
@@ -38,6 +38,7 @@ def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
         1.0,
     ]
     assert updated.metadata["mutation_chains"].shape == (2, 4, 2)
+    assert output["acceptance_by_step"] == (1.0, 1.0)
 
 
 def test_metropolis_hastings_mutation_applies_transition_ratio(
@@ -56,10 +57,11 @@ def test_metropolis_hastings_mutation_applies_transition_ratio(
         kernel,
     )
 
-    updated = step(particle_state, context_factory(), rng)
+    updated, _, output = step(particle_state, context_factory(), rng)
 
     np.testing.assert_allclose(updated.particles, particle_state.particles)
     assert updated.metadata["metropolis_hastings_acceptance"] == 0.0
+    assert output["acceptance"] == 0.0
 
 
 def test_metropolis_hastings_mutation_supports_kernel_factory(
@@ -68,9 +70,10 @@ def test_metropolis_hastings_mutation_supports_kernel_factory(
     rng,
 ) -> None:
     context = context_factory(metadata={"proposal_scale": 0.2})
+    factory_shapes = []
 
     def factory(particles, inner_context):
-        inner_context.metadata["factory_shape"] = particles.shape
+        factory_shapes.append(particles.shape)
         return GaussianRandomWalk(
             scale=inner_context.metadata["proposal_scale"]
         )
@@ -80,7 +83,7 @@ def test_metropolis_hastings_mutation_supports_kernel_factory(
         factory,
     )
 
-    updated = step(particle_state, context, rng)
+    updated, context, _ = step(particle_state, context, rng)
 
     assert updated.particles.shape == particle_state.particles.shape
-    assert context.metadata["factory_shape"] == particle_state.particles.shape
+    assert factory_shapes == [particle_state.particles.shape]

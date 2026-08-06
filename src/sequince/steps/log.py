@@ -49,9 +49,9 @@ class LoggingStep(SMCStep):
         state: "ParticleState",
         context: "StepContext",
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", "StepContext", None]:
         if context.t % self._frequency != 0:
-            return state
+            return state, context, None
         message = self._str_fn(state, context)
         logger.log(self._level, message)
-        return state
+        return state, context, None

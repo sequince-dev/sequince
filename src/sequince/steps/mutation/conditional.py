@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from ..base import SMCStep
 from ..context import StepContext
+from ..control import ConditionalStepOutput
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -33,12 +34,18 @@ class MutateIfResampled(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, ConditionalStepOutput]:
         mutation_skipped = not bool(context.metadata.get("resampled", False))
-        context.metadata["mutation_skipped"] = mutation_skipped
-        updated = (
-            state if mutation_skipped else self.mutation(state, context, rng)
-        )
+        context = context.with_metadata(mutation_skipped=mutation_skipped)
+        child_output = None
+        if mutation_skipped:
+            updated = state
+        else:
+            updated, context, child_output = self.mutation(state, context, rng)
         metadata = dict(updated.metadata)
         metadata["mutation_skipped"] = mutation_skipped
-        return updated.with_updates(metadata=metadata)
+        return (
+            updated.with_updates(metadata=metadata),
+            context,
+            ConditionalStepOutput(not mutation_skipped, child_output),
+        )

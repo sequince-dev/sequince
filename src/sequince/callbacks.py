@@ -23,15 +23,16 @@ class SMCCallback:
         state: "ParticleState",
         context: "StepContext",
         results: "SMCResult",
-    ) -> None:
-        self.apply(state, context, results)
+    ) -> "StepContext" | None:
+        """Run the callback and optionally return an updated context."""
+        return self.apply(state, context, results)
 
     def apply(
         self,
         state: "ParticleState",
         context: "StepContext",
         results: "SMCResult",
-    ) -> None:
+    ) -> "StepContext" | None:
         raise NotImplementedError(
             "SMCCallback subclasses must implement apply()."
         )

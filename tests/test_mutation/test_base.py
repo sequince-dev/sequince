@@ -23,16 +23,16 @@ class CountingTransform(ParticleTransform):
 
 class PreparingMutation(MutationStep):
     def apply(self, state, context, rng):
-        self._prepare_transform(state.particles, context)
-        return state
+        _, context = self._prepare_transform(state.particles, context)
+        return state, context, None
 
 
 class CountingGibbsStep(SMCStep):
     def apply(self, state, context, rng):
-        context.metadata["gibbs_updates"] = (
-            context.metadata.get("gibbs_updates", 0) + 1
+        context = context.with_metadata(
+            gibbs_updates=context.metadata.get("gibbs_updates", 0) + 1
         )
-        return state
+        return state, context, None
 
 
 def _mutation(refit, fits):
@@ -64,12 +64,15 @@ def test_per_context_refit_reuses_transform_across_alternating_rounds(
     first_context = context_factory(t=0)
     alternating_round = SequentialStep([mutation, CountingGibbsStep()])
 
-    RepeatStep(alternating_round, n=3)(particle_state, first_context, rng)
+    _, first_context, outputs = RepeatStep(alternating_round, n=3)(
+        particle_state, first_context, rng
+    )
     first_transform = first_context.metadata["particle_transform"]
 
     assert len(fits) == 1
     assert first_context.metadata["gibbs_updates"] == 3
     assert first_context.metadata["particle_transform"] is first_transform
+    assert len(outputs) == 3
 
     mutation(particle_state, context_factory(t=1), rng)
 
@@ -94,30 +97,33 @@ def test_transform_refit_trigger_can_consume_context_flag(
     fits: list[np.ndarray] = []
     trigger_calls: list[np.ndarray] = []
 
+    refit_requested = True
+
     def consume_trigger(particles, context):
+        nonlocal refit_requested
         trigger_calls.append(np.asarray(particles).copy())
-        return bool(context.metadata.pop("refit_transform", False))
+        result = refit_requested
+        refit_requested = False
+        return result
 
     mutation = _mutation(consume_trigger, fits)
-    context = context_factory(metadata={"refit_transform": True})
+    context = context_factory()
 
     mutation(particle_state, context, rng)
 
     assert len(fits) == 1
     assert len(trigger_calls) == 1
-    assert "refit_transform" not in context.metadata
 
     mutation(particle_state, context, rng)
 
     assert len(fits) == 1
     assert len(trigger_calls) == 2
 
-    context.metadata["refit_transform"] = True
+    refit_requested = True
     mutation(particle_state, context, rng)
 
     assert len(fits) == 2
     assert len(trigger_calls) == 3
-    assert "refit_transform" not in context.metadata
 
 
 def test_false_transform_refit_trigger_still_fits_on_first_use(

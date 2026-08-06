@@ -139,7 +139,7 @@ def test_sequential_target_replaces_evaluation_when_stage_changes(
     context = context_factory(metadata={"stage": 0})
     first = target.prepare_evaluation(particles, context)
 
-    context.metadata["stage"] = 1
+    context = context.with_metadata(stage=1)
     with caplog.at_level("DEBUG", logger="sequince.target"):
         second = target.prepare_evaluation(
             particles,

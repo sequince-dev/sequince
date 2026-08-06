@@ -168,11 +168,11 @@ class EmceeMutation(MutationStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, object]]:
         import emcee
 
         xp = namespace(state.particles)
-        transform = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(state.particles, context)
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
@@ -277,8 +277,16 @@ class EmceeMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=final_evaluation,
-            metadata=metadata,
+        output = {
+            "acceptance": acceptance,
+            "chain": metadata.get("mutation_chains"),
+        }
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=final_evaluation,
+                metadata=metadata,
+            ),
+            context,
+            output,
         )

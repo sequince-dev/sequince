@@ -119,7 +119,7 @@ class MarkovChainMonteCarlo:
         rng: RandomGenerator | np.random.Generator | int | None = None,
         shared_context: Mapping[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        outputs: dict[str, Any] | None = None,
+        outputs: Sequence[tuple[Any, ...]] | None = None,
         runtime: SMCRuntime | None = None,
     ) -> MCMCResult:
         """Run one configured MCMC block."""

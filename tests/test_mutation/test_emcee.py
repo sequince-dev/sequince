@@ -16,12 +16,12 @@ def test_emcee_mutation_uses_supplied_rng(
     particle_state, context_factory, standard_normal_log_prob
 ) -> None:
     step = EmceeMutation(standard_normal_log_prob, n_steps=3, move="bilby-de")
-    first = step(
+    first, _, _ = step(
         particle_state,
         context_factory(),
         ArrayRNG(seed=2468),
     )
-    second = step(
+    second, _, _ = step(
         particle_state,
         context_factory(),
         ArrayRNG(seed=2468),

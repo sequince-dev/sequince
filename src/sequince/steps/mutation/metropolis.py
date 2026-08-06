@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
@@ -120,9 +120,9 @@ class MetropolisHastingsMutation(MutationStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         xp = namespace(state.particles)
-        transform = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(state.particles, context)
         current = asarray(
             self._forward_transform(state.particles, transform, context),
             xp=xp,
@@ -209,9 +209,8 @@ class MetropolisHastingsMutation(MutationStep):
                 like=state.particles,
             )
 
-        context.metadata["metropolis_hastings_acceptance"] = acceptance
-        context.metadata["metropolis_hastings_acceptance_by_step"] = (
-            acceptance_by_step
+        context = context.with_metadata(
+            metropolis_hastings_acceptance=acceptance
         )
         logger.debug(
             "MetropolisHastingsMutation completed: acceptance=%.3f after %d "
@@ -219,8 +218,17 @@ class MetropolisHastingsMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=current_evaluation,
-            metadata=metadata,
+        output = {
+            "acceptance": acceptance,
+            "acceptance_by_step": tuple(acceptance_by_step),
+            "chain": metadata.get("mutation_chains"),
+        }
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=current_evaluation,
+                metadata=metadata,
+            ),
+            context,
+            output,
         )

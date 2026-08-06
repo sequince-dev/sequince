@@ -173,7 +173,7 @@ class IncrementalWeighting(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         xp = namespace(state.log_weights)
         if self._target is None:
             if self._log_increment_fn is None:  # pragma: no cover
@@ -214,7 +214,7 @@ class IncrementalWeighting(SMCStep):
             float(to_numpy(xp.sum(increments) / increments.shape[0])),
             self._normalize_after,
         )
-        return updated_state
+        return updated_state, context, {"log_weight_increment": increments}
 
 
 class LogLikelihoodWeighting(IncrementalWeighting):
@@ -286,7 +286,7 @@ class BaseTemperedStep(SMCStep):
 
     def initialize_metadata(
         self, state: ParticleState, context: StepContext
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext]:
         """Initialize metadata related to tempering."""
         if "temperature" not in context.metadata:
             initial_temperature = float(state.metadata.get("temperature", 0.0))
@@ -294,13 +294,13 @@ class BaseTemperedStep(SMCStep):
                 "Initializing tempering metadata in context to %.4f.",
                 initial_temperature,
             )
-            context.metadata["temperature"] = initial_temperature
+            context = context.with_metadata(temperature=initial_temperature)
             state_metadata = dict(state.metadata)
             state_metadata["temperature"] = initial_temperature
             state = state.with_updates(metadata=state_metadata)
         if "temperature_delta" not in context.metadata:
-            context.metadata["temperature_delta"] = 0.0
-        return state
+            context = context.with_metadata(temperature_delta=0.0)
+        return state, context
 
     def apply(self, state, context, rng):
         raise NotImplementedError(
@@ -337,8 +337,8 @@ class TemperedWeighting(BaseTemperedStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
-        state = self.initialize_metadata(state, context)
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        state, context = self.initialize_metadata(state, context)
         current_temperature = float(context.metadata.get("temperature", 0.0))
         target_temperature = float(
             call_with_optional_context(
@@ -382,9 +382,16 @@ class TemperedWeighting(BaseTemperedStep):
         )
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
-        context.metadata["temperature"] = target_temperature
-        context.metadata["temperature_delta"] = temperature_delta
-        return updated_state
+        context = context.with_metadata(
+            temperature=target_temperature,
+            temperature_delta=temperature_delta,
+        )
+        output = {
+            "temperature": target_temperature,
+            "temperature_delta": temperature_delta,
+            "log_weight_increment": increments,
+        }
+        return updated_state, context, output
 
 
 class FixedTemperedWeighting(BaseTemperedStep):
@@ -412,8 +419,8 @@ class FixedTemperedWeighting(BaseTemperedStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
-        state = self.initialize_metadata(state, context)
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        state, context = self.initialize_metadata(state, context)
         log_increments, state = self.evaluate_log_increment(state, context)
         xp = namespace(state.log_weights)
         increments = (
@@ -443,8 +450,10 @@ class FixedTemperedWeighting(BaseTemperedStep):
         updated_state = state.with_updates(
             log_weights=state.log_weights + increments, metadata=metadata
         )
-        context.metadata["temperature"] = metadata["temperature"]
-        context.metadata["temperature_delta"] = self._temperature_increment
+        context = context.with_metadata(
+            temperature=metadata["temperature"],
+            temperature_delta=self._temperature_increment,
+        )
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
         logger.debug(
@@ -452,7 +461,14 @@ class FixedTemperedWeighting(BaseTemperedStep):
             self._temperature_increment,
             metadata["temperature"],
         )
-        return updated_state
+        output = {
+            "temperature": metadata["temperature"],
+            "temperature_delta": self._temperature_increment,
+            "ess_ratio": metadata.get("ess_ratio"),
+            "cess_ratio": metadata.get("cess_ratio"),
+            "log_weight_increment": increments,
+        }
+        return updated_state, context, output
 
 
 class AdaptiveTemperedWeighting(BaseTemperedStep):
@@ -547,8 +563,8 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
-        state = self.initialize_metadata(state, context)
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        state, context = self.initialize_metadata(state, context)
         current_temp = context.metadata.get("temperature", 0.0)
         remaining = self._max_temperature - current_temp
         if remaining <= 0.0:
@@ -560,16 +576,25 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
                 ess_ratio=ess_ratio,
                 cess_ratio=1.0,
             )
-            context.metadata["temperature"] = current_temp
-            context.metadata["temperature_delta"] = 0.0
-            context.metadata["ess_ratio"] = ess_ratio
-            context.metadata["cess_ratio"] = 1.0
+            context = context.with_metadata(
+                temperature=current_temp,
+                temperature_delta=0.0,
+                ess_ratio=ess_ratio,
+                cess_ratio=1.0,
+            )
             logger.debug(
                 "AdaptiveTemperedWeighting already at max temperature %.3f; requesting immediate stop.",
                 self._max_temperature,
             )
-            context.request_stop_immediately()
-            return state.with_updates(metadata=metadata)
+            context = context.request_stop_immediately()
+            output = {
+                "temperature": current_temp,
+                "temperature_delta": 0.0,
+                "ess_ratio": ess_ratio,
+                "cess_ratio": 1.0,
+                "log_weight_increment": None,
+            }
+            return state.with_updates(metadata=metadata), context, output
         allowed_delta = (
             remaining
             if self._max_delta is None
@@ -622,11 +647,13 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         if self._normalize_after:
             updated_state, _ = updated_state.normalize()
 
-        context.metadata["temperature"] = metadata["temperature"]
-        context.metadata["temperature_delta"] = delta
-        context.metadata["target_ess_ratio"] = target_ess_ratio
-        context.metadata["ess_ratio"] = new_ess_ratio
-        context.metadata["cess_ratio"] = new_cess_ratio
+        context = context.with_metadata(
+            temperature=metadata["temperature"],
+            temperature_delta=delta,
+            target_ess_ratio=target_ess_ratio,
+            ess_ratio=new_ess_ratio,
+            cess_ratio=new_cess_ratio,
+        )
         logger.debug(
             "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
             "target %s ratio=%.4f, ESS ratio=%.4f.",
@@ -644,8 +671,16 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
                 "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop after iteration.",
                 self._max_temperature,
             )
-            context.request_stop()
-        return updated_state
+            context = context.request_stop()
+        output = {
+            "temperature": metadata["temperature"],
+            "temperature_delta": delta,
+            "target_ess_ratio": target_ess_ratio,
+            "ess_ratio": new_ess_ratio,
+            "cess_ratio": new_cess_ratio,
+            "log_weight_increment": delta * increments,
+        }
+        return updated_state, context, output
 
     def _resolve_target_ess_ratio(
         self,
