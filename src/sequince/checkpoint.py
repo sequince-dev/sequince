@@ -12,6 +12,7 @@ from urllib.parse import quote, unquote
 import numpy as np
 from orng import RandomGenerator
 
+from .array_api import namespace
 from .result import SMCResult
 from .state import ParticleState
 from .steps.context import StepContext
@@ -20,6 +21,18 @@ from .utils import resolve_rng
 CHECKPOINT_VERSION = 1
 _HDF_KIND = "_sequince_kind"
 _HDF_PYTHON_TYPE = "_sequince_python_type"
+
+
+def _rng_state_dict(rng: Any) -> dict[str, Any]:
+    """Serialize either a mutable generator or backend-native random state."""
+    try:
+        generator = resolve_rng(rng)
+    except TypeError:
+        generator = RandomGenerator.from_xp(
+            namespace(rng),
+            generator=rng,
+        )
+    return generator.state_dict()
 
 
 def _attr_text(value: Any) -> str:
@@ -330,7 +343,7 @@ class SMCCheckpoint:
             ),
             outputs=copy.deepcopy(tuple(result.outputs)),
             step_states=capture_step_states(steps),
-            rng_state=None if rng is None else resolve_rng(rng).state_dict(),
+            rng_state=None if rng is None else _rng_state_dict(rng),
             history=history,
             observation=copy.deepcopy(context.observation),
             initial_state=(
