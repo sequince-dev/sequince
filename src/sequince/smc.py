@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 from .array_api import namespace
@@ -236,18 +236,29 @@ class SequentialMonteCarlo:
         )
         return result
 
-    def initialize_functional_metadata(
+    def initialize_functional(
         self,
         initial_state: ParticleState,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]:
-        """Return metadata with fixed-shape fields required by the pipeline."""
-        initialized: Mapping[str, Any] = dict(metadata or {})
+        context: StepContext,
+    ) -> tuple[ParticleState, StepContext]:
+        """Return shape-complete state and context for functional execution."""
+        initialized: Mapping[str, Any] = dict(context.metadata)
         for step in self._steps:
             initializer = getattr(step, "initialize_functional_metadata", None)
             if callable(initializer):
                 initialized = initializer(initial_state, initialized)
-        return initialized
+        context = replace(context, metadata=initialized)
+
+        state = initial_state
+        for step in self._steps:
+            initializer = getattr(
+                step,
+                "initialize_functional_state_and_context",
+                None,
+            )
+            if callable(initializer):
+                state, context = initializer(state, context)
+        return state, context
 
     def run_functional(
         self,
@@ -276,11 +287,6 @@ class SequentialMonteCarlo:
             raise ValueError(
                 "run_functional() requires random_state or runtime."
             )
-        if runtime is None and initial_state is not None:
-            metadata = self.initialize_functional_metadata(
-                initial_state,
-                metadata,
-            )
 
         runtime = self._prepare_runtime(
             method_name="run_functional",
@@ -301,6 +307,7 @@ class SequentialMonteCarlo:
             observations=observations,
             num_steps=num_steps,
             run_iteration=iteration,
+            initialize_functional=True,
         )
 
     def _prepare_runtime(
@@ -363,6 +370,7 @@ class SequentialMonteCarlo:
         observations: Iterable[Any] | None,
         num_steps: int | None,
         run_iteration: IterationCallable,
+        initialize_functional: bool = False,
     ) -> tuple[SMCResult, Any]:
         """Run common host-side orchestration for eager or functional mode."""
         logger.info(
@@ -438,6 +446,10 @@ class SequentialMonteCarlo:
                 shared=shared_context,
                 metadata=metadata,
             )
+
+            if initialize_functional:
+                state, context = self.initialize_functional(state, context)
+                initialize_functional = False
 
             (
                 state,

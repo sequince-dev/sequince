@@ -88,6 +88,7 @@ class ResamplingStep(SMCStep):
         initialized["ess"] = asarray(
             initialized.get("ess", state.log_weights.shape[0]),
             xp=xp,
+            dtype=state.log_weights.dtype,
             like=state.log_weights,
         )
         initialized["resampled"] = asarray(

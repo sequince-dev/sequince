@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import jax
 
@@ -13,6 +13,20 @@ from .state import ParticleState
 from .steps.context import StepContext
 
 logger = logging.getLogger(__name__)
+
+
+def _carry_signature(tree: Any) -> tuple[Any, tuple[Any, ...]]:
+    leaves, structure = jax.tree_util.tree_flatten(tree)
+    leaf_signatures = []
+    for leaf in leaves:
+        abstract = jax.core.get_aval(leaf)
+        leaf_signatures.append(
+            (
+                tuple(abstract.shape),
+                abstract.dtype,
+            )
+        )
+    return structure, tuple(leaf_signatures)
 
 
 def compile_functional_iteration(
@@ -25,51 +39,35 @@ def compile_functional_iteration(
     shared_context: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> IterationCallable:
-    """Compile initial and steady-state functional iteration signatures.
+    """Lower and compile one stable functional iteration signature.
 
-    Warm-up transitions are evaluated and discarded. Because functional
-    iterations explicitly thread all state, this does not consume the caller's
-    state or random key. The supplied context structures must match those used
-    by the subsequent run.
+    Functional state and context initialization runs before lowering, but
+    compilation does not execute or discard an SMC transition. The supplied
+    context structures must match those used by the subsequent run.
     """
-    initialized_metadata = smc.initialize_functional_metadata(
-        initial_state,
-        metadata,
-    )
     shared = shared_context if shared_context is not None else {}
     context = StepContext(
         t=0,
         next_observation_index=next_observation_index,
         observation=observation,
         shared=shared,
-        metadata=initialized_metadata,
+        metadata=metadata if metadata is not None else {},
     )
-    iteration = jax.jit(smc.functional_iteration)
-    carry = (initial_state, context, random_state)
-    carry_structure = jax.tree_util.tree_structure(carry)
+    prepared_state, prepared_context = smc.initialize_functional(
+        initial_state,
+        context,
+    )
+    carry = (prepared_state, prepared_context, random_state)
     logger.debug(
-        "Compiling functional iteration with initial carry structure: %s",
-        carry_structure,
+        "Lowering functional iteration with carry structure: %s",
+        jax.tree_util.tree_structure(carry),
     )
-    for _ in range(3):
-        state, output_context, key, outputs = iteration(*carry)
-        jax.block_until_ready((state, output_context, key, outputs))
-        next_context = StepContext(
-            t=context.t + 1,
-            next_observation_index=next_observation_index,
-            observation=observation,
-            shared=shared,
-            metadata=output_context.metadata,
+    lowered = jax.jit(smc.functional_iteration).lower(*carry)
+    output_state, output_context, output_key, _ = lowered.out_info
+    output_carry = (output_state, output_context, output_key)
+    if _carry_signature(carry) != _carry_signature(output_carry):
+        raise ValueError(
+            "Functional iteration changes its carry signature. Initialize "
+            "all leaves in initialize_functional()."
         )
-        next_carry = (state, next_context, key)
-        next_structure = jax.tree_util.tree_structure(next_carry)
-        if next_structure == carry_structure:  # type: ignore[operator]
-            return iteration
-        carry = next_carry
-        carry_structure = next_structure
-        context = next_context
-
-    raise RuntimeError(
-        "Functional iteration carry did not reach a stable pytree structure "
-        "during compilation."
-    )
+    return cast(IterationCallable, lowered.compile())

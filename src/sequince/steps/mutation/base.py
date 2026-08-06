@@ -12,6 +12,7 @@ from ..base import SMCStep
 from ..context import StepContext
 
 if TYPE_CHECKING:
+    from ...state import ParticleState
     from ...target import TargetEvaluation
 
 LogProbFn = Callable[..., Array | float]
@@ -128,6 +129,29 @@ class MutationStep(SMCStep):
             ),
             evaluation,
         )
+
+    def initialize_functional_state_and_context(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+    ) -> tuple["ParticleState", StepContext]:
+        """Initialize cached target data and functional transform state."""
+        if self._target is not None:
+            evaluation = self._target.prepare_evaluation(
+                state.particles,
+                context,
+                evaluation=state.evaluation,
+            )
+            state = state.with_updates(evaluation=evaluation)
+        return self._initialize_functional_transform(state, context)
+
+    def _initialize_functional_transform(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+    ) -> tuple["ParticleState", StepContext]:
+        """Placeholder for shape-complete functional transform state."""
+        return state, context
 
     def _prepare_transform(
         self, particles: Array, context: StepContext

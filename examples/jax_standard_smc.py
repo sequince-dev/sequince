@@ -107,9 +107,9 @@ def main(n_dimensions: int) -> None:
         logging_frequency=0,
     )
 
-    # We use a helper function to compile the functional iteration. This jax.jit
-    # and the lowers the functional iteration to XLA. The compiled function can then be used in
-    # smc.run_functional to perform the SMC iterations with JIT compilation.
+    # The helper initializes the functional state and context, lowers one stable
+    # iteration signature to XLA, and compiles it without executing a warm-up
+    # iteration. The compiled function can then be used by smc.run_functional.
     # Alternatively, you can call ``jax.jit(smc.functional_iteration)`` directly,
     # but this will not warm up the JIT compiler and may result in a slower first
     # iteration.

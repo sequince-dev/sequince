@@ -49,7 +49,7 @@ class ParticleState:
         evaluation: TargetEvaluation | None = None,
         metadata: MutableMapping[str, Any] | None = None,
     ) -> None:
-        if len(particles) == 0:
+        if particles.shape[0] == 0:
             raise ValueError("Particles array cannot be empty.")
 
         self.particles = particles

@@ -65,6 +65,19 @@ class SMCStep:
         del state
         return metadata
 
+    def initialize_functional_state_and_context(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+    ) -> tuple["ParticleState", StepContext]:
+        """Return shape-complete inputs for ``apply_functional``.
+
+        Steps whose functional output adds array leaves should initialize
+        matching leaves here so one compiled signature can be reused from the
+        first iteration onward.
+        """
+        return state, context
+
     def state_dict(self) -> dict[str, Any]:
         """Return mutable state required by subsequent SMC iterations."""
         return {}

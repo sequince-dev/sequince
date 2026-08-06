@@ -60,7 +60,7 @@ class TargetEvaluation:
         ):
             raise TypeError("Target evaluation key must be hashable.")
         arrays = list(components.values())
-        if any(array.ndim == 0 for array in arrays):
+        if any(len(array.shape) == 0 for array in arrays):
             raise ValueError(
                 "Target evaluation arrays must be particle-aligned."
             )

@@ -124,10 +124,14 @@ def test_functional_metadata_is_initialized_by_the_step_pipeline() -> None:
         metadata={"temperature": jnp.asarray(0.25)},
     )
 
-    initialized = smc.initialize_functional_metadata(
+    _, initialized_context = smc.initialize_functional(
         state,
-        metadata={**metadata, "custom": custom},
+        StepContext(
+            t=0,
+            metadata={**metadata, "custom": custom},
+        ),
     )
+    initialized = initialized_context.metadata
 
     assert initialized["custom"] is custom
     assert initialized["max_temperature"] == pytest.approx(1.0)
@@ -143,9 +147,11 @@ def test_functional_metadata_is_initialized_by_the_step_pipeline() -> None:
 def test_fixed_functional_metadata_does_not_require_adaptive_target() -> None:
     smc, _, _ = _fixed_blackjax_sampler()
 
-    initialized = smc.initialize_functional_metadata(
-        ParticleState(jnp.zeros((4, 2)))
+    _, initialized_context = smc.initialize_functional(
+        ParticleState(jnp.zeros((4, 2))),
+        StepContext(t=0),
     )
+    initialized = initialized_context.metadata
 
     assert "target_ess_ratio" not in initialized
     assert "ess_ratio" not in initialized
@@ -170,7 +176,7 @@ def test_run_functional_initializes_metadata_automatically() -> None:
     assert result.context.metadata["temperature"] == pytest.approx(1.0)
 
 
-def test_compile_functional_iteration_warms_initial_and_steady_state() -> None:
+def test_compile_functional_iteration_lowers_one_stable_signature() -> None:
     smc, _, metadata = _fixed_blackjax_sampler()
     state = ParticleState(jnp.zeros((4, 2)))
     key = jax.random.key(42)
@@ -181,6 +187,7 @@ def test_compile_functional_iteration_warms_initial_and_steady_state() -> None:
         key,
         metadata=metadata,
     )
+    assert isinstance(iteration, jax.stages.Compiled)
     result, final_key = smc.run_functional(
         state,
         num_steps=2,
@@ -200,6 +207,25 @@ def test_compile_functional_iteration_warms_initial_and_steady_state() -> None:
         jax.random.key_data(key),
         jax.random.key_data(final_key),
     )
+
+
+def test_compile_functional_iteration_rejects_unstable_carry() -> None:
+    from sequince.smc import SequentialMonteCarlo
+    from sequince.steps.base import SMCStep
+
+    class AddsStateMetadata(SMCStep):
+        def apply_functional(self, state, context, random_state):
+            state = state.with_updates(metadata={"added": jnp.asarray(1.0)})
+            return state, context, random_state, {}
+
+    smc = SequentialMonteCarlo([AddsStateMetadata()])
+
+    with pytest.raises(ValueError, match="changes its carry signature"):
+        compile_functional_iteration(
+            smc,
+            ParticleState(jnp.zeros((4, 2))),
+            jax.random.key(42),
+        )
 
 
 def test_functional_iteration_can_be_jitted() -> None:

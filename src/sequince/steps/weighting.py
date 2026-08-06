@@ -173,6 +173,21 @@ class IncrementalWeighting(SMCStep):
         )
         self._normalize_after = normalize_after
 
+    def initialize_functional_state_and_context(
+        self,
+        state: ParticleState,
+        context: StepContext,
+    ) -> tuple[ParticleState, StepContext]:
+        """Attach a cached target evaluation before functional compilation."""
+        if self._target is None:
+            return state, context
+        evaluation = self._target.prepare_evaluation(
+            state.particles,
+            context,
+            evaluation=state.evaluation,
+        )
+        return state.with_updates(evaluation=evaluation), context
+
     def apply(
         self,
         state: ParticleState,
@@ -254,6 +269,22 @@ class BaseTemperedStep(SMCStep):
         )
         self._normalize_after = normalize_after
         self._refresh_components = frozenset(refresh_components)
+
+    def initialize_functional_state_and_context(
+        self,
+        state: ParticleState,
+        context: StepContext,
+    ) -> tuple[ParticleState, StepContext]:
+        """Attach a cached target evaluation before functional compilation."""
+        if self._target is None:
+            return state, context
+        evaluation = self._target.prepare_evaluation(
+            state.particles,
+            context,
+            evaluation=state.evaluation,
+            refresh_components=self._refresh_components,
+        )
+        return state.with_updates(evaluation=evaluation), context
 
     def evaluate_log_increment(
         self,
