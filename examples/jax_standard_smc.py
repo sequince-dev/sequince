@@ -103,7 +103,7 @@ def main(n_dimensions: int) -> None:
                 "inverse_mass_matrix": jnp.ones(model.n_dimensions),
             },
         },
-        particle_transform=None,  # Particle transforms aren't compatible with JIT yet.
+        particle_transform="affine",
         logging_frequency=0,
     )
 
