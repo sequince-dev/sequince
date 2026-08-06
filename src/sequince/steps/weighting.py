@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
@@ -306,6 +306,30 @@ class BaseTemperedStep(SMCStep):
         if "temperature_delta" not in context.metadata:
             context = context.with_metadata(temperature_delta=0.0)
         return state, context
+
+    def initialize_functional_metadata(
+        self,
+        state: ParticleState,
+        metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Initialize fixed-shape tempering metadata on the array backend."""
+        xp = namespace(state.log_weights)
+        initialized = dict(metadata)
+        temperature = initialized.get(
+            "temperature",
+            state.metadata.get("temperature", 0.0),
+        )
+        initialized["temperature"] = asarray(
+            temperature,
+            xp=xp,
+            like=state.log_weights,
+        )
+        initialized["temperature_delta"] = asarray(
+            initialized.get("temperature_delta", 0.0),
+            xp=xp,
+            like=state.log_weights,
+        )
+        return initialized
 
     def _prepare_log_increments(
         self,
@@ -639,6 +663,38 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         self._max_delta = max_delta
         self._max_bisection_iter = max_bisection_iter
         self._criterion = criterion
+
+    def initialize_functional_metadata(
+        self,
+        state: ParticleState,
+        metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Initialize fixed-shape adaptive tempering metadata."""
+        initialized = dict(
+            super().initialize_functional_metadata(state, metadata)
+        )
+        xp = namespace(state.log_weights)
+        target = initialized.get("target_ess_ratio", self._target_ess_ratio)
+        if callable(target):
+            target = 1.0
+        initialized.update(
+            target_ess_ratio=asarray(
+                target,
+                xp=xp,
+                like=state.log_weights,
+            ),
+            ess_ratio=asarray(
+                initialized.get("ess_ratio", 1.0),
+                xp=xp,
+                like=state.log_weights,
+            ),
+            cess_ratio=asarray(
+                initialized.get("cess_ratio", 1.0),
+                xp=xp,
+                like=state.log_weights,
+            ),
+        )
+        return initialized
 
     def apply(
         self,

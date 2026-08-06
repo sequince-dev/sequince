@@ -236,6 +236,19 @@ class SequentialMonteCarlo:
         )
         return result
 
+    def initialize_functional_metadata(
+        self,
+        initial_state: ParticleState,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        """Return metadata with fixed-shape fields required by the pipeline."""
+        initialized: Mapping[str, Any] = dict(metadata or {})
+        for step in self._steps:
+            initializer = getattr(step, "initialize_functional_metadata", None)
+            if callable(initializer):
+                initialized = initializer(initial_state, initialized)
+        return initialized
+
     def run_functional(
         self,
         initial_state: ParticleState | None = None,
@@ -262,6 +275,11 @@ class SequentialMonteCarlo:
         if runtime is None and random_state is None:
             raise ValueError(
                 "run_functional() requires random_state or runtime."
+            )
+        if runtime is None and initial_state is not None:
+            metadata = self.initialize_functional_metadata(
+                initial_state,
+                metadata,
             )
 
         runtime = self._prepare_runtime(

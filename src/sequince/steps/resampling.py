@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 import array_api_extra as xpx
 from array_api_compat import device as get_device
@@ -76,6 +77,27 @@ class ResamplingStep(SMCStep):
     ) -> Array:
         raise NotImplementedError
 
+    def initialize_functional_metadata(
+        self,
+        state: ParticleState,
+        metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Initialize fixed-shape resampling metadata."""
+        xp = namespace(state.log_weights)
+        initialized = dict(metadata)
+        initialized["ess"] = asarray(
+            initialized.get("ess", state.log_weights.shape[0]),
+            xp=xp,
+            like=state.log_weights,
+        )
+        initialized["resampled"] = asarray(
+            initialized.get("resampled", False),
+            xp=xp,
+            dtype=bool,
+            like=state.log_weights,
+        )
+        return initialized
+
     def functional_step(
         self,
         state: ParticleState,
@@ -85,8 +107,8 @@ class ResamplingStep(SMCStep):
         """Resample while explicitly threading RNG state.
 
         The initial compiled subset requires unconditional resampling.  A
-        traced ESS threshold needs a conditional RNG transition and is kept
-        out of this first contract rather than changing its semantics.
+        traced ESS threshold needs a conditional RNG transition and is not
+        supported yet.
         """
         if not self._always_resample:
             raise NotImplementedError(

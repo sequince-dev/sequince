@@ -59,6 +59,15 @@ class SMCStep:
         new_random_state = rng.state()
         return state, context, new_random_state, output
 
+    def initialize_functional_metadata(
+        self,
+        state: "ParticleState",
+        metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Return metadata with fields required by ``functional_step``."""
+        del state
+        return metadata
+
     def state_dict(self) -> dict[str, Any]:
         """Return mutable state required by subsequent SMC iterations."""
         return {}
