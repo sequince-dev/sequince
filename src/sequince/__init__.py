@@ -3,6 +3,7 @@
 import importlib.metadata
 import logging
 
+from .exceptions import DegenerateWeightsError
 from .mcmc import MarkovChainMonteCarlo, MCMCResult, make_mcmc
 from .posterior import TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
@@ -20,6 +21,7 @@ except importlib.metadata.PackageNotFoundError:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DegenerateWeightsError",
     "ParticleState",
     "MCMCResult",
     "MarkovChainMonteCarlo",

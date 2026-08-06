@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from sequince import DegenerateWeightsError
 from sequince.state import ParticleState
 from sequince.target import TargetEvaluation
 
@@ -37,11 +38,14 @@ def test_normalize_updates_log_weights_and_evidence(
     assert pytest.approx(np.sum(weights)) == 1.0
 
 
-def test_weights_handles_non_finite_log_norm() -> None:
+def test_weights_rejects_non_finite_log_norm() -> None:
     log_weights = np.array([-np.inf, -np.inf, -np.inf])
     state = ParticleState(particles=np.zeros((3, 1)), log_weights=log_weights)
-    weights = state.weights
-    assert np.allclose(weights, np.full(3, 1 / 3))
+
+    with pytest.raises(DegenerateWeightsError, match="zero weight"):
+        _ = state.weights
+    with pytest.raises(DegenerateWeightsError, match="zero weight"):
+        state.normalize()
 
 
 def test_state_resamples_and_serializes_target_evaluation() -> None:

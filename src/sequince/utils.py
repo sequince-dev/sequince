@@ -8,7 +8,8 @@ import numpy as np
 from orng import RandomGenerator
 
 from ._typing import Array
-from .array_api import asarray, full, logsumexp, namespace, to_numpy
+from .array_api import asarray, logsumexp, namespace, to_numpy
+from .exceptions import DegenerateWeightsError
 
 if TYPE_CHECKING:
     from .steps.base import StepContext
@@ -18,7 +19,13 @@ RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
 
 
 def normalize_log_weights(log_weights: Any, *, xp: Any | None = None):
-    """Normalize log weights, falling back to uniform weights if degenerate."""
+    """Return normalized log weights and their finite log normalizer.
+
+    Raises
+    ------
+    DegenerateWeightsError
+        If the log weights have a non-finite log normalizer.
+    """
     if xp is None:
         values = asarray(log_weights)
         xp = namespace(values)
@@ -26,17 +33,9 @@ def normalize_log_weights(log_weights: Any, *, xp: Any | None = None):
         values = asarray(log_weights, xp=xp)
     log_norm = logsumexp(values, xp=xp)
     log_norm_scalar = float(to_numpy(log_norm))
-    if math.isfinite(log_norm_scalar):
-        return values - log_norm_scalar, log_norm_scalar, True
-    n_weights = values.shape[0]
-    normalized = full(
-        (n_weights,),
-        -math.log(n_weights),
-        xp=xp,
-        dtype=values.dtype,
-        like=values,
-    )
-    return normalized, 0.0, False
+    if not math.isfinite(log_norm_scalar):
+        raise DegenerateWeightsError(log_norm_scalar)
+    return values - log_norm_scalar, log_norm_scalar
 
 
 def resolve_rng(
