@@ -1,9 +1,30 @@
+import os
+
 import numpy as np
 import pytest
 
-from sequince import DegenerateWeightsError
 from sequince.stats import ess_from_log_weights
-from sequince.utils import in_bounds, normalize_log_weights
+from sequince.utils import (
+    enable_scipy_array_api,
+    in_bounds,
+    normalize_log_weights,
+)
+
+
+def test_enable_scipy_array_api(monkeypatch):
+    monkeypatch.delenv("SCIPY_ARRAY_API")
+
+    with pytest.warns(ImportWarning, match="setting it to '1'"):
+        enable_scipy_array_api()
+
+    assert os.environ["SCIPY_ARRAY_API"] == "1"
+
+
+def test_enable_scipy_array_api_warns_for_conflicting_value(monkeypatch):
+    monkeypatch.setenv("SCIPY_ARRAY_API", "0")
+
+    with pytest.warns(RuntimeWarning, match="requires SCIPY_ARRAY_API='1'"):
+        enable_scipy_array_api()
 
 
 def test_normalize_log_weights():
@@ -15,24 +36,47 @@ def test_normalize_log_weights():
     assert np.isclose(log_norm, np.log(4.0))
 
 
+def test_normalize_log_weights_can_be_jitted():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+
+    normalized, log_norm = jax.jit(normalize_log_weights)(
+        jnp.asarray([0.0, -1.0])
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(normalized),
+        np.asarray([-0.3132617, -1.3132617]),
+    )
+    assert log_norm == pytest.approx(0.3132617)
+
+
 @pytest.mark.parametrize(
-    ("log_weights", "message"),
+    "log_weights",
     [
-        ([-np.inf, -np.inf], "zero weight"),
-        ([0.0, np.nan], "NaN"),
-        ([0.0, np.inf], "positive infinity"),
+        [-np.inf, -np.inf],
+        [0.0, np.nan],
+        [0.0, np.inf],
     ],
 )
-def test_normalize_degenerate_log_weights_raises(log_weights, message):
-    with pytest.raises(DegenerateWeightsError, match=message) as exc_info:
-        normalize_log_weights(log_weights)
+def test_normalize_degenerate_log_weights_returns_nonfinite(log_weights):
+    normalized, log_norm = normalize_log_weights(log_weights)
 
-    assert not np.isfinite(exc_info.value.log_normalizer)
+    assert not np.isfinite(log_norm)
+    assert not np.all(np.isfinite(normalized))
 
 
-def test_ess_rejects_degenerate_log_weights():
-    with pytest.raises(DegenerateWeightsError, match="zero weight"):
-        ess_from_log_weights(np.array([-np.inf, -np.inf]))
+def test_ess_returns_nonfinite_for_degenerate_log_weights():
+    assert not np.isfinite(ess_from_log_weights(np.array([-np.inf, -np.inf])))
+
+
+def test_ess_can_be_jitted():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+
+    ess = jax.jit(ess_from_log_weights)(jnp.asarray([0.0, -1.0]))
+
+    assert ess == pytest.approx(1.6480542)
 
 
 def test_in_bounds():

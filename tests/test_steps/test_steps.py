@@ -473,7 +473,7 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
     state = particle_state.with_updates(metadata={"temperature": 1.0})
     context = context_factory(metadata={"temperature": 1.0})
 
-    result_state, context, _ = step(state, context, rng)
+    result_state, context, output = step(state, context, rng)
 
     assert np.array_equal(result_state.particles, state.particles)
     assert result_state.metadata["temperature"] == 1.0
@@ -490,6 +490,11 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
         ess_ratio_from_log_weights(state.log_weights)
     )
     assert context.metadata["cess_ratio"] == 1.0
+    assert output["target_ess_ratio"] == pytest.approx(0.7)
+    np.testing.assert_array_equal(
+        output["log_weight_increment"],
+        np.zeros_like(state.log_weights),
+    )
 
 
 def test_tempered_posterior_custom_increment_is_used_by_weighting(
