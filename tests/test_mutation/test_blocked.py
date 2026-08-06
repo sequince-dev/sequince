@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sequince._array_api import namespace, to_numpy
+from sequince.array_api import namespace, to_numpy
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import (

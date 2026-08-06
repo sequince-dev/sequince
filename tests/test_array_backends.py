@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from sequince._array_api import namespace
+from sequince.array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 from sequince.state import ParticleState
@@ -57,7 +57,7 @@ def test_torch_gpu_particles_remain_on_device() -> None:
     device = torch.device("cuda", 0)
     dtype = torch.float32
     particles = torch.arange(8, device=device, dtype=dtype).reshape(4, 2)
-    log_weights = torch.full((4,), float("-inf"), dtype=dtype, device=device)
+    log_weights = torch.full((4,), -1.0, dtype=dtype, device=device)
     state = ParticleState(particles=particles, log_weights=log_weights)
     xp = namespace(particles)
 

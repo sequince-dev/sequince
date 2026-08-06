@@ -1,6 +1,17 @@
 Utilities
 =========
 
+Array API
+---------
+
+.. automodule:: sequince.array_api
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+General utilities
+-----------------
+
 .. automodule:: sequince.utils
    :members:
    :undoc-members:

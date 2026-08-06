@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from .._array_api import asarray, namespace
+from ..array_api import asarray, namespace
 from ..utils import call_with_optional_context
 from .base import SMCStep
 from .context import (

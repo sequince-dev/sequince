@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable, cast
 
-from ..._array_api import asarray, namespace, to_numpy
 from ..._typing import Array
+from ...array_api import asarray, namespace, to_numpy
 from ...transforms import ParticleTransform
 from ..context import StepContext
 from .base import (

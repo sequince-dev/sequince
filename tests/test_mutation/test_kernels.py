@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from orng import RandomGenerator
 
-from sequince._array_api import namespace
+from sequince.array_api import namespace
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import (
     AdaptiveMaskedGaussianRandomWalk,

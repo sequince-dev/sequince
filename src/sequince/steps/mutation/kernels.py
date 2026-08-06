@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import numpy as np
+from array_api_compat import device as get_device
 
-from ..._array_api import asarray, full, namespace, to_numpy
 from ..._typing import Array
+from ...array_api import asarray, namespace, to_numpy
 from ..base import StepContext
 
 if TYPE_CHECKING:
@@ -50,12 +51,11 @@ class SymmetricMutationKernel:
             raise ValueError(
                 "Particles passed to log_transition_ratio must share shape."
             )
-        return full(
+        return xp.full(
             (start.shape[0],),
             0.0,
-            xp=xp,
             dtype=start.dtype,
-            like=start,
+            device=get_device(start),
         )
 
 
@@ -109,12 +109,11 @@ class CallableMutationKernel:
                 "Particles passed to log_transition_ratio must share shape."
             )
         if self.symmetric:
-            return full(
+            return xp.full(
                 (start.shape[0],),
                 0.0,
-                xp=xp,
                 dtype=start.dtype,
-                like=start,
+                device=get_device(start),
             )
         if self.log_transition_ratio_fn is not None:
             values = self.log_transition_ratio_fn(start, end)

@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
-from ..._array_api import asarray, namespace
 from ..._typing import Array
+from ...array_api import asarray, namespace
 from ...transforms import ParticleTransform
 from ..context import StepContext
 from .base import (

@@ -4,8 +4,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from ._array_api import asarray, namespace
 from ._typing import Array
+from .array_api import asarray, namespace
 from .checkpoint import CheckpointWriter, SMCCheckpoint
 from .result import SMCResult
 from .smc import SequentialMonteCarlo, SMCRuntime

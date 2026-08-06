@@ -4,9 +4,10 @@ import logging
 from typing import TYPE_CHECKING
 
 import array_api_extra as xpx
+from array_api_compat import device as get_device
 
-from .._array_api import arange, asarray, namespace
 from .._typing import Array
+from ..array_api import asarray, namespace
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
@@ -104,7 +105,7 @@ class StratifiedResampling(ResamplingStep):
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
-        offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
+        offsets = xp.arange(n, dtype=probs.dtype, device=get_device(probs))
         jitter = rng.random((n,))
         positions = (offsets + jitter) / n
         cumulative = xp.cumulative_sum(probs)
@@ -121,7 +122,7 @@ class SystematicResampling(ResamplingStep):
         probs = asarray(weights, xp=xp)
         n = probs.shape[0]
         start = rng.random()
-        offsets = arange(n, xp=xp, dtype=probs.dtype, like=probs)
+        offsets = xp.arange(n, dtype=probs.dtype, device=get_device(probs))
         positions = (start + offsets) / n
         cumulative = xp.cumulative_sum(probs)
         return xpx.searchsorted(cumulative, positions, side="right", xp=xp)

@@ -7,18 +7,12 @@ from dataclasses import dataclass, field
 from numbers import Real
 from typing import TYPE_CHECKING, Any, MutableMapping
 
-from ._array_api import (
-    asarray,
-    full,
-    namespace,
-)
-from ._array_api import (
-    copy as array_copy,
-)
-from ._array_api import (
-    logsumexp as xp_logsumexp,
-)
+from array_api_compat import device as get_device
+
 from ._typing import Array
+from .array_api import asarray, namespace
+from .array_api import copy as array_copy
+from .utils import normalize_log_weights
 
 if TYPE_CHECKING:
     from .target import TargetEvaluation
@@ -63,8 +57,8 @@ class ParticleState:
             value = (
                 float(log_weights) if log_weights is not None else -math.log(n)
             )
-            log_weights = full(
-                (n,), value, xp=xp, dtype=float, like=self.particles
+            log_weights = xp.full(
+                (n,), value, device=get_device(self.particles)
             )
         self.log_weights = log_weights
 
@@ -85,36 +79,19 @@ class ParticleState:
         """Return a new state with normalized log weights and updated evidence."""
         state = self.copy()
         xp = namespace(state.log_weights)
-        log_weights = asarray(state.log_weights, xp=xp)
-        log_norm = xp_logsumexp(log_weights, xp=xp)
-        log_norm_scalar = float(log_norm)
-        if math.isfinite(log_norm_scalar):
-            state.log_weights = log_weights - log_norm_scalar
-            state.log_evidence += log_norm_scalar
-        else:
-            n = state.log_weights.shape[0]
-            state.log_weights = full(
-                (n,),
-                -math.log(n),
-                xp=xp,
-                dtype=log_weights.dtype,
-                like=log_weights,
-            )
-        return state, float(log_norm)
+        state.log_weights, log_norm = normalize_log_weights(
+            state.log_weights,
+            xp=xp,
+        )
+        state.log_evidence += log_norm
+        return state, log_norm
 
     @property
     def weights(self) -> Array:
         """Return normalized weights."""
         xp = namespace(self.log_weights)
-        log_weights = asarray(self.log_weights, xp=xp)
-        log_norm = xp_logsumexp(log_weights, xp=xp)
-        log_norm_scalar = float(log_norm)
-        if math.isfinite(log_norm_scalar):
-            return xp.exp(log_weights - log_norm_scalar)
-        n = self.log_weights.shape[0]
-        return full(
-            (n,), 1.0 / n, xp=xp, dtype=log_weights.dtype, like=log_weights
-        )
+        normalized, _ = normalize_log_weights(self.log_weights, xp=xp)
+        return xp.exp(normalized)
 
     def effective_sample_size(self) -> float:
         """Compute the effective sample size (ESS)."""
@@ -152,12 +129,11 @@ class ParticleState:
         new_particles = particles[indices]
         n = indices.shape[0]
         log_weight_template = asarray(self.log_weights, xp=xp)
-        log_weights = full(
+        log_weights = xp.full(
             (n,),
             -math.log(n),
-            xp=xp,
             dtype=log_weight_template.dtype,
-            like=log_weight_template,
+            device=get_device(log_weight_template),
         )
         return ParticleState(
             particles=new_particles,
