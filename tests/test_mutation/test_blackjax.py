@@ -62,10 +62,10 @@ def test_blackjax_mutates_jax_particles(algorithm, algorithm_kwargs) -> None:
     assert result.particles.shape == (4, 2)
     assert isinstance(result.particles, jax.Array)
     assert result.evaluation is not None
-    assert result.metadata["blackjax_algorithm"] == algorithm
-    assert result.metadata["blackjax_steps"] == 2
-    assert 0.0 <= result.metadata["blackjax_acceptance"] <= 1.0
-    assert result.metadata["mutation_chains"].shape == (2, 4, 2)
+    assert output["algorithm"] == algorithm
+    assert output["steps"] == 2
+    assert 0.0 <= output["acceptance"] <= 1.0
+    assert "mutation_chains" not in result.metadata
     assert output["chain"].shape == (2, 4, 2)
     assert np.all(np.isfinite(np.asarray(result.particles)))
 
@@ -129,7 +129,7 @@ def test_blackjax_runs_in_standard_smc() -> None:
     result = smc.run(_state(), num_steps=1, rng=42, metadata=metadata)
 
     assert result.final_state.particles.shape == (4, 2)
-    assert result.final_state.metadata["blackjax_algorithm"] == "random-walk"
+    assert result.outputs[0][-1]["algorithm"] == "random-walk"
     assert result.final_state.evaluation is not None
 
 

@@ -177,7 +177,7 @@ def test_gaussian_random_walk_mutation_preserves_backend(
         store_chains=True,
     )
 
-    updated, _, _ = step(
+    updated, _, output = step(
         case.state(),
         StepContext(t=0),
         case.rng(2468),
@@ -185,7 +185,8 @@ def test_gaussian_random_walk_mutation_preserves_backend(
 
     assert updated.particles.shape == particles.shape
     assert namespace(updated.particles) is backend_ns
-    assert namespace(updated.metadata["mutation_chains"]) is backend_ns
+    assert "mutation_chains" not in updated.metadata
+    assert namespace(output["chain"]) is backend_ns
 
 
 def test_masked_gaussian_changes_only_active_coordinates(rng) -> None:

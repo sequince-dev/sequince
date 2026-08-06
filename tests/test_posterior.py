@@ -366,5 +366,5 @@ def test_draw_additional_samples_supports_metropolis_hastings(
     )
 
     assert updated_state.particles.shape == (8, 1)
-    assert updated_state.metadata["metropolis_hastings_steps"] == 2
+    assert updated_result.outputs[-1][0]["steps"] == 2
     assert updated_result.final_state is updated_state

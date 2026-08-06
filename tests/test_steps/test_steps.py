@@ -564,8 +564,8 @@ def test_mutate_if_resampled(
     step = MutateIfResampled(TrackingMutation())
     updated, context, output = step(particle_state, context, rng)
 
-    assert context.metadata["mutation_skipped"] is not resampled
-    assert updated.metadata["mutation_skipped"] is not resampled
+    assert "mutation_skipped" not in context.metadata
+    assert "mutation_skipped" not in updated.metadata
     assert context.metadata.get("mutation_called", False) is resampled
     assert output.executed is resampled
     expected_particles = (
@@ -625,10 +625,8 @@ def test_adapt_gaussian_proposal_updates_scale(
     context_factory,
     rng,
 ) -> None:
-    metadata = dict(particle_state.metadata)
-    metadata["waste_free_acceptance"] = 0.6
-    state = particle_state.with_updates(metadata=metadata)
-    context = context_factory(metadata=metadata)
+    state = particle_state
+    context = context_factory(metadata={"waste_free_acceptance": 0.6})
 
     adapter = AdaptGaussianProposal(
         initial_scale=0.5,
@@ -637,16 +635,12 @@ def test_adapt_gaussian_proposal_updates_scale(
         scale_key="proposal_scale",
         min_scale=0.05,
         max_scale=5.0,
-        scale_metadata_key="proposal_scale",
     )
 
     updated, context, _ = adapter(state, context, rng)
 
-    assert updated.metadata["proposal_scale"] > 0.5
-    assert (
-        context.metadata["proposal_scale"]
-        == updated.metadata["proposal_scale"]
-    )
+    assert updated is state
+    assert context.metadata["proposal_scale"] > 0.5
 
 
 def test_adapt_gaussian_proposal_adds_covariance(
@@ -685,13 +679,9 @@ def test_waste_free_resample_move_returns_uniform_weights(
 
     n = particle_state.particles.shape[0]
     assert np.allclose(updated.log_weights, -np.log(n))
-    assert "waste_free_acceptance" in updated.metadata
-    assert updated.metadata["waste_free_proposal_repeats"] == 1
-    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 1
-    total_selected = (
-        updated.metadata["waste_free_selected_parents"]
-        + updated.metadata["waste_free_selected_proposals"]
-    )
+    assert "waste_free_acceptance" not in updated.metadata
+    assert output["proposal_repeats"] == 1
+    total_selected = output["selected_parents"] + output["selected_proposals"]
     assert total_selected == n
     assert len(output["acceptance_by_round"]) == 1
 
@@ -719,11 +709,11 @@ def test_waste_free_resample_move_handles_one_dimensional_particles(
         resample_ancestors=False,
     )
 
-    updated, context, _ = step(state, context, rng)
+    updated, context, output = step(state, context, rng)
     assert updated.particles.shape == particles.shape
     assert np.allclose(updated.log_weights, -np.log(n))
-    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 1
-    assert updated.metadata["waste_free_proposal_repeats"] == 1
+    assert len(output["acceptance_by_round"]) == 1
+    assert output["proposal_repeats"] == 1
 
 
 def test_waste_free_resample_move_multiple_proposals(
@@ -743,15 +733,14 @@ def test_waste_free_resample_move_multiple_proposals(
 
     n = particle_state.particles.shape[0]
     assert np.allclose(updated.log_weights, -np.log(n))
-    assert updated.metadata["waste_free_proposal_repeats"] == 3
-    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 3
-    assert len(updated.metadata["waste_free_selected_proposals_by_round"]) == 3
-    assert (
-        sum(updated.metadata["waste_free_selected_proposals_by_round"])
-        == updated.metadata["waste_free_selected_proposals"]
-    )
-    assert context.metadata["waste_free_total_proposals"] == n * 3
+    assert output["proposal_repeats"] == 3
     assert len(output["acceptance_by_round"]) == 3
+    assert len(output["selected_proposals_by_round"]) == 3
+    assert (
+        sum(output["selected_proposals_by_round"])
+        == output["selected_proposals"]
+    )
+    assert output["total_proposals"] == n * 3
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
