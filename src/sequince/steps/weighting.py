@@ -530,7 +530,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
         )
         return updated_state, context, output
 
-    def functional_step(
+    def apply_functional(
         self,
         state: ParticleState,
         context: StepContext,
@@ -761,7 +761,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
                 )
         return updated_state, context, output
 
-    def functional_step(
+    def apply_functional(
         self,
         state: ParticleState,
         context: StepContext,

@@ -34,22 +34,19 @@ class SMCStep:
     ) -> tuple["ParticleState", StepContext, Any]:
         raise NotImplementedError("SMCStep subclasses must implement apply().")
 
-    def functional_step(
+    def apply_functional(
         self,
         state: "ParticleState",
         context: StepContext,
         random_state: Any,
     ) -> tuple["ParticleState", StepContext, Any, Any]:
-        """Apply the step while explicitly threading backend random state.
+        """Apply the functional step that.
 
-        The generator is local to this call, making the external transition
-        pure when :meth:`apply` is itself free of mutation. Backend selection is
-        resolved from the random state's array namespace during tracing. This
-        RNG boundary is suitable for JAX transformations, but it does not make
-        Python control flow over tracers, host scalar conversions, mutation,
-        dynamic dictionaries or outputs, shape-changing operations, non-JAX
-        third-party code, host logging or callbacks, traced-value exceptions,
-        or NumPy operations on tracers JIT-compatible.
+        This returns the updated state, context, next random state, and any
+        additional outputs.
+
+        This method is intended for use in functional SMC iterations where the
+        random state is explicitly threaded through the computation.
         """
         rng = RandomGenerator.from_xp(
             namespace(random_state),
@@ -64,7 +61,7 @@ class SMCStep:
         state: "ParticleState",
         metadata: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        """Return metadata with fields required by ``functional_step``."""
+        """Return metadata with fields required by ``apply_functional``."""
         del state
         return metadata
 

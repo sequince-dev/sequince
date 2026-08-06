@@ -98,7 +98,7 @@ class ResamplingStep(SMCStep):
         )
         return initialized
 
-    def functional_step(
+    def apply_functional(
         self,
         state: ParticleState,
         context: StepContext,

@@ -123,7 +123,7 @@ def test_blackjax_array_boundary_accepts_dynamic_temperature_under_jit() -> (
     def compiled_step(particles, temperature, random_state):
         state = ParticleState(particles=particles)
         context = StepContext(t=0, metadata={"temperature": temperature})
-        updated, _, next_state, output = mutation.functional_step(
+        updated, _, next_state, output = mutation.apply_functional(
             state,
             context,
             random_state,

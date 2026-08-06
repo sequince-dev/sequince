@@ -65,9 +65,9 @@ def test_functional_step_reproduces_and_advances_random_state() -> None:
     step = TwoDrawStep()
     state, context, key = _inputs()
 
-    first = step.functional_step(state, context, key)
-    repeated = step.functional_step(state, context, key)
-    advanced = step.functional_step(state, context, first[2])
+    first = step.apply_functional(state, context, key)
+    repeated = step.apply_functional(state, context, key)
+    advanced = step.apply_functional(state, context, first[2])
 
     _assert_trees_equal(first, repeated)
     assert not _keys_equal(first[2], key)
@@ -87,7 +87,7 @@ def test_apply_and_functional_step_agree_from_equivalent_jax_key() -> None:
         state, context, rng
     )
     functional_state, functional_context, functional_key, functional_output = (
-        step.functional_step(state, context, key)
+        step.apply_functional(state, context, key)
     )
 
     _assert_trees_equal(applied_state, functional_state)
@@ -103,7 +103,7 @@ def test_apply_and_functional_step_agree_from_equivalent_jax_key() -> None:
 def test_functional_step_can_be_jitted_without_leaking_tracers() -> None:
     step = TwoDrawStep()
     state, context, key = _inputs()
-    compiled_step = jax.jit(step.functional_step)
+    compiled_step = jax.jit(step.apply_functional)
 
     first = compiled_step(state, context, key)
     advanced = compiled_step(state, context, first[2])

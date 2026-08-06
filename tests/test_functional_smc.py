@@ -443,7 +443,7 @@ def test_functional_resampling_requires_fixed_control_flow() -> None:
     step = SystematicResampling(always_resample=False, ess_threshold=0.5)
 
     with pytest.raises(NotImplementedError, match="always_resample=True"):
-        step.functional_step(
+        step.apply_functional(
             ParticleState(jnp.zeros((4, 1))),
             StepContext(t=0),
             jax.random.key(42),
@@ -464,7 +464,7 @@ def test_fixed_tempering_uses_same_eager_and_functional_transition() -> None:
         context,
         RandomGenerator(backend="jax", generator=key),
     )
-    updated, next_context, _, output = jax.jit(step.functional_step)(
+    updated, next_context, _, output = jax.jit(step.apply_functional)(
         state,
         context,
         key,
@@ -507,7 +507,7 @@ def test_adaptive_tempering_functional_step_can_be_jitted(
         RandomGenerator(backend="jax", generator=key),
     )
 
-    updated, next_context, next_key, output = jax.jit(step.functional_step)(
+    updated, next_context, next_key, output = jax.jit(step.apply_functional)(
         state, context, key
     )
 
@@ -542,7 +542,7 @@ def test_adaptive_tempering_terminal_output_has_fixed_structure() -> None:
     )
     state = ParticleState(jnp.zeros((4, 1)))
     key = jax.random.key(42)
-    functional_step = jax.jit(step.functional_step)
+    functional_step = jax.jit(step.apply_functional)
 
     _, _, _, active_output = functional_step(
         state,
@@ -577,7 +577,7 @@ def test_adaptive_callable_target_and_bounds_are_jittable() -> None:
         max_delta=0.2,
     )
 
-    _, context, _, output = jax.jit(step.functional_step)(
+    _, context, _, output = jax.jit(step.apply_functional)(
         ParticleState(jnp.zeros((4, 1))),
         _adaptive_context(),
         jax.random.key(42),

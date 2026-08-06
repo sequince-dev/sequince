@@ -180,13 +180,13 @@ class SequentialMonteCarlo:
         outputs = []
 
         for step in self._steps:
-            if not hasattr(step, "functional_step"):
+            if not hasattr(step, "apply_functional"):
                 raise TypeError(
                     f"{type(step).__name__} does not provide "
-                    "functional_step()."
+                    "apply_functional()."
                 )
 
-            state, context, random_state, output = step.functional_step(
+            state, context, random_state, output = step.apply_functional(
                 state,
                 context,
                 random_state,
