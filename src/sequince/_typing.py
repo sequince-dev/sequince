@@ -8,6 +8,7 @@ except Exception:  # pragma: no cover - optional dependency missing
     Array = Any  # type: ignore
 
 MutationStrategy = Literal[
+    "blackjax",
     "emcee",
     "metropolis-hastings",
     "minipcn",

@@ -36,6 +36,36 @@ chosen via the ``mutation`` argument. Pass ``mutation="minipcn"`` to opt into
 the :class:`~sequince.steps.mutation.MiniPCNMutation` transition kernel or
 ``mutation="none"`` to skip rejuvenation.
 
+BlackJAX mutation
+-----------------
+
+Install the optional BlackJAX integration with ``uv add "sequince[blackjax]"``.
+BlackJAX mutation requires JAX-backed particles and JAX-compatible target
+functions. NUTS is the default algorithm:
+
+.. code-block:: python
+
+    import jax.numpy as jnp
+
+    smc, posterior, metadata = make_standard_bayesian_smc(
+        log_prior,
+        log_likelihood,
+        mutation="blackjax",
+        mutation_n_steps=20,
+        mutation_kwargs={
+            "algorithm": "nuts",
+            "algorithm_kwargs": {
+                "step_size": 0.1,
+                "inverse_mass_matrix": jnp.ones(n_dimensions),
+            },
+        },
+    )
+
+``algorithm`` may also be ``"hmc"``, ``"random-walk"``, or a callable that
+constructs a BlackJAX sampling algorithm from the current scalar log-density.
+Acceptance and divergence diagnostics are stored in particle-state metadata as
+``blackjax_acceptance`` and ``blackjax_divergence``.
+
 If you need full control, construct ``SequentialMonteCarlo`` manually by
 instantiating step and callback objects and supplying them in the desired order:
 

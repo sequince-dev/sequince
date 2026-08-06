@@ -105,7 +105,7 @@ def make_standard_bayesian_smc(
     resampling_kwargs:
         Extra keyword arguments forwarded to the resampling step constructor.
     mutation:
-        Mutation strategy to use. Accepts ``"emcee"``,
+        Mutation strategy to use. Accepts ``"blackjax"``, ``"emcee"``,
         ``"metropolis-hastings"``, ``"minipcn"`` (default), ``"none"``, or a
         pre-built ``SMCStep`` instance.
     mutation_n_steps:
@@ -115,6 +115,8 @@ def make_standard_bayesian_smc(
         ``"metropolis-hastings"`` requires ``kernel`` and accepts optional
         ``kernel_kwargs``. For ``"emcee"``, ``move`` may be a named move,
         weighted move configuration, or the ``"bilby-de"`` preset.
+        For ``"blackjax"``, use ``algorithm`` and ``algorithm_kwargs`` to
+        configure the JAX mutation kernel.
     logging_frequency:
         Frequency (in SMC iterations) at which to log sampler status.
         Defaults to 1 (log every iteration). If set to 0, logging is disabled.

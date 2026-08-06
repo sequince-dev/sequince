@@ -97,12 +97,12 @@ class TemperedPosterior(TemperedTarget):
         log_proposal = self.resolve_log_proposal(log_proposal_override)
         if log_proposal is None:
             if particles.ndim == 1:
-                return float(evaluation["log_prior"][0])
+                return evaluation["log_prior"][0]
             return evaluation["log_prior"]
         if "log_proposal" not in evaluation:
             raise ValueError("Evaluation does not contain log_proposal.")
         if particles.ndim == 1:
-            return float(evaluation["log_proposal"][0])
+            return evaluation["log_proposal"][0]
         return evaluation["log_proposal"]
 
     def log_terminal(
@@ -123,7 +123,7 @@ class TemperedPosterior(TemperedTarget):
         self.validate_evaluation(evaluation, particles, context)
         posterior = evaluation["log_prior"] + evaluation["log_likelihood"]
         if particles.ndim == 1:
-            return float(posterior[0])
+            return posterior[0]
         return posterior
 
     def evaluate(
