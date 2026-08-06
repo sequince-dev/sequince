@@ -63,8 +63,9 @@ functions. NUTS is the default algorithm:
 
 ``algorithm`` may also be ``"hmc"``, ``"random-walk"``, or a callable that
 constructs a BlackJAX sampling algorithm from the current scalar log-density.
-Acceptance and divergence diagnostics are stored in particle-state metadata as
-``blackjax_acceptance`` and ``blackjax_divergence``.
+Acceptance and divergence diagnostics are returned in the mutation step output
+under ``"acceptance"`` and ``"divergence"``. Per-iteration step outputs are
+available through ``SMCResult.outputs``.
 
 If you need full control, construct ``SequentialMonteCarlo`` manually by
 instantiating step and callback objects and supplying them in the desired order:
