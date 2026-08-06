@@ -11,6 +11,7 @@ distributions to encourage efficient exploration.
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,7 +25,6 @@ from sequince import (
     TemperedPosterior,
 )
 from sequince.log import configure_logging
-from sequince.result import NestedSMCResult
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     LoggingStep,
@@ -35,7 +35,7 @@ from sequince.steps import (
 )
 from sequince.steps.base import StepContext
 from sequince.steps.control import StopIf
-from sequince.steps.nested import NestedSMCStep
+from sequince.steps.meta import MetaSMCStep
 
 
 def generate_gmm_data(
@@ -184,12 +184,12 @@ def gmm_log_likelihood(
 class GMMExpansionTransformation(SMCTransformation):
     """Add one mixture component using the component prior as proposal."""
 
-    def forward(
+    def forward_with_context(
         self,
         state: ParticleState,
         context: StepContext,
         rng: RandomGenerator,
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext]:
         current_components = int(context.metadata["active_components"])
         particles = np.asarray(state.particles)
         if particles.ndim == 1:
@@ -219,14 +219,19 @@ class GMMExpansionTransformation(SMCTransformation):
         metadata["temperature"] = 0.0
         metadata.pop("temperature_delta", None)
 
-        context.metadata["previous_active_components"] = current_components
-        context.metadata["active_components"] = next_components
-        context.metadata["temperature"] = 0.0
-        context.metadata["temperature_delta"] = 0.0
+        context = context.with_metadata(
+            previous_active_components=current_components,
+            active_components=next_components,
+            temperature=0.0,
+            temperature_delta=0.0,
+        )
 
-        return state.with_updates(
-            particles=expanded_particles,
-            metadata=metadata,
+        return (
+            state.with_updates(
+                particles=expanded_particles,
+                metadata=metadata,
+            ),
+            context,
         )
 
     def inverse(
@@ -503,15 +508,14 @@ class ExpandComponents(TransformationStep):
         state: ParticleState,
         context: StepContext,
         rng: RandomGenerator,
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         current_components = int(context.metadata["active_components"])
 
         if context.t == 0:
-            return state
+            return state, context, {}
 
         if current_components >= self._target_components:
-            context.request_stop()
-            return state
+            return state, context.request_stop(), {}
 
         return super().apply(state, context, rng)
 
@@ -588,7 +592,7 @@ def main() -> None:
     outer_runner = SequentialMonteCarlo(
         steps=[
             ExpandComponents(target_components, posterior),
-            NestedSMCStep(
+            MetaSMCStep(
                 inner_runner,
                 posterior=posterior,
                 record_outputs=True,
@@ -610,9 +614,9 @@ def main() -> None:
         shared_context=shared_context,
         metadata=metadata,
     )
-    meta_result = NestedSMCResult(
-        outer_result.context.outputs["inner_results"]
-    )
+    meta_result = outer_result.get_meta_results("inner_results")
+    if meta_result is None:
+        raise RuntimeError("The meta SMC step did not record inner results.")
 
     all_states = meta_result.all_states
     final_state = meta_result.final_state
