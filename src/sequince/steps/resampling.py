@@ -8,6 +8,7 @@ from array_api_compat import device as get_device
 
 from .._typing import Array
 from ..array_api import asarray, namespace
+from ..utils import normalize_log_weights
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
@@ -74,6 +75,42 @@ class ResamplingStep(SMCStep):
         self, weights: Array, rng: "RandomGenerator"
     ) -> Array:
         raise NotImplementedError
+
+    def functional_step(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: object,
+    ) -> tuple[ParticleState, StepContext, object, dict[str, object]]:
+        """Resample while explicitly threading RNG state.
+
+        The initial compiled subset requires unconditional resampling.  A
+        traced ESS threshold needs a conditional RNG transition and is kept
+        out of this first contract rather than changing its semantics.
+        """
+        if not self._always_resample:
+            raise NotImplementedError(
+                "functional resampling currently requires always_resample=True"
+            )
+
+        from orng import RandomGenerator
+
+        xp = namespace(state.log_weights, random_state)
+        normalized, _ = normalize_log_weights(
+            state.log_weights,
+            xp=xp,
+        )
+        weights = xp.exp(normalized)
+        ess = 1.0 / xp.sum(xp.square(weights))
+        rng = RandomGenerator.from_xp(xp, generator=random_state)
+        indices = self._choose_ancestors(weights, rng)
+        updated = state.resample(indices, record_ancestors=False)
+        context = context.with_metadata(ess=ess, resampled=xp.asarray(True))
+        output = {
+            "ess": ess,
+            "resampled": xp.asarray(True),
+        }
+        return updated, context, rng.state(), output
 
     def _should_resample(self, state: ParticleState) -> bool:
         if self._always_resample:

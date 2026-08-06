@@ -12,7 +12,7 @@ from array_api_compat import device as get_device
 from ._typing import Array
 from .array_api import asarray, namespace
 from .array_api import copy as array_copy
-from .utils import normalize_log_weights
+from .utils import _validate_log_normalizer, normalize_log_weights
 
 if TYPE_CHECKING:
     from .target import TargetEvaluation
@@ -68,7 +68,7 @@ class ParticleState:
         return ParticleState(
             particles=array_copy(self.particles, xp=xp),
             log_weights=array_copy(self.log_weights, xp=xp),
-            log_evidence=float(self.log_evidence),
+            log_evidence=self.log_evidence,
             evaluation=(
                 None if self.evaluation is None else self.evaluation.copy()
             ),
@@ -83,6 +83,7 @@ class ParticleState:
             state.log_weights,
             xp=xp,
         )
+        _validate_log_normalizer(log_norm, xp=xp)
         state.log_evidence += log_norm
         return state, log_norm
 
@@ -90,7 +91,8 @@ class ParticleState:
     def weights(self) -> Array:
         """Return normalized weights."""
         xp = namespace(self.log_weights)
-        normalized, _ = normalize_log_weights(self.log_weights, xp=xp)
+        normalized, log_norm = normalize_log_weights(self.log_weights, xp=xp)
+        _validate_log_normalizer(log_norm, xp=xp)
         return xp.exp(normalized)
 
     def effective_sample_size(self) -> float:
@@ -122,7 +124,9 @@ class ParticleState:
             **updates,
         )
 
-    def resample(self, indices: Array) -> "ParticleState":
+    def resample(
+        self, indices: Array, *, record_ancestors: bool = True
+    ) -> "ParticleState":
         """Return a resampled state using the provided ancestor indices."""
         xp = namespace(self.particles, indices)
         particles = asarray(self.particles, xp=xp)
@@ -144,7 +148,11 @@ class ParticleState:
                 if self.evaluation is None
                 else self.evaluation.take(indices)
             ),
-            metadata=dict(self.metadata, ancestors=indices),
+            metadata=(
+                dict(self.metadata, ancestors=indices)
+                if record_ancestors
+                else self.metadata
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:

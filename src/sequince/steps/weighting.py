@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Collection
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 from .._typing import Array
@@ -13,7 +14,11 @@ from ..stats import (
     ess_ratio_from_log_weights,
 )
 from ..target import SequentialTarget, TemperedTarget
-from ..utils import call_with_optional_context
+from ..utils import (
+    _validate_log_normalizer,
+    call_with_optional_context,
+    normalize_log_weights,
+)
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
@@ -302,6 +307,51 @@ class BaseTemperedStep(SMCStep):
             context = context.with_metadata(temperature_delta=0.0)
         return state, context
 
+    def _prepare_log_increments(
+        self,
+        state: ParticleState,
+        context: StepContext,
+    ) -> tuple[Array, ParticleState, Any]:
+        """Evaluate and validate one log increment per particle."""
+        xp = namespace(state.log_weights)
+        log_increments, state = self.evaluate_log_increment(state, context)
+        increments = _weights_as_1d_array(
+            log_increments,
+            xp=xp,
+            like=state.log_weights,
+        )
+        if increments.shape[0] != state.log_weights.shape[0]:
+            raise ValueError(
+                "Increment function must return one value per particle."
+            )
+        return increments, state, xp
+
+    def _update_log_weights(
+        self,
+        state: ParticleState,
+        increments: Array,
+        *,
+        xp: Any,
+    ) -> tuple[ParticleState, Any | None]:
+        """Apply increments and optionally normalize without leaving the backend."""
+        updated_state = state.with_updates(
+            log_weights=state.log_weights + increments
+        )
+        if not self._normalize_after:
+            return updated_state, None
+
+        normalized, log_norm = normalize_log_weights(
+            updated_state.log_weights,
+            xp=xp,
+        )
+        return (
+            updated_state.with_updates(
+                log_weights=normalized,
+                log_evidence=updated_state.log_evidence + log_norm,
+            ),
+            log_norm,
+        )
+
     def apply(self, state, context, rng):
         raise NotImplementedError(
             "BaseTemperedStep subclasses must implement apply()."
@@ -420,55 +470,87 @@ class FixedTemperedWeighting(BaseTemperedStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        del rng
         state, context = self.initialize_metadata(state, context)
-        log_increments, state = self.evaluate_log_increment(state, context)
-        xp = namespace(state.log_weights)
-        increments = (
-            _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
-            * self._temperature_increment
+        base_state = state
+        current_temperature = context.metadata.get("temperature", 0.0)
+        updated_state, context, output, raw_increments, log_norm = (
+            self._transition(state, context)
         )
-        if increments.shape[0] != state.log_weights.shape[0]:
-            raise ValueError(
-                "Increment function must return one value per particle."
+        if log_norm is not None:
+            _validate_log_normalizer(
+                log_norm,
+                xp=namespace(updated_state.log_weights),
             )
+
         metadata = dict(state.metadata)
-        current_temp = metadata.get("temperature", 0.0)
-        target_temperature = current_temp + self._temperature_increment
         max_temperature = float(context.metadata.get("max_temperature", 1.0))
         metadata.update(
             _tempering_diagnostics(
-                state.log_weights,
-                _weights_as_1d_array(
-                    log_increments, xp=xp, like=state.log_weights
-                ),
+                base_state.log_weights,
+                raw_increments,
                 delta=self._temperature_increment,
-                terminal_delta=max(max_temperature - current_temp, 0.0),
+                terminal_delta=max(
+                    max_temperature - current_temperature,
+                    0.0,
+                ),
             )
         )
-        metadata["temperature"] = target_temperature
+        metadata["temperature"] = output["temperature"]
         metadata["temperature_delta"] = self._temperature_increment
-        updated_state = state.with_updates(
-            log_weights=state.log_weights + increments, metadata=metadata
-        )
-        context = context.with_metadata(
-            temperature=metadata["temperature"],
-            temperature_delta=self._temperature_increment,
-        )
-        if self._normalize_after:
-            updated_state, _ = updated_state.normalize()
+        updated_state = updated_state.with_updates(metadata=metadata)
         logger.debug(
             "FixedTemperedWeighting: increment %.4f -> temperature %.4f.",
             self._temperature_increment,
             metadata["temperature"],
         )
+        return updated_state, context, output
+
+    def functional_step(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+    ) -> tuple[ParticleState, StepContext, Any, dict[str, Any]]:
+        """Apply fixed tempering without host scalar conversions."""
+        state, context, output, _, _ = self._transition(state, context)
+        return state, context, random_state, output
+
+    def _transition(
+        self,
+        state: ParticleState,
+        context: StepContext,
+    ) -> tuple[
+        ParticleState,
+        StepContext,
+        dict[str, Any],
+        Array,
+        Any | None,
+    ]:
+        """Apply the backend-native fixed-temperature transition."""
+        current_temperature = context.metadata.get(
+            "temperature", state.metadata.get("temperature", 0.0)
+        )
+        log_increments, state, xp = self._prepare_log_increments(
+            state, context
+        )
+        increments = log_increments * self._temperature_increment
+        target_temperature = current_temperature + self._temperature_increment
+        updated_state, log_norm = self._update_log_weights(
+            state,
+            increments,
+            xp=xp,
+        )
+        context = context.with_metadata(
+            temperature=target_temperature,
+            temperature_delta=self._temperature_increment,
+        )
         output = {
-            "temperature": metadata["temperature"],
+            "temperature": target_temperature,
             "temperature_delta": self._temperature_increment,
-            "ess_ratio": metadata.get("ess_ratio"),
-            "cess_ratio": metadata.get("cess_ratio"),
             "log_weight_increment": increments,
         }
-        return updated_state, context, output
+        return updated_state, context, output, log_increments, log_norm
 
 
 class AdaptiveTemperedWeighting(BaseTemperedStep):
@@ -564,155 +646,234 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        del rng
         state, context = self.initialize_metadata(state, context)
-        current_temp = context.metadata.get("temperature", 0.0)
-        remaining = self._max_temperature - current_temp
-        if remaining <= 0.0:
-            ess_ratio = ess_ratio_from_log_weights(state.log_weights)
-            metadata = dict(state.metadata)
-            metadata.update(
-                temperature=current_temp,
-                temperature_delta=0.0,
-                ess_ratio=ess_ratio,
-                cess_ratio=1.0,
-            )
-            context = context.with_metadata(
-                temperature=current_temp,
-                temperature_delta=0.0,
-                ess_ratio=ess_ratio,
-                cess_ratio=1.0,
-            )
-            logger.debug(
-                "AdaptiveTemperedWeighting already at max temperature %.3f; requesting immediate stop.",
-                self._max_temperature,
-            )
-            context = context.request_stop_immediately()
-            output = {
-                "temperature": current_temp,
-                "temperature_delta": 0.0,
-                "ess_ratio": ess_ratio,
-                "cess_ratio": 1.0,
-                "log_weight_increment": None,
-            }
-            return state.with_updates(metadata=metadata), context, output
-        allowed_delta = (
-            remaining
-            if self._max_delta is None
-            else min(remaining, self._max_delta)
-        )
-
-        xp = namespace(state.log_weights)
-        log_increments, state = self.evaluate_log_increment(state, context)
-        increments = _weights_as_1d_array(
-            log_increments, xp=xp, like=state.log_weights
-        )
-        target_ess_ratio = self._resolve_target_ess_ratio(
-            current_temp, context
-        )
-
-        if _max_abs(increments, xp=xp) <= 1e-12:
-            delta = allowed_delta
-        else:
-            delta = self._find_delta(
-                state.log_weights,
-                increments,
-                allowed_delta,
-                target_ess_ratio=target_ess_ratio,
+        base_state = state
+        (
+            updated_state,
+            context,
+            output,
+            raw_increments,
+            remaining,
+            log_norm,
+        ) = self._transition(state, context, validate_target=True)
+        if log_norm is not None:
+            _validate_log_normalizer(
+                log_norm,
+                xp=namespace(updated_state.log_weights),
             )
 
-        new_log_weights = state.log_weights + delta * increments
-        new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
-        new_cess_ratio = cess_ratio_from_log_weights_and_increments(
-            state.log_weights,
-            delta * increments,
-        )
-        metadata = dict(state.metadata)
+        metadata = dict(updated_state.metadata)
         metadata.update(
             _tempering_diagnostics(
-                state.log_weights,
-                increments,
-                delta=delta,
+                base_state.log_weights,
+                raw_increments,
+                delta=output["temperature_delta"],
                 terminal_delta=remaining,
             )
         )
-        metadata["temperature"] = current_temp + delta
-        metadata["temperature_delta"] = delta
-        metadata["target_ess_ratio"] = target_ess_ratio
-        metadata["ess_ratio"] = new_ess_ratio
-        metadata["cess_ratio"] = new_cess_ratio
-
-        updated_state = state.with_updates(
-            log_weights=new_log_weights, metadata=metadata
+        metadata.update(
+            temperature=output["temperature"],
+            temperature_delta=output["temperature_delta"],
+            target_ess_ratio=output["target_ess_ratio"],
+            ess_ratio=output["ess_ratio"],
+            cess_ratio=output["cess_ratio"],
         )
-        if self._normalize_after:
-            updated_state, _ = updated_state.normalize()
+        updated_state = updated_state.with_updates(metadata=metadata)
 
+        if context.stop_immediately:
+            logger.debug(
+                "AdaptiveTemperedWeighting already at max temperature %.3f; "
+                "requesting immediate stop.",
+                self._max_temperature,
+            )
+        else:
+            logger.debug(
+                "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
+                "target %s ratio=%.4f, ESS ratio=%.4f.",
+                output["temperature_delta"],
+                output["temperature"],
+                self._criterion.upper(),
+                output["target_ess_ratio"],
+                output["ess_ratio"],
+            )
+            if context.stop_requested:
+                logger.debug(
+                    "AdaptiveTemperedWeighting reached max temperature %.3f; "
+                    "requesting stop after iteration.",
+                    self._max_temperature,
+                )
+        return updated_state, context, output
+
+    def functional_step(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+    ) -> tuple[ParticleState, StepContext, Any, dict[str, Any]]:
+        """Apply adaptive tempering while explicitly threading random state."""
+        state, context, output, _, _, _ = self._transition(state, context)
+        return state, context, random_state, output
+
+    def _transition(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        *,
+        validate_target: bool = False,
+    ) -> tuple[
+        ParticleState,
+        StepContext,
+        dict[str, Any],
+        Array,
+        Array,
+        Any | None,
+    ]:
+        """Apply the backend-native adaptive-temperature transition."""
+        xp = namespace(state.log_weights)
+        current_temperature = asarray(
+            context.metadata.get(
+                "temperature", state.metadata.get("temperature", 0.0)
+            ),
+            xp=xp,
+            like=state.log_weights,
+        )
+        zero = asarray(0.0, xp=xp, like=state.log_weights)
+        max_temperature = asarray(
+            self._max_temperature,
+            xp=xp,
+            like=state.log_weights,
+        )
+        remaining = xp.maximum(
+            max_temperature - current_temperature,
+            zero,
+        )
+        allowed_delta = remaining
+        if self._max_delta is not None:
+            allowed_delta = xp.minimum(
+                allowed_delta,
+                asarray(self._max_delta, xp=xp, like=state.log_weights),
+            )
+
+        increments, state, xp = self._prepare_log_increments(state, context)
+        target_ess_ratio = self._resolve_target_ess_ratio(
+            current_temperature,
+            context,
+            xp=xp,
+            like=state.log_weights,
+        )
+        if validate_target:
+            target_value = float(target_ess_ratio)
+            if not 0.0 < target_value <= 1.0:
+                raise ValueError(
+                    "target_ess_ratio must resolve to a value in (0, 1]."
+                )
+
+        selected_delta = self._find_delta(
+            state.log_weights,
+            increments,
+            allowed_delta,
+            target_ess_ratio=target_ess_ratio,
+        )
+        selected_delta = xp.where(
+            xp.max(xp.abs(increments)) <= 1e-12,
+            allowed_delta,
+            selected_delta,
+        )
+        already_at_max = remaining <= 0.0
+        delta = xp.where(already_at_max, zero, selected_delta)
+        scaled_increments = delta * increments
+        new_log_weights = state.log_weights + scaled_increments
+        new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
+        new_cess_ratio = cess_ratio_from_log_weights_and_increments(
+            state.log_weights,
+            scaled_increments,
+        )
+        new_temperature = xp.minimum(
+            current_temperature + delta,
+            max_temperature,
+        )
+        reached_max = new_temperature >= self._max_temperature - 1e-9
+
+        updated_state, log_norm = self._update_log_weights(
+            state,
+            scaled_increments,
+            xp=xp,
+        )
         context = context.with_metadata(
-            temperature=metadata["temperature"],
+            temperature=new_temperature,
             temperature_delta=delta,
             target_ess_ratio=target_ess_ratio,
             ess_ratio=new_ess_ratio,
             cess_ratio=new_cess_ratio,
         )
-        logger.debug(
-            "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
-            "target %s ratio=%.4f, ESS ratio=%.4f.",
-            delta,
-            metadata["temperature"],
-            self._criterion.upper(),
-            target_ess_ratio,
-            new_ess_ratio,
+        stop_requested = asarray(
+            context.stop_requested,
+            xp=xp,
+            dtype=bool,
+            like=state.log_weights,
         )
-        if (
-            metadata["temperature"] >= self._max_temperature
-            or abs(metadata["temperature"] - self._max_temperature) <= 1e-9
-        ):
-            logger.debug(
-                "AdaptiveTemperedWeighting reached max temperature %.3f; requesting stop after iteration.",
-                self._max_temperature,
-            )
-            context = context.request_stop()
+        stop_immediately = asarray(
+            context.stop_immediately,
+            xp=xp,
+            dtype=bool,
+            like=state.log_weights,
+        )
+        context = replace(
+            context,
+            stop_requested=xp.logical_or(
+                stop_requested,
+                reached_max,
+            ),
+            stop_immediately=xp.logical_or(
+                stop_immediately,
+                already_at_max,
+            ),
+        )
         output = {
-            "temperature": metadata["temperature"],
+            "temperature": new_temperature,
             "temperature_delta": delta,
             "target_ess_ratio": target_ess_ratio,
             "ess_ratio": new_ess_ratio,
             "cess_ratio": new_cess_ratio,
-            "log_weight_increment": delta * increments,
+            "log_weight_increment": scaled_increments,
         }
-        return updated_state, context, output
+        return updated_state, context, output, increments, remaining, log_norm
 
     def _resolve_target_ess_ratio(
         self,
-        current_temperature: float,
+        current_temperature: Array,
         context: StepContext,
-    ) -> float:
+        *,
+        xp: Any,
+        like: Array,
+    ) -> Array:
         target = self._target_ess_ratio
         if callable(target):
-            resolved_target = call_with_optional_context(
+            target = call_with_optional_context(
                 target,
                 (current_temperature,),
                 context,
             )
-        else:
-            resolved_target = target
-        target_value = float(resolved_target)
-        if not 0.0 < target_value <= 1.0:
-            raise ValueError(
-                "target_ess_ratio must resolve to a value in (0, 1]."
-            )
-        return target_value
+        return asarray(target, xp=xp, like=like)
 
     def _find_delta(
         self,
         base_log_weights: Array,
         increments: Array,
-        max_delta: float,
+        max_delta: Array,
         *,
-        target_ess_ratio: float,
-    ) -> float:
-        low = 0.0
+        target_ess_ratio: Array,
+    ) -> Array:
+        """Find a temperature increment with fixed-count bisection."""
+        xp = namespace(base_log_weights, increments, max_delta)
+        low = xp.zeros_like(max_delta)
         high = max_delta
+        min_delta = asarray(
+            self._min_delta,
+            xp=xp,
+            like=base_log_weights,
+        )
 
         ratio_fn = (
             self._ess_ratio_for_delta
@@ -720,33 +881,38 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             else self._cess_ratio_for_delta
         )
 
-        base_ratio = ratio_fn(base_log_weights, increments, 0.0)
-        if base_ratio <= target_ess_ratio:
-            return max(self._min_delta, min(high, self._min_delta))
-
-        hi_ratio = ratio_fn(base_log_weights, increments, high)
-        if hi_ratio >= target_ess_ratio:
-            return high
-
+        base_ratio = ratio_fn(base_log_weights, increments, low)
+        high_ratio = ratio_fn(base_log_weights, increments, high)
         for _ in range(self._max_bisection_iter):
             mid = 0.5 * (low + high)
-            if high - low <= self._min_delta:
-                break
             ratio = ratio_fn(base_log_weights, increments, mid)
-            if ratio >= target_ess_ratio:
-                low = mid
-            else:
-                high = mid
+            active = high - low > min_delta
+            move_low = xp.logical_and(active, ratio >= target_ess_ratio)
+            move_high = xp.logical_and(active, ratio < target_ess_ratio)
+            low = xp.where(move_low, mid, low)
+            high = xp.where(move_high, mid, high)
 
-        delta = max(0.5 * (low + high), self._min_delta)
-        return min(delta, max_delta)
+        minimum_delta = xp.minimum(max_delta, min_delta)
+        bisected_delta = xp.minimum(
+            xp.maximum(0.5 * (low + high), min_delta),
+            max_delta,
+        )
+        return xp.where(
+            base_ratio <= target_ess_ratio,
+            minimum_delta,
+            xp.where(
+                high_ratio >= target_ess_ratio,
+                max_delta,
+                bisected_delta,
+            ),
+        )
 
     @staticmethod
     def _ess_ratio_for_delta(
         base_log_weights: Array,
         increments: Array,
-        delta: float,
-    ) -> float:
+        delta: Array,
+    ) -> Array:
         return ess_ratio_from_log_weights(
             base_log_weights + delta * increments
         )
@@ -755,13 +921,9 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     def _cess_ratio_for_delta(
         base_log_weights: Array,
         increments: Array,
-        delta: float,
-    ) -> float:
+        delta: Array,
+    ) -> Array:
         return cess_ratio_from_log_weights_and_increments(
             base_log_weights,
             delta * increments,
         )
-
-
-def _max_abs(array: Array, *, xp) -> float:
-    return float(to_numpy(xp.max(xp.abs(array))))
