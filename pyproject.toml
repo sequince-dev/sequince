@@ -12,7 +12,7 @@ authors = [{ name = "Michael J. Williams" }, { name = "Christian Chapman-Bird" }
 dependencies = [
     "scipy>=1.16",
     "matplotlib>=3.5",
-    "numpy>=1.22",
+    "numpy>=1.25.2",
     "minipcn[array-api]>=0.2.0a4",
     "array-api-compat>=1.13",
     "array-api-extra>=0.10",
