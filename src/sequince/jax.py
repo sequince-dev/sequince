@@ -19,7 +19,7 @@ def _carry_signature(tree: Any) -> tuple[Any, tuple[Any, ...]]:
     leaves, structure = jax.tree_util.tree_flatten(tree)
     leaf_signatures = []
     for leaf in leaves:
-        abstract = jax.core.get_aval(leaf)
+        abstract = jax.typeof(leaf)
         leaf_signatures.append(
             (
                 tuple(abstract.shape),
