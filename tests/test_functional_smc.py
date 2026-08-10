@@ -29,7 +29,9 @@ class CheckpointRecorder(CheckpointWriter):
         self.checkpoints.append(checkpoint)
 
 
-def _fixed_blackjax_sampler(*, checkpoint_writers=None):
+def _fixed_blackjax_sampler(
+    *, checkpoint_writers=None, particle_transform=None
+):
     from sequince import make_standard_bayesian_smc
 
     def log_prior(x, context):
@@ -49,7 +51,7 @@ def _fixed_blackjax_sampler(*, checkpoint_writers=None):
             "algorithm": "random-walk",
             "algorithm_kwargs": {"sigma": 0.1},
         },
-        particle_transform=None,
+        particle_transform=particle_transform,
         logging_frequency=0,
         checkpoint_writers=checkpoint_writers,
     )
@@ -228,6 +230,33 @@ def test_compile_functional_iteration_rejects_unstable_carry() -> None:
         )
 
 
+def test_compiled_functional_iteration_supports_affine_transform() -> None:
+    from sequince.transforms import AffineTransform
+
+    smc, _, metadata = _fixed_blackjax_sampler(particle_transform="affine")
+    state = ParticleState(jnp.arange(8.0).reshape(4, 2))
+    key = jax.random.key(42)
+
+    iteration = compile_functional_iteration(
+        smc,
+        state,
+        key,
+        metadata=metadata,
+    )
+    result, _ = smc.run_functional(
+        state,
+        num_steps=2,
+        random_state=key,
+        metadata=metadata,
+        iteration=iteration,
+    )
+
+    transform = result.context.metadata["particle_transform"]
+    assert isinstance(transform, AffineTransform)
+    assert np.asarray(transform._mean).shape == (2,)
+    assert np.asarray(transform._scale).shape == (2,)
+
+
 def test_functional_iteration_can_be_jitted() -> None:
     smc, _, _ = _fixed_blackjax_sampler()
     state = ParticleState(jnp.zeros((4, 2)))
@@ -245,6 +274,33 @@ def test_functional_iteration_can_be_jitted() -> None:
         jax.random.key_data(key),
         jax.random.key_data(next_key),
     )
+
+
+def test_functional_iteration_with_affine_transform_can_be_jitted() -> None:
+    from sequince.transforms import AffineTransform
+
+    smc, _, metadata = _fixed_blackjax_sampler(
+        particle_transform=AffineTransform()
+    )
+    state = ParticleState(jnp.zeros((4, 2)))
+    state, context = smc.initialize_functional(
+        state,
+        StepContext(
+            t=jnp.asarray(0),
+            metadata=metadata,
+        ),
+    )
+    iteration = jax.jit(smc.functional_iteration)
+
+    state, context, key, _ = iteration(state, context, jax.random.key(42))
+    state, context, _, _ = iteration(
+        state,
+        replace(context, t=context.t + 1),
+        key,
+    )
+    jax.block_until_ready(state)
+
+    assert isinstance(context.metadata["particle_transform"], AffineTransform)
 
 
 def test_functional_iteration_matches_host_iteration() -> None:

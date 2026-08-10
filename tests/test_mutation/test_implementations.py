@@ -79,8 +79,7 @@ def test_mutation_with_transform(
     standard_normal_log_prob,
 ) -> None:
     context = context_factory(shared={"temperature": 1.0})
-    transform = AffineTransform(columns=[column])
-    transform.fit(particle_state.particles)
+    transform = AffineTransform(columns=[column]).fit(particle_state.particles)
     mutated, context, output = mutation_type(
         standard_normal_log_prob,
         n_steps=n_steps,

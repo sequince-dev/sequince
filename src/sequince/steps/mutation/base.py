@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 LogProbFn = Callable[..., Array | float]
 PARTICLE_TRANSFORM_KEY = "particle_transform"
+_FUNCTIONAL_TRANSFORM_MARKER_KEY = "_functional_particle_transform"
 TransformRefit = (
     Literal["always", "per-context", "once"]
     | Callable[[Array, StepContext], bool]
@@ -150,14 +151,54 @@ class MutationStep(SMCStep):
         state: "ParticleState",
         context: StepContext,
     ) -> tuple["ParticleState", StepContext]:
-        """Placeholder for shape-complete functional transform state."""
+        """Add a fitted, shape-complete transform to the functional carry."""
+        if self._transform is None:
+            return state, context
+        if callable(self._transform_refit):
+            raise NotImplementedError(
+                "Callable transform_refit policies are not supported by the "
+                "functional API. Use 'always', 'per-context', or 'once'."
+            )
+        transform = self._fit_transform(state.particles, context)
+        context = context.with_metadata(
+            **{
+                PARTICLE_TRANSFORM_KEY: transform,
+                _FUNCTIONAL_TRANSFORM_MARKER_KEY: (),
+            }
+        )
         return state, context
+
+    def _fit_transform(
+        self,
+        particles: Array,
+        context: StepContext,
+    ) -> ParticleTransform:
+        if self._transform is None:  # pragma: no cover - guarded by callers
+            raise RuntimeError("Particle transform is not configured.")
+        xp = namespace(particles)
+        return self._transform.fit(
+            asarray(particles, xp=xp),
+            context=context,
+        )
+
+    def _prepare_functional_transform(
+        self,
+        particles: Array,
+        context: StepContext,
+    ) -> tuple[ParticleTransform, StepContext]:
+        transform = context.metadata[PARTICLE_TRANSFORM_KEY]
+        if self._transform_refit in {"always", "per-context"}:
+            transform = self._fit_transform(particles, context)
+        context = context.with_metadata(**{PARTICLE_TRANSFORM_KEY: transform})
+        return transform, context
 
     def _prepare_transform(
         self, particles: Array, context: StepContext
     ) -> tuple[ParticleTransform | None, StepContext]:
         if self._transform is None:
             return None, context
+        if _FUNCTIONAL_TRANSFORM_MARKER_KEY in context.metadata:
+            return self._prepare_functional_transform(particles, context)
         triggered = (
             bool(self._transform_refit(particles, context))
             if callable(self._transform_refit)
@@ -178,9 +219,7 @@ class MutationStep(SMCStep):
             )
         )
         if should_fit:
-            xp = namespace(particles)
-            transform = self._transform.clone()
-            transform.fit(asarray(particles, xp=xp), context=context)
+            transform = self._fit_transform(particles, context)
             self._prepared_transform = transform
             self._prepared_context = context
         else:
