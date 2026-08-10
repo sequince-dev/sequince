@@ -32,7 +32,7 @@ def test_functional_step_can_be_jitted(
     state = ParticleState(jax.random.normal(jax.random.key(1), shape=(16, 2)))
     context = StepContext(t=jnp.asarray(0))
     key = jax.random.key(42)
-    functional_step = jax.jit(step.functional_step)
+    functional_step = jax.jit(step.apply_functional)
 
     updated, next_context, next_key, output = functional_step(
         state, context, key

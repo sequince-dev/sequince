@@ -114,7 +114,7 @@ class MiniPCNMutation(MutationStep):
             acceptance=acceptance,
         )
 
-    def functional_step(
+    def apply_functional(
         self,
         state: ParticleState,
         context: StepContext,
