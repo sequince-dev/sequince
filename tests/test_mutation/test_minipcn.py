@@ -65,8 +65,10 @@ def test_functional_step_can_be_jitted(
 
 
 @pytest.mark.parametrize("step_fn", ["pcn", "tpcn"])
+@pytest.mark.parametrize("jit_compile", [False, True])
 def test_functional_smc_with_minipcn_reaches_max_temperature(
     step_fn: str,
+    jit_compile: bool,
 ) -> None:
     def log_prior(particles, context):
         del context
@@ -89,11 +91,15 @@ def test_functional_smc_with_minipcn_reaches_max_temperature(
     )
     state = ParticleState(jax.random.normal(jax.random.key(1), shape=(32, 2)))
     key = jax.random.key(42)
-    iteration = compile_functional_iteration(
-        smc,
-        state,
-        key,
-        metadata=metadata,
+    iteration = (
+        compile_functional_iteration(
+            smc,
+            state,
+            key,
+            metadata=metadata,
+        )
+        if jit_compile
+        else None
     )
 
     result, next_key = smc.run_functional(
