@@ -3,10 +3,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import sequince.transforms as transforms_module
 from sequince.steps.base import SMCStep
 from sequince.steps.control import RepeatStep, SequentialStep
 from sequince.steps.mutation import MutationStep
-from sequince.transforms import ParticleTransform
+from sequince.transforms import FlowTransform, ParticleTransform
 
 
 class CountingTransform(ParticleTransform):
@@ -77,6 +78,32 @@ def test_mutation_retains_transform_returned_by_fit(
     fitted = context.metadata["particle_transform"]
     assert isinstance(fitted, ReplacingTransform)
     assert fitted.fitted
+
+
+def test_mutation_clones_flow_once_when_fitting_transform(
+    particle_state,
+    context_factory,
+    rng,
+    shift_flow_factory,
+    monkeypatch,
+) -> None:
+    clone_calls = 0
+    clone_flow = transforms_module.clone_flow
+
+    def counting_clone(flow):
+        nonlocal clone_calls
+        clone_calls += 1
+        return clone_flow(flow)
+
+    monkeypatch.setattr(transforms_module, "clone_flow", counting_clone)
+    mutation = PreparingMutation(
+        lambda particles, context: np.zeros(particles.shape[0]),
+        transform=FlowTransform(shift_flow_factory(n_dim=2)),
+    )
+
+    mutation(particle_state, context_factory(), rng)
+
+    assert clone_calls == 1
 
 
 def test_per_context_refit_reuses_transform_across_alternating_rounds(

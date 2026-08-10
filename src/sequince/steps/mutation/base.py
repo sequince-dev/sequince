@@ -176,8 +176,10 @@ class MutationStep(SMCStep):
         if self._transform is None:  # pragma: no cover - guarded by callers
             raise RuntimeError("Particle transform is not configured.")
         xp = namespace(particles)
-        transform = self._transform.clone()
-        return transform.fit(asarray(particles, xp=xp), context=context)
+        return self._transform.fit(
+            asarray(particles, xp=xp),
+            context=context,
+        )
 
     def _prepare_functional_transform(
         self,
