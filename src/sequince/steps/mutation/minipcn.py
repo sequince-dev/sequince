@@ -132,8 +132,9 @@ class MiniPCNMutation(MutationStep):
             verbose=False,
             return_last_only=return_last_only,
         )
-        xp = namespace(history.acceptance_rate)
-        acceptance = xp.mean(history.acceptance_rate)
+        xp = namespace(latent_particles)
+        acceptance_rate = xp.asarray(history.acceptance_rate)
+        acceptance = xp.mean(acceptance_rate)
         latent_last = chain if return_last_only else chain[-1]
         latent_chain = None if return_last_only else chain[-self._n_steps :]
         updated_state, context, output = self._complete_mutation(
