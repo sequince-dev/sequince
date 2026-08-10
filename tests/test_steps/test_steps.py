@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -44,19 +45,39 @@ if TYPE_CHECKING:
 
 
 def test_step_context_request_stop(step_context: StepContext) -> None:
-    assert step_context.metadata["stop_requested"] is False
-    assert step_context.metadata["stop_immediately"] is False
-    step_context.request_stop()
-    assert step_context.metadata["stop_requested"] is True
-    assert step_context.metadata["stop_immediately"] is False
+    stopped = step_context.request_stop()
+    assert not step_context.stop_requested
+    assert stopped.stop_requested
+    assert not stopped.stop_immediately
 
 
 def test_step_context_request_stop_immediately(
     step_context: StepContext,
 ) -> None:
-    step_context.request_stop_immediately()
-    assert step_context.metadata["stop_requested"] is True
-    assert step_context.metadata["stop_immediately"] is True
+    stopped = step_context.request_stop_immediately()
+    assert stopped.stop_requested
+    assert stopped.stop_immediately
+
+
+def test_step_context_is_frozen_and_updates_metadata_copy_on_write() -> None:
+    shared = {"data": object()}
+    unchanged = np.arange(3)
+    context = StepContext(
+        t=0,
+        shared=shared,
+        metadata={"unchanged": unchanged, "replaced": 1},
+    )
+
+    updated = context.with_metadata(replaced=2, added=3)
+
+    with pytest.raises(FrozenInstanceError):
+        setattr(context, "t", 1)
+    assert updated is not context
+    assert updated.shared is shared
+    assert updated.metadata["unchanged"] is unchanged
+    assert updated.metadata["replaced"] == 2
+    assert updated.metadata["added"] == 3
+    assert context.metadata == {"unchanged": unchanged, "replaced": 1}
 
 
 def test_log_likelihood_weighting_updates_log_weights(
@@ -70,12 +91,13 @@ def test_log_likelihood_weighting_updates_log_weights(
 
     context = context_factory(t=3, observation=5)
     step = LogLikelihoodWeighting(log_like)
-    updated = step(particle_state, context, rng)
+    updated, context, output = step(particle_state, context, rng)
 
     increments = np.sum(particle_state.particles, axis=1)
     expected = particle_state.log_weights + increments
     expected -= np.log(np.sum(np.exp(expected)))
     assert np.allclose(updated.log_weights, expected)
+    np.testing.assert_allclose(output["log_weight_increment"], increments)
 
 
 def test_tempered_weighting_scales_log_likelihood(
@@ -85,14 +107,13 @@ def test_tempered_weighting_scales_log_likelihood(
     unit_log_likelihood,
 ) -> None:
     def schedule(t: int, context: StepContext) -> float:
-        context.metadata.setdefault("temperatures", []).append(t)
         return 0.5 + 0.1 * t
 
     context = context_factory(t=2, metadata={})
     step = TemperedWeighting(
         unit_log_likelihood, schedule, normalize_after=False
     )
-    updated = step(particle_state, context, rng)
+    updated, context, output = step(particle_state, context, rng)
 
     expected_increment = (0.5 + 0.1 * 2) * np.ones_like(
         particle_state.log_weights
@@ -100,7 +121,7 @@ def test_tempered_weighting_scales_log_likelihood(
     assert np.allclose(
         updated.log_weights, particle_state.log_weights + expected_increment
     )
-    assert context.metadata["temperatures"] == [2]
+    assert output["temperature"] == pytest.approx(0.7)
 
 
 def test_fixed_tempered_weighting_updates_metadata_and_context(
@@ -115,7 +136,7 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
         temperature_increment=0.25,
         normalize_after=False,
     )
-    updated = step(particle_state, context, rng)
+    updated, context, _ = step(particle_state, context, rng)
 
     assert updated.metadata["temperature"] == pytest.approx(0.25)
     assert context.metadata["temperature"] == pytest.approx(0.25)
@@ -146,7 +167,7 @@ def test_tempering_diagnostics_support_weighted_particles(
         temperature_increment=0.4,
     )
 
-    updated = step(normalized, context, rng)
+    updated, context, _ = step(normalized, context, rng)
 
     base_weights = normalized.weights
     scaled_ratios = np.exp(0.4 * log_increments - np.max(0.4 * log_increments))
@@ -191,8 +212,8 @@ def test_tempered_weighting_reuses_attached_evaluation(
         temperature_increment=0.25,
     )
 
-    state = step(state, context, rng)
-    state = step(state, context, rng)
+    state, context, _ = step(state, context, rng)
+    state, context, _ = step(state, context, rng)
 
     assert state.evaluation is not None
     assert calls == {"prior": 1, "likelihood": 1}
@@ -240,7 +261,7 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
             temperature_increment=0.25,
         )
 
-    updated = IncrementalWeighting(
+    updated, context, _ = IncrementalWeighting(
         target,
         normalize_after=False,
     )(particle_state, context, rng)
@@ -280,7 +301,7 @@ def test_tempered_weighting_can_refresh_only_likelihood(
         refresh_components={"log_likelihood"},
     )
 
-    updated = step(
+    updated, _, _ = step(
         state,
         context_factory(t=1, metadata={"temperature": 0.0}),
         rng,
@@ -344,8 +365,8 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
     stop_step = None
     for t in range(20):
         context = context_factory(t=t)
-        state = step(state, context, rng)
-        if context.metadata["stop_requested"]:
+        state, context, _ = step(state, context, rng)
+        if context.stop_requested:
             stop_step = t
             break
 
@@ -357,8 +378,8 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
         state.metadata["temperature"]
     )
     assert "temperature_delta" in context.metadata
-    assert context.metadata["stop_requested"] is True
-    assert context.metadata["stop_immediately"] is False
+    assert context.stop_requested
+    assert not context.stop_immediately
 
 
 @pytest.mark.parametrize("criterion", ["ess", "cess"])
@@ -395,8 +416,10 @@ def test_adaptive_tempered_weighting_supports_evolving_target(
         max_bisection_iter=60,
     )
 
-    fixed_step(state, fixed_context, rng)
-    updated = scheduled_step(state, scheduled_context, rng)
+    _, fixed_context, _ = fixed_step(state, fixed_context, rng)
+    updated, scheduled_context, _ = scheduled_step(
+        state, scheduled_context, rng
+    )
 
     assert schedule_calls == [(0.0, 4)]
     assert (
@@ -450,7 +473,7 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
     state = particle_state.with_updates(metadata={"temperature": 1.0})
     context = context_factory(metadata={"temperature": 1.0})
 
-    result_state = step(state, context, rng)
+    result_state, context, output = step(state, context, rng)
 
     assert np.array_equal(result_state.particles, state.particles)
     assert result_state.metadata["temperature"] == 1.0
@@ -459,14 +482,19 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
         ess_ratio_from_log_weights(state.log_weights)
     )
     assert result_state.metadata["cess_ratio"] == 1.0
-    assert context.metadata["stop_requested"] is True
-    assert context.metadata["stop_immediately"] is True
+    assert context.stop_requested
+    assert context.stop_immediately
     assert context.metadata["temperature"] == 1.0
     assert context.metadata["temperature_delta"] == 0.0
     assert context.metadata["ess_ratio"] == pytest.approx(
         ess_ratio_from_log_weights(state.log_weights)
     )
     assert context.metadata["cess_ratio"] == 1.0
+    assert output["target_ess_ratio"] == pytest.approx(0.7)
+    np.testing.assert_array_equal(
+        output["log_weight_increment"],
+        np.zeros_like(state.log_weights),
+    )
 
 
 def test_tempered_posterior_custom_increment_is_used_by_weighting(
@@ -480,10 +508,6 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
             *,
             evaluation=None,
         ) -> np.ndarray:
-            context.metadata["custom_increment_called"] = True
-            context.metadata["received_proposal_override"] = (
-                context.metadata.get(self.log_proposal_override_key)
-            )
             return np.full(particles.shape[0], 2.0)
 
     posterior = CustomPosterior(
@@ -507,10 +531,9 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
         normalize_after=False,
     )
 
-    updated = step(particle_state, context, rng)
+    updated, context, _ = step(particle_state, context, rng)
 
-    assert context.metadata["custom_increment_called"] is True
-    assert context.metadata["received_proposal_override"] is proposal_override
+    assert context.metadata["custom_proposal_override"] is proposal_override
     expected = particle_state.log_weights + 0.5
     assert np.allclose(updated.log_weights, expected)
 
@@ -521,8 +544,9 @@ def test_systematic_resampling_skips_when_not_required(
     normalized, _ = particle_state.normalize()
     context = context_factory()
     step = SystematicResampling(ess_threshold=0.2, always_resample=False)
-    result = step(normalized, context, rng)
+    result, context, output = step(normalized, context, rng)
     assert result is normalized  # no resampling expected
+    assert output["resampled"] is False
 
 
 @pytest.mark.parametrize("resampled", [False, True])
@@ -534,16 +558,21 @@ def test_mutate_if_resampled(
 ) -> None:
     class TrackingMutation(SMCStep):
         def apply(self, state, context, rng):
-            context.metadata["mutation_called"] = True
-            return state.with_updates(particles=state.particles + 1.0)
+            context = context.with_metadata(mutation_called=True)
+            return (
+                state.with_updates(particles=state.particles + 1.0),
+                context,
+                "called",
+            )
 
     context = context_factory(metadata={"resampled": resampled})
     step = MutateIfResampled(TrackingMutation())
-    updated = step(particle_state, context, rng)
+    updated, context, output = step(particle_state, context, rng)
 
-    assert context.metadata["mutation_skipped"] is not resampled
-    assert updated.metadata["mutation_skipped"] is not resampled
+    assert "mutation_skipped" not in context.metadata
+    assert "mutation_skipped" not in updated.metadata
     assert context.metadata.get("mutation_called", False) is resampled
+    assert output.executed is resampled
     expected_particles = (
         particle_state.particles + 1.0
         if resampled
@@ -557,7 +586,7 @@ def test_multinomial_resampling_resamples_particles(
 ) -> None:
     context = context_factory()
     step = MultinomialResampling(always_resample=True)
-    resampled = step(particle_state, context, rng)
+    resampled, context, output = step(particle_state, context, rng)
 
     assert resampled.particles.shape == particle_state.particles.shape
     assert np.allclose(
@@ -567,6 +596,7 @@ def test_multinomial_resampling_resamples_particles(
         ),
     )
     assert "ancestors" in resampled.metadata
+    assert output["resampled"] is True
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
@@ -584,7 +614,7 @@ def test_resampling_preserves_array_backend(
     particles = case.particles
     backend_ns = namespace(particles)
 
-    updated = step_type(always_resample=True)(
+    updated, _, _ = step_type(always_resample=True)(
         case.state(),
         context_factory(),
         case.rng(1234),
@@ -600,10 +630,8 @@ def test_adapt_gaussian_proposal_updates_scale(
     context_factory,
     rng,
 ) -> None:
-    metadata = dict(particle_state.metadata)
-    metadata["waste_free_acceptance"] = 0.6
-    state = particle_state.with_updates(metadata=metadata)
-    context = context_factory(metadata=metadata)
+    state = particle_state
+    context = context_factory(metadata={"waste_free_acceptance": 0.6})
 
     adapter = AdaptGaussianProposal(
         initial_scale=0.5,
@@ -612,16 +640,12 @@ def test_adapt_gaussian_proposal_updates_scale(
         scale_key="proposal_scale",
         min_scale=0.05,
         max_scale=5.0,
-        scale_metadata_key="proposal_scale",
     )
 
-    updated = adapter(state, context, rng)
+    updated, context, _ = adapter(state, context, rng)
 
-    assert updated.metadata["proposal_scale"] > 0.5
-    assert (
-        context.metadata["proposal_scale"]
-        == updated.metadata["proposal_scale"]
-    )
+    assert updated is state
+    assert context.metadata["proposal_scale"] > 0.5
 
 
 def test_adapt_gaussian_proposal_adds_covariance(
@@ -636,7 +660,7 @@ def test_adapt_gaussian_proposal_adds_covariance(
         covariance_jitter=1e-5,
     )
 
-    adapter(particle_state, context, rng)
+    _, context, _ = adapter(particle_state, context, rng)
 
     cov = context.metadata["proposal_cov"]
     mean = context.metadata["proposal_mean"]
@@ -656,18 +680,15 @@ def test_waste_free_resample_move_returns_uniform_weights(
     proposal = GaussianRandomWalk(scale=0.5)
     step = WasteFreeResampleMove(standard_normal_log_prob, proposal)
 
-    updated = step(particle_state, context, rng)
+    updated, context, output = step(particle_state, context, rng)
 
     n = particle_state.particles.shape[0]
     assert np.allclose(updated.log_weights, -np.log(n))
-    assert "waste_free_acceptance" in updated.metadata
-    assert updated.metadata["waste_free_proposal_repeats"] == 1
-    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 1
-    total_selected = (
-        updated.metadata["waste_free_selected_parents"]
-        + updated.metadata["waste_free_selected_proposals"]
-    )
+    assert "waste_free_acceptance" not in updated.metadata
+    assert output["proposal_repeats"] == 1
+    total_selected = output["selected_parents"] + output["selected_proposals"]
     assert total_selected == n
+    assert len(output["acceptance_by_round"]) == 1
 
 
 def test_waste_free_resample_move_handles_one_dimensional_particles(
@@ -693,11 +714,11 @@ def test_waste_free_resample_move_handles_one_dimensional_particles(
         resample_ancestors=False,
     )
 
-    updated = step(state, context, rng)
+    updated, context, output = step(state, context, rng)
     assert updated.particles.shape == particles.shape
     assert np.allclose(updated.log_weights, -np.log(n))
-    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 1
-    assert updated.metadata["waste_free_proposal_repeats"] == 1
+    assert len(output["acceptance_by_round"]) == 1
+    assert output["proposal_repeats"] == 1
 
 
 def test_waste_free_resample_move_multiple_proposals(
@@ -713,18 +734,18 @@ def test_waste_free_resample_move_multiple_proposals(
         proposals_per_particle=3,
     )
 
-    updated = step(particle_state, context, rng)
+    updated, context, output = step(particle_state, context, rng)
 
     n = particle_state.particles.shape[0]
     assert np.allclose(updated.log_weights, -np.log(n))
-    assert updated.metadata["waste_free_proposal_repeats"] == 3
-    assert len(updated.metadata["waste_free_acceptance_by_round"]) == 3
-    assert len(updated.metadata["waste_free_selected_proposals_by_round"]) == 3
+    assert output["proposal_repeats"] == 3
+    assert len(output["acceptance_by_round"]) == 3
+    assert len(output["selected_proposals_by_round"]) == 3
     assert (
-        sum(updated.metadata["waste_free_selected_proposals_by_round"])
-        == updated.metadata["waste_free_selected_proposals"]
+        sum(output["selected_proposals_by_round"])
+        == output["selected_proposals"]
     )
-    assert context.metadata["waste_free_total_proposals"] == n * 3
+    assert output["total_proposals"] == n * 3
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
@@ -746,7 +767,7 @@ def test_waste_free_resample_move_preserves_array_backend(
         GaussianRandomWalk(scale=0.4),
         proposals_per_particle=2,
     )
-    updated = step(
+    updated, _, _ = step(
         case.state(),
         context_factory(shared={"temperature": 1.0}),
         case.rng(1234),
@@ -766,10 +787,11 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
     standard_normal_log_prob,
 ) -> None:
     context = context_factory(metadata={"proposal_scale": 0.15})
+    factory_scales = []
 
     def factory(parents: np.ndarray, ctx: StepContext) -> GaussianRandomWalk:
         scale = float(ctx.metadata.get("proposal_scale", 0.15))
-        ctx.metadata.setdefault("factory_scales", []).append(scale)
+        factory_scales.append(scale)
         return GaussianRandomWalk(scale=scale)
 
     adapter = AdaptGaussianProposal(
@@ -779,7 +801,7 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
     )
 
     # First update ensures the scale key is present.
-    adapter(particle_state, context, rng)
+    _, context, _ = adapter(particle_state, context, rng)
 
     step = WasteFreeResampleMove(
         standard_normal_log_prob,
@@ -787,12 +809,11 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
         proposals_per_particle=2,
     )
 
-    step(particle_state, context, rng)
+    _, context, _ = step(particle_state, context, rng)
 
-    assert context.metadata["factory_scales"]
+    assert factory_scales
     assert all(
-        scale == context.metadata["proposal_scale"]
-        for scale in context.metadata["factory_scales"]
+        scale == context.metadata["proposal_scale"] for scale in factory_scales
     )  # noqa: PLR2004
 
 
@@ -809,24 +830,24 @@ def test_continue_while_overrides_stop_request(
     step = ContinueWhile(predicate)
 
     context = context_factory(t=0)
-    context.request_stop_immediately()
+    context = context.request_stop_immediately()
     state = particle_state.with_updates(metadata={"temperature": 0.5})
 
-    result = step(state, context, rng)
+    result, context, _ = step(state, context, rng)
 
     assert result is state
-    assert not context.metadata["stop_requested"]
-    assert not context.metadata["stop_immediately"]
+    assert not context.stop_requested
+    assert not context.stop_immediately
 
     context_late = context_factory(t=1)
-    context_late.request_stop_immediately()
+    context_late = context_late.request_stop_immediately()
     late_state = particle_state.with_updates(metadata={"temperature": 1.0})
 
-    final_result = step(late_state, context_late, rng)
+    final_result, context_late, _ = step(late_state, context_late, rng)
 
     assert final_result is late_state
-    assert context_late.metadata["stop_requested"] is True
-    assert context_late.metadata["stop_immediately"] is True
+    assert context_late.stop_requested
+    assert context_late.stop_immediately
     assert predicate_calls == [(0.5, 0), (1.0, 1)]
 
 
@@ -841,9 +862,9 @@ def test_step_every_n_iterations_applies_step_conditionally(
             state: ParticleState,
             context: StepContext,
             rng: "RandomGenerator",
-        ) -> ParticleState:
+        ) -> tuple[ParticleState, StepContext, dict[str, object]]:
             applied_iterations.append(context.t)
-            return state
+            return state, context, {}
 
     recording_step = RecordingStep(initial_scale=0.1, target_acceptance=None)
     step = PeriodicStep(recording_step, n=3, offset=1)

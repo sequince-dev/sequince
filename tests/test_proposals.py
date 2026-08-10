@@ -71,7 +71,7 @@ def test_draw_initial_state_retains_zero_density_points_for_evidence():
         context=context,
     )
 
-    weighted = FixedTemperedWeighting(
+    weighted, _, _ = FixedTemperedWeighting(
         posterior,
         temperature_increment=1.0,
     )(state, context, np.random.default_rng(123))

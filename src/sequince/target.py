@@ -4,13 +4,14 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Mapping
 from dataclasses import dataclass
+from numbers import Real
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
 from ._typing import Array
 from .array_api import asarray, namespace
 from .array_api import copy as array_copy
-from .utils import call_with_optional_context
+from .utils import call_with_optional_context, pytree_dataclass
 
 if TYPE_CHECKING:
     from .steps.context import StepContext
@@ -38,6 +39,10 @@ def _evaluate_component(
     return array
 
 
+@pytree_dataclass(
+    data_fields=("components",),
+    meta_fields=("target_id", "evaluation_key"),
+)
 @dataclass(frozen=True)
 class TargetEvaluation:
     """Named, particle-aligned values evaluated by an annealed target."""
@@ -55,7 +60,7 @@ class TargetEvaluation:
         ):
             raise TypeError("Target evaluation key must be hashable.")
         arrays = list(components.values())
-        if any(array.ndim == 0 for array in arrays):
+        if any(len(array.shape) == 0 for array in arrays):
             raise ValueError(
                 "Target evaluation arrays must be particle-aligned."
             )
@@ -393,11 +398,16 @@ class TemperedTarget(SequentialTarget):
         if evaluation is None:
             evaluation = self.evaluate(particles, context)
         self.validate_evaluation(evaluation, particles, context)
-        beta = float(context.metadata.get("temperature", 0.0))
-        if beta == 0.0:
-            return self.log_initial(particles, context, evaluation=evaluation)
-        if beta == 1.0:
-            return self.log_terminal(particles, context, evaluation=evaluation)
+        beta = context.metadata.get("temperature", 0.0)
+        if isinstance(beta, Real):
+            if beta == 0.0:
+                return self.log_initial(
+                    particles, context, evaluation=evaluation
+                )
+            if beta == 1.0:
+                return self.log_terminal(
+                    particles, context, evaluation=evaluation
+                )
         initial = self.log_initial(particles, context, evaluation=evaluation)
         terminal = self.log_terminal(particles, context, evaluation=evaluation)
         return (1.0 - beta) * initial + beta * terminal

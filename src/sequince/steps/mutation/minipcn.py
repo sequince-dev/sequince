@@ -41,7 +41,7 @@ class MiniPCNMutation(MutationStep):
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(
             log_prob_fn,
             transform=transform,
@@ -61,11 +61,11 @@ class MiniPCNMutation(MutationStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ):
+    ) -> tuple[ParticleState, StepContext, dict[str, object]]:
         from minipcn import Sampler
 
         xp = namespace(state.particles)
-        transform = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(state.particles, context)
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
@@ -101,29 +101,33 @@ class MiniPCNMutation(MutationStep):
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
-        metadata = dict(state.metadata)
-        metadata["minipcn_acceptance"] = float(
-            np.mean(history.acceptance_rate)
-        )
-        metadata["minipcn_step_fn"] = self._step_fn
-        metadata["minipcn_steps"] = self._n_steps
+        acceptance = float(np.mean(history.acceptance_rate))
 
+        stored_chain = None
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
+            stored_chain = self._inverse_chain(
                 chain[-self._n_steps :],
                 transform,
                 context,
                 like=latent_particles,
             )
 
-        acceptance = metadata["minipcn_acceptance"]
         logger.debug(
             "MiniPCNMutation completed: acceptance=%.3f after %d steps.",
             acceptance,
             self._n_steps,
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=final_evaluation,
-            metadata=metadata,
+        output = {
+            "acceptance": acceptance,
+            "step_fn": self._step_fn,
+            "steps": self._n_steps,
+            "chain": stored_chain,
+        }
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=final_evaluation,
+            ),
+            context,
+            output,
         )

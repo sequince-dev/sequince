@@ -175,13 +175,16 @@ class TemperedPosterior(TemperedTarget):
     ):
         frozen_context = StepContext(
             t=context.t,
+            next_observation_index=context.next_observation_index,
             observation=context.observation,
-            shared=copy.deepcopy(dict(context.shared)),
-            metadata=copy.deepcopy(dict(context.metadata)),
+            shared=context.shared,
+            metadata=dict(context.metadata),
+            stop_requested=context.stop_requested,
+            stop_immediately=context.stop_immediately,
         )
         if log_proposal_override is not None:
-            frozen_context.metadata[self.log_proposal_override_key] = (
-                log_proposal_override
+            frozen_context = frozen_context.with_metadata(
+                **{self.log_proposal_override_key: log_proposal_override}
             )
         log_prior = self.log_prior
         log_likelihood = self.log_likelihood
@@ -263,6 +266,7 @@ def draw_additional_samples(
         ParticleTransform instance or string identifier for the transform to use
         during mutation. If `None`, no transform is applied.
     """
+    from .result import SMCResult
     from .steps.mutation import get_mutation_step
 
     state = result.final_state
@@ -328,10 +332,15 @@ def draw_additional_samples(
         updated_result = result.append_state(resampled_state)
         return resampled_state, updated_result
 
-    state = mutation_step.apply(
+    state, context, output = mutation_step.apply(
         resampled_state,
         context,
         rng,
     )
-    updated_result = result.append_state(state)
+    updated_result = SMCResult(
+        states=[*result.states, state],
+        context=context,
+        initial_state=result.initial_state,
+        outputs=[*result.outputs, (output,)],
+    )
     return state, updated_result

@@ -5,7 +5,7 @@ from .context import (
     SMC_TRANSFORMATION_KEY,
     StepContext,
 )
-from .control import ContinueWhile
+from .control import ConditionalStepOutput, ContinueWhile
 from .log import LoggingStep
 from .meta import MetaSMCStep
 from .mutation import (
@@ -48,6 +48,7 @@ __all__ = [
     "LOG_PROPOSAL_OVERRIDE_KEY",
     "SMC_TRANSFORMATION_KEY",
     "ContinueWhile",
+    "ConditionalStepOutput",
     "ExpandDimensions",
     "MetadataTransformation",
     "SMCTransformation",

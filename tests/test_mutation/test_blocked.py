@@ -39,28 +39,23 @@ def test_blocked_metropolis_updates_each_block_and_records_diagnostics(
         store_chains=True,
     )
 
-    updated = mutation(state, context, rng)
+    updated, context, output = mutation(state, context, rng)
 
     assert np.any(updated.particles[:, :2] != particles[:, :2])
     assert np.any(updated.particles[:, 2:] != particles[:, 2:])
-    assert updated.metadata["blocked_metropolis_hastings_acceptance"] == {
+    assert output["acceptance"] == {
         "intrinsic": 1.0,
         "extrinsic": 1.0,
     }
-    assert updated.metadata["blocked_metropolis_hastings_steps"] == {
+    assert output["steps"] == {
         "intrinsic": 2,
         "extrinsic": 3,
     }
-    assert updated.metadata["blocked_metropolis_hastings_chains"][
-        "intrinsic"
-    ].shape == (2, 16, 4)
-    assert updated.metadata["blocked_metropolis_hastings_chains"][
-        "extrinsic"
-    ].shape == (3, 16, 4)
-    assert context.metadata["blocked_metropolis_hastings_acceptance"] == {
-        "intrinsic": 1.0,
-        "extrinsic": 1.0,
-    }
+    assert "blocked_metropolis_hastings_chains" not in updated.metadata
+    assert "mutation_chains" not in updated.metadata
+    assert output["chain"]["intrinsic"].shape == (2, 16, 4)
+    assert output["chain"]["extrinsic"].shape == (3, 16, 4)
+    assert "blocked_metropolis_hastings_acceptance" not in context.metadata
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])

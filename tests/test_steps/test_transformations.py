@@ -45,7 +45,7 @@ def test_dimensionality_expansion_appends_block(
         added_dimensions_key="dims_added",
         dimension_delta_key="dims_delta",
     )
-    expanded = step(initial_state, context, rng)
+    expanded, context, output = step(initial_state, context, rng)
 
     assert expanded.particles.shape[1] == initial_state.particles.shape[1] + 2
     assert np.allclose(expanded.particles[:, -2:], 0.5)
@@ -58,6 +58,7 @@ def test_dimensionality_expansion_appends_block(
     assert expanded.metadata["temperature"] == 0.8
     assert context.metadata["temperature"] == 0.8
     assert "temperature_delta" not in context.metadata
+    assert output["dims_delta"] == 2
 
 
 def test_transformation_step_composes_proposal_distribution_density(
@@ -102,8 +103,8 @@ def test_transformation_step_composes_proposal_distribution_density(
     context = context_factory()
     step = TransformationStep(ScalingTransformation(), posterior=posterior)
 
-    once_transformed = step(particle_state, context, rng)
-    twice_transformed = step(once_transformed, context, rng)
+    once_transformed, context, _ = step(particle_state, context, rng)
+    twice_transformed, context, _ = step(once_transformed, context, rng)
     transformed_log_proposal = context.metadata["transformed_log_proposal"]
     assert "log_proposal_override" not in context.metadata
 
@@ -130,7 +131,9 @@ def test_metadata_transformation_updates_state_and_context(
         },
     )
 
-    transformed = transformation.forward(particle_state, context, rng)
+    transformed, context, _ = TransformationStep(transformation)(
+        particle_state, context, rng
+    )
 
     assert transformed.metadata["stage"] == 1
     assert context.metadata["stage"] == 1

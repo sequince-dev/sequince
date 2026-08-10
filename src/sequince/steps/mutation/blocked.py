@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..._typing import Array
 from ...transforms import ParticleTransform
@@ -111,36 +111,27 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: RandomGenerator,
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         updated = state
         acceptance: dict[str, float] = {}
         acceptance_by_step: dict[str, list[float]] = {}
         chains: dict[str, Array] = {}
 
         for block, step in zip(self._blocks, self._steps, strict=True):
-            updated = step(updated, context, rng)
-            acceptance[block.name] = float(
-                updated.metadata["metropolis_hastings_acceptance"]
-            )
+            updated, context, block_output = step(updated, context, rng)
+            acceptance[block.name] = float(block_output["acceptance"])
             acceptance_by_step[block.name] = list(
-                updated.metadata["metropolis_hastings_acceptance_by_step"]
+                block_output["acceptance_by_step"]
             )
             if self._store_chains:
-                chains[block.name] = updated.metadata["mutation_chains"]
+                chains[block.name] = block_output["chain"]
 
-        metadata = dict(updated.metadata)
-        metadata["blocked_metropolis_hastings_acceptance"] = acceptance
-        metadata["blocked_metropolis_hastings_acceptance_by_step"] = (
-            acceptance_by_step
-        )
-        metadata["blocked_metropolis_hastings_steps"] = {
-            block.name: block.n_steps for block in self._blocks
+        steps = {block.name: block.n_steps for block in self._blocks}
+
+        output = {
+            "acceptance": acceptance,
+            "acceptance_by_step": acceptance_by_step,
+            "steps": steps,
+            "chain": chains if self._store_chains else None,
         }
-        if self._store_chains:
-            metadata["blocked_metropolis_hastings_chains"] = chains
-
-        context.metadata["blocked_metropolis_hastings_acceptance"] = acceptance
-        context.metadata["blocked_metropolis_hastings_acceptance_by_step"] = (
-            acceptance_by_step
-        )
-        return updated.with_updates(metadata=metadata)
+        return updated, context, output

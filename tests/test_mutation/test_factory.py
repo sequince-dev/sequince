@@ -125,7 +125,7 @@ def test_get_mutation_step_can_disable_mutation(
 
 class IdentityMutation(SMCStep):
     def apply(self, state, context: StepContext, rng: "RandomGenerator"):
-        return state
+        return state, context, None
 
 
 def test_get_mutation_step_preserves_custom_step(

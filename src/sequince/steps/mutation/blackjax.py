@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -10,6 +11,7 @@ from array_api_compat import is_jax_namespace
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...transforms import ParticleTransform
+from ...utils import pytree_dataclass
 from ..context import StepContext
 from .base import MutationStep, TransformRefit
 
@@ -22,6 +24,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 BlackJAXAlgorithmFactory = Callable[..., Any]
+
+
+@pytree_dataclass(
+    data_fields=("acceptance", "divergence", "chain"),
+    meta_fields=("algorithm", "steps"),
+)
+@dataclass(frozen=True)
+class BlackJAXOutput(Mapping[str, Any]):
+    """Fixed-structure BlackJAX diagnostics returned by a mutation step."""
+
+    acceptance: Any
+    divergence: Any
+    algorithm: str
+    steps: int
+    chain: Any
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in {
+            "acceptance",
+            "divergence",
+            "algorithm",
+            "steps",
+            "chain",
+        }:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self):
+        return iter(
+            ("acceptance", "divergence", "algorithm", "steps", "chain")
+        )
+
+    def __len__(self) -> int:
+        return 5
 
 
 class BlackJAXMutation(MutationStep):
@@ -49,8 +85,7 @@ class BlackJAXMutation(MutationStep):
     transform_refit
         Policy controlling when the particle transform is refitted.
     store_chains
-        Whether to retain all BlackJAX positions in ``mutation_chains`` state
-        metadata.
+        Whether to include all BlackJAX positions in the step output.
 
     Notes
     -----
@@ -143,6 +178,11 @@ class BlackJAXMutation(MutationStep):
     def _jax_key(rng: "RandomGenerator") -> Any:
         import jax
 
+        if rng.backend.lower() == "jax":
+            key, next_state = jax.random.split(rng.state())
+            rng.set_state(next_state)
+            return key
+
         draw = float(to_numpy(rng.random((1,)))[0])
         seed = int(draw * np.iinfo(np.uint32).max)
         return jax.random.key(seed)
@@ -152,7 +192,7 @@ class BlackJAXMutation(MutationStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, BlackJAXOutput]:
         import jax
         import jax.numpy as jnp
 
@@ -160,7 +200,7 @@ class BlackJAXMutation(MutationStep):
         if not is_jax_namespace(xp):
             raise TypeError("BlackJAXMutation requires JAX-backed particles.")
 
-        transform = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(state.particles, context)
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
@@ -202,23 +242,17 @@ class BlackJAXMutation(MutationStep):
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
-        metadata = dict(state.metadata)
         acceptance = getattr(infos, "acceptance_rate", None)
         if acceptance is None:
             acceptance = getattr(infos, "is_accepted", None)
         if acceptance is not None:
-            metadata["blackjax_acceptance"] = float(
-                to_numpy(jnp.mean(acceptance))
-            )
+            acceptance = jnp.mean(acceptance)
         divergence = getattr(infos, "is_divergent", None)
         if divergence is not None:
-            metadata["blackjax_divergence"] = float(
-                to_numpy(jnp.mean(divergence))
-            )
-        metadata["blackjax_algorithm"] = self.algorithm_name
-        metadata["blackjax_steps"] = self._n_steps
+            divergence = jnp.mean(divergence)
+        stored_chain = None
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
+            stored_chain = self._inverse_chain(
                 chain_states.position,
                 transform,
                 context,
@@ -230,8 +264,18 @@ class BlackJAXMutation(MutationStep):
             self.algorithm_name,
             self._n_steps,
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=final_evaluation,
-            metadata=metadata,
+        output = BlackJAXOutput(
+            acceptance=acceptance,
+            divergence=divergence,
+            algorithm=self.algorithm_name,
+            steps=self._n_steps,
+            chain=stored_chain,
+        )
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=final_evaluation,
+            ),
+            context,
+            output,
         )

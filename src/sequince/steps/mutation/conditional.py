@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from ..base import SMCStep
 from ..context import StepContext
+from ..control import ConditionalStepOutput
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -16,8 +17,7 @@ class MutateIfResampled(SMCStep):
 
     This step reads the ``resampled`` flag written to the current
     :class:`StepContext` by Sequince's resampling steps. The resulting
-    ``mutation_skipped`` flag is recorded in both the context and particle-state
-    metadata.
+    execution decision is returned explicitly in the step output.
 
     Parameters
     ----------
@@ -33,12 +33,15 @@ class MutateIfResampled(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, ConditionalStepOutput]:
         mutation_skipped = not bool(context.metadata.get("resampled", False))
-        context.metadata["mutation_skipped"] = mutation_skipped
-        updated = (
-            state if mutation_skipped else self.mutation(state, context, rng)
+        child_output = None
+        if mutation_skipped:
+            updated = state
+        else:
+            updated, context, child_output = self.mutation(state, context, rng)
+        return (
+            updated,
+            context,
+            ConditionalStepOutput(not mutation_skipped, child_output),
         )
-        metadata = dict(updated.metadata)
-        metadata["mutation_skipped"] = mutation_skipped
-        return updated.with_updates(metadata=metadata)

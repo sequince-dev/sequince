@@ -69,7 +69,9 @@ def test_make_standard_bayesian_smc_reaches_max_temperature(rng) -> None:
         max_temperature
     )
     assert results.final_state.evaluation is not None
-    assert metadata["temperature"] == pytest.approx(max_temperature)
+    assert results.context.metadata["temperature"] == pytest.approx(
+        max_temperature
+    )
 
 
 def test_make_standard_bayesian_smc_accepts_evolving_target(rng) -> None:

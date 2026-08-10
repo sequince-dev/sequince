@@ -16,22 +16,20 @@ def test_emcee_mutation_uses_supplied_rng(
     particle_state, context_factory, standard_normal_log_prob
 ) -> None:
     step = EmceeMutation(standard_normal_log_prob, n_steps=3, move="bilby-de")
-    first = step(
+    first, _, first_output = step(
         particle_state,
         context_factory(),
         ArrayRNG(seed=2468),
     )
-    second = step(
+    second, _, second_output = step(
         particle_state,
         context_factory(),
         ArrayRNG(seed=2468),
     )
 
     np.testing.assert_array_equal(first.particles, second.particles)
-    assert (
-        first.metadata["emcee_acceptance"]
-        == second.metadata["emcee_acceptance"]
-    )
+    assert first_output["acceptance"] == second_output["acceptance"]
+    assert first_output["steps"] == 3
 
 
 def test_emcee_mutation_resolves_bilby_de_move() -> None:

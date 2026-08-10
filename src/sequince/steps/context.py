@@ -1,64 +1,60 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any
 
-from frozendict import frozendict
-
-from .._typing import MetaData, Outputs, SharedContext
-
-if TYPE_CHECKING:
-    pass
-
+from ..utils import pytree_dataclass
 
 LOG_PROPOSAL_OVERRIDE_KEY = "log_proposal_override"
 SMC_TRANSFORMATION_KEY = "smc_transformation"
 
 
-@dataclass
+@pytree_dataclass(
+    data_fields=(
+        "t",
+        "next_observation_index",
+        "observation",
+        "shared",
+        "metadata",
+        "stop_requested",
+        "stop_immediately",
+    )
+)
+@dataclass(frozen=True)
 class StepContext:
     """Runtime context passed to each SMC step."""
 
     t: int
     next_observation_index: int = 0
     observation: Any = None
-    shared: SharedContext = field(default_factory=dict)
+    shared: Mapping[str, Any] = field(default_factory=dict)
     """Dictionary for shared user-defined context across steps.
 
     Should not be modified by steps directly; use ``metadata`` for step-to-step communication instead.
     """
-    metadata: MetaData = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     """Dictionary for step metadata that can be used for communication between steps and callbacks."""
-    outputs: Outputs = field(default_factory=dict)
-    """Dictionary for storing outputs from steps."""
+    stop_requested: bool = False
+    stop_immediately: bool = False
 
     @property
     def iteration(self) -> int:
         """Alias for ``t``."""
         return self.t
 
-    def __post_init__(self):
-        if "stop_requested" not in self.metadata:
-            self.metadata["stop_requested"] = False
-        if "stop_immediately" not in self.metadata:
-            self.metadata["stop_immediately"] = False
-        self.shared = frozendict(self.shared)
+    def with_metadata(self, **updates: Any) -> StepContext:
+        """Return a context with copy-on-write metadata updates."""
+        return replace(self, metadata={**self.metadata, **updates})
 
-    def request_stop(self) -> None:
+    def request_stop(self) -> StepContext:
         """Signal that the SMC runner should halt after this iteration."""
-        self.metadata["stop_requested"] = True
-        self.metadata["stop_immediately"] = False
+        return replace(self, stop_requested=True, stop_immediately=False)
 
-    def request_stop_immediately(self) -> None:
+    def request_stop_immediately(self) -> StepContext:
         """Signal that the SMC runner should halt immediately."""
-        self.metadata["stop_requested"] = True
-        self.metadata["stop_immediately"] = True
+        return replace(self, stop_requested=True, stop_immediately=True)
 
-    def clear_stop_request(self) -> None:
+    def clear_stop_request(self) -> StepContext:
         """Clear any pending stop request."""
-        self.metadata["stop_requested"] = False
-        self.metadata["stop_immediately"] = False
-
-    def record_output(self, key: str, value: Any) -> None:
-        """Store an output value that can be accessed by callbacks."""
-        self.outputs.setdefault(key, []).append(value)
+        return replace(self, stop_requested=False, stop_immediately=False)

@@ -12,6 +12,7 @@ from ..base import SMCStep
 from ..context import StepContext
 
 if TYPE_CHECKING:
+    from ...state import ParticleState
     from ...target import TargetEvaluation
 
 LogProbFn = Callable[..., Array | float]
@@ -97,7 +98,7 @@ class MutationStep(SMCStep):
 
     @property
     def store_chains(self) -> bool:
-        """Whether full mutation chains are retained in state metadata."""
+        """Whether full mutation chains are included in step outputs."""
         return self._store_chains
 
     @store_chains.setter
@@ -129,11 +130,34 @@ class MutationStep(SMCStep):
             evaluation,
         )
 
+    def initialize_functional_state_and_context(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+    ) -> tuple["ParticleState", StepContext]:
+        """Initialize cached target data and functional transform state."""
+        if self._target is not None:
+            evaluation = self._target.prepare_evaluation(
+                state.particles,
+                context,
+                evaluation=state.evaluation,
+            )
+            state = state.with_updates(evaluation=evaluation)
+        return self._initialize_functional_transform(state, context)
+
+    def _initialize_functional_transform(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+    ) -> tuple["ParticleState", StepContext]:
+        """Placeholder for shape-complete functional transform state."""
+        return state, context
+
     def _prepare_transform(
         self, particles: Array, context: StepContext
-    ) -> ParticleTransform | None:
+    ) -> tuple[ParticleTransform | None, StepContext]:
         if self._transform is None:
-            return None
+            return None, context
         triggered = (
             bool(self._transform_refit(particles, context))
             if callable(self._transform_refit)
@@ -145,7 +169,12 @@ class MutationStep(SMCStep):
             or triggered
             or (
                 self._transform_refit == "per-context"
-                and self._prepared_context is not context
+                and (
+                    self._prepared_context is None
+                    or self._prepared_context.t != context.t
+                    or self._prepared_context.next_observation_index
+                    != context.next_observation_index
+                )
             )
         )
         if should_fit:
@@ -159,8 +188,8 @@ class MutationStep(SMCStep):
             if cached_transform is None:  # pragma: no cover - guarded above
                 raise RuntimeError("Prepared transform cache is empty.")
             transform = cached_transform
-        context.metadata[PARTICLE_TRANSFORM_KEY] = transform
-        return transform
+        context = context.with_metadata(**{PARTICLE_TRANSFORM_KEY: transform})
+        return transform, context
 
     @staticmethod
     def _forward_transform(

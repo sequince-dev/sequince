@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
@@ -120,9 +120,9 @@ class MetropolisHastingsMutation(MutationStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         xp = namespace(state.particles)
-        transform = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(state.particles, context)
         current = asarray(
             self._forward_transform(state.particles, transform, context),
             xp=xp,
@@ -197,21 +197,17 @@ class MetropolisHastingsMutation(MutationStep):
 
         new_particles, _ = self._inverse_transform(current, transform, context)
         acceptance = accepted_total / (n_particles * self._n_steps)
-        metadata = dict(state.metadata)
-        metadata["metropolis_hastings_acceptance"] = acceptance
-        metadata["metropolis_hastings_acceptance_by_step"] = acceptance_by_step
-        metadata["metropolis_hastings_steps"] = self._n_steps
+        stored_chain = None
         if self._store_chains:
-            metadata["mutation_chains"] = self._inverse_chain(
+            stored_chain = self._inverse_chain(
                 xp.stack(chain, axis=0),
                 transform,
                 context,
                 like=state.particles,
             )
 
-        context.metadata["metropolis_hastings_acceptance"] = acceptance
-        context.metadata["metropolis_hastings_acceptance_by_step"] = (
-            acceptance_by_step
+        context = context.with_metadata(
+            metropolis_hastings_acceptance=acceptance
         )
         logger.debug(
             "MetropolisHastingsMutation completed: acceptance=%.3f after %d "
@@ -219,8 +215,17 @@ class MetropolisHastingsMutation(MutationStep):
             acceptance,
             self._n_steps,
         )
-        return state.replace_particles(
-            new_particles,
-            evaluation=current_evaluation,
-            metadata=metadata,
+        output = {
+            "acceptance": acceptance,
+            "acceptance_by_step": tuple(acceptance_by_step),
+            "steps": self._n_steps,
+            "chain": stored_chain,
+        }
+        return (
+            state.replace_particles(
+                new_particles,
+                evaluation=current_evaluation,
+            ),
+            context,
+            output,
         )

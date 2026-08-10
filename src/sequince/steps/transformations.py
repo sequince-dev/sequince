@@ -39,6 +39,15 @@ class SMCTransformation:
     ) -> "ParticleState":
         return state
 
+    def forward_with_context(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "RandomGenerator",
+    ) -> tuple["ParticleState", StepContext]:
+        """Apply the transformation and return its context explicitly."""
+        return self.forward(state, context, rng), context
+
     def inverse(
         self,
         particles: "Array",
@@ -102,12 +111,12 @@ class MetadataTransformation(SMCTransformation):
     state_metadata_fn: MetadataUpdateFn | None = None
     context_metadata_fn: MetadataUpdateFn | None = None
 
-    def forward(
+    def forward_with_context(
         self,
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext]:
         state_metadata = dict(state.metadata)
         if self.state_metadata_fn is not None:
             state_updates = self.state_metadata_fn(state, context, rng) or {}
@@ -116,8 +125,8 @@ class MetadataTransformation(SMCTransformation):
             context_updates = (
                 self.context_metadata_fn(state, context, rng) or {}
             )
-            context.metadata.update(context_updates)
-        return state.with_updates(metadata=state_metadata)
+            context = context.with_metadata(**context_updates)
+        return state.with_updates(metadata=state_metadata), context
 
 
 class TransformationStep(SMCStep):
@@ -139,9 +148,13 @@ class TransformationStep(SMCStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
-        transformed_state = self._transformation.forward(state, context, rng)
-        context.metadata[self._transformation_key] = self._transformation
+    ) -> tuple["ParticleState", StepContext, dict[str, Any]]:
+        transformed_state, context = self._transformation.forward_with_context(
+            state, context, rng
+        )
+        context_updates: dict[str, Any] = {
+            self._transformation_key: self._transformation
+        }
         if self._posterior is not None:
             override_key = self._posterior.log_proposal_override_key
             base_log_proposal = self._posterior.resolve_log_proposal(
@@ -153,8 +166,9 @@ class TransformationStep(SMCStep):
                         base_log_proposal, context
                     )
                 )
-                context.metadata[override_key] = _transformed_log_proposal
-        return transformed_state
+                context_updates[override_key] = _transformed_log_proposal
+        context = context.with_metadata(**context_updates)
+        return transformed_state, context, context_updates
 
 
 class ExpandDimensions(TransformationStep):
@@ -186,7 +200,7 @@ class ExpandDimensions(TransformationStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, dict[str, Any]]:
         xp = namespace(state.particles)
         current_particles = asarray(state.particles, xp=xp)
         if current_particles.ndim == 1:
@@ -194,7 +208,7 @@ class ExpandDimensions(TransformationStep):
                 current_particles, (current_particles.shape[0], 1)
             )
 
-        expanded_state = super().apply(state, context, rng)
+        expanded_state, context, output = super().apply(state, context, rng)
         expanded_particles = asarray(expanded_state.particles, xp=xp)
         if expanded_particles.ndim == 1:
             expanded_particles = xp.reshape(
@@ -229,11 +243,16 @@ class ExpandDimensions(TransformationStep):
         ) + max(delta, 0)
         state_metadata[self._dimension_delta_key] = delta
 
-        context.metadata[self._metadata_key] = total_dims
-        context.metadata[self._added_dimensions_key] = context.metadata.get(
-            self._added_dimensions_key, 0
-        ) + max(delta, 0)
-        context.metadata[self._dimension_delta_key] = delta
+        context_updates = {
+            self._metadata_key: total_dims,
+            self._added_dimensions_key: context.metadata.get(
+                self._added_dimensions_key, 0
+            )
+            + max(delta, 0),
+            self._dimension_delta_key: delta,
+        }
+        context = context.with_metadata(**context_updates)
+        output = {**output, **context_updates}
 
         logger.info(
             "ExpandDimensions changed dimensionality by %d (total=%d).",
@@ -241,4 +260,8 @@ class ExpandDimensions(TransformationStep):
             total_dims,
         )
 
-        return expanded_state.with_updates(metadata=state_metadata)
+        return (
+            expanded_state.with_updates(metadata=state_metadata),
+            context,
+            output,
+        )

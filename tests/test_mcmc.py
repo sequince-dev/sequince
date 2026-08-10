@@ -38,13 +38,15 @@ def test_mcmc_returns_chain_and_processed_samples(
     )
 
     assert isinstance(result, MCMCResult)
+    assert "mutation_chains" not in result.final_state.metadata
     assert result.chain.shape == (4, len(simple_particles), 2)
     assert result.samples(burn_in=1, thin=2).shape == (
         2 * len(simple_particles),
         2,
     )
     np.testing.assert_allclose(result.chain[-1], result.final_state.particles)
-    assert "metropolis_hastings_acceptance" in result.diagnostics
+    assert "acceptance" in result.diagnostics
+    assert result.diagnostics["steps"] == 4
 
 
 def test_mcmc_stores_chain_in_particle_coordinates(

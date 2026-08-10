@@ -1,7 +1,12 @@
 """Sequince: a modular Sequential Monte Carlo framework."""
+# ruff: noqa: E402
 
 import importlib.metadata
 import logging
+
+from ._scipy_compat import enable_scipy_array_api
+
+enable_scipy_array_api()
 
 from .exceptions import DegenerateWeightsError
 from .mcmc import MarkovChainMonteCarlo, MCMCResult, make_mcmc

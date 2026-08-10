@@ -26,7 +26,7 @@ class StochasticStep(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng,
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, dict[str, object]]:
         observation_value = (
             0.0 if context.observation is None else float(context.observation)
         )
@@ -39,18 +39,21 @@ class StochasticStep(SMCStep):
         metadata.setdefault("noise_sums", []).append(float(noise.sum()))
         metadata["iteration"] = context.t
 
-        context.metadata.setdefault("seen_observations", []).append(
-            context.observation
-        )
-        context.metadata["last_iteration"] = context.t
-        context.record_output("noise_sums", float(noise.sum()))
-        context.record_output("observations", context.observation)
+        context = context.with_metadata(last_iteration=context.t)
+        output = {
+            "noise_sum": float(noise.sum()),
+            "observation": context.observation,
+        }
 
-        return ParticleState(
-            particles=particles + noise + observation_value,
-            log_weights=log_weights + weight_noise + observation_value,
-            log_evidence=state.log_evidence,
-            metadata=metadata,
+        return (
+            ParticleState(
+                particles=particles + noise + observation_value,
+                log_weights=log_weights + weight_noise + observation_value,
+                log_evidence=state.log_evidence,
+                metadata=metadata,
+            ),
+            context,
+            output,
         )
 
 
@@ -60,15 +63,18 @@ class DeterministicStep(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng,
-    ) -> ParticleState:
+    ) -> tuple[ParticleState, StepContext, int]:
         metadata = copy.deepcopy(state.metadata)
         metadata["iteration"] = context.t
-        context.record_output("iterations", context.t)
-        return ParticleState(
-            particles=np.asarray(state.particles) + 1.0,
-            log_weights=np.asarray(state.log_weights),
-            log_evidence=state.log_evidence,
-            metadata=metadata,
+        return (
+            ParticleState(
+                particles=np.asarray(state.particles) + 1.0,
+                log_weights=np.asarray(state.log_weights),
+                log_evidence=state.log_evidence,
+                metadata=metadata,
+            ),
+            context,
+            context.t,
         )
 
 
@@ -79,7 +85,7 @@ class StatefulStep(SMCStep):
     def apply(self, state, context, rng):
         particles = np.asarray(state.particles) + self.counter
         self.counter += 1
-        return state.with_updates(particles=particles)
+        return state.with_updates(particles=particles), context, self.counter
 
     def state_dict(self):
         return {"counter": self.counter}
@@ -94,12 +100,8 @@ class OutputCallback:
         state: ParticleState,
         context: StepContext,
         result: SMCResult,
-    ) -> None:
-        context.metadata.setdefault("callback_iterations", []).append(
-            context.t
-        )
-        context.record_output("callback_iterations", context.t)
-        context.metadata["callback_result_length"] = len(result)
+    ) -> StepContext:
+        return context.with_metadata(callback_result_length=len(result))
 
 
 class CheckpointRecorder(CheckpointWriter):
@@ -146,7 +148,7 @@ def _assert_results_equal(
     assert left.context.observation == right.context.observation
     assert dict(left.context.shared) == dict(right.context.shared)
     assert left.context.metadata == right.context.metadata
-    assert left.context.outputs == right.context.outputs
+    assert left.outputs == right.outputs
 
 
 def _make_smc(
@@ -173,7 +175,6 @@ def _run_with_checkpoint_split(
         rng=resolve_rng(2024),
         shared_context={"alpha": 1.5},
         metadata={"tag": "run"},
-        outputs={"seed_output": ["start"]},
     )
 
     recorder = CheckpointRecorder()
@@ -184,7 +185,6 @@ def _run_with_checkpoint_split(
         rng=resolve_rng(2024),
         shared_context={"alpha": 1.5},
         metadata={"tag": "run"},
-        outputs={"seed_output": ["start"]},
     )
 
     runtime = _make_smc().resume_from(
@@ -210,7 +210,6 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
         observation={"batch": 2},
         shared={"alpha": 1.5},
         metadata={"notes": ["x"]},
-        outputs={"metric": [1.0, 2.0]},
     )
     state = particle_state.with_updates(
         metadata={"temperature": 0.5, "nested": {"value": [1, 2, 3]}}
@@ -219,6 +218,7 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
         states=[particle_state, state],
         context=context,
         initial_state=particle_state,
+        outputs=(({"metric": 1.0},), ({"metric": 2.0},)),
     )
     rng = np.random.default_rng(123)
     rng.normal(size=3)
@@ -304,20 +304,13 @@ def test_checkpoint_writers_run_after_callbacks(
         3,
     ]
     assert recorder.checkpoints[-1].next_observation_index == 3
-    assert recorder.checkpoints[-1].outputs["callback_iterations"] == [
-        0,
-        1,
-        2,
+    assert [item[0]["observation"] for item in result.outputs] == [
+        0.0,
+        1.0,
+        2.0,
     ]
-    assert recorder.checkpoints[-1].metadata["callback_iterations"] == [
-        0,
-        1,
-        2,
-    ]
-    assert (
-        recorder.checkpoints[-1].result().context.outputs
-        == result.context.outputs
-    )
+    assert recorder.checkpoints[-1].outputs == result.outputs
+    assert recorder.checkpoints[-1].metadata["callback_result_length"] == 3
 
 
 def test_hdf5_checkpoint_writer_writes_latest_checkpoint(
@@ -524,9 +517,9 @@ def test_resume_clears_transient_stop_controls(
     step = DeterministicStep()
     context = StepContext(t=0)
     if immediate:
-        context.request_stop_immediately()
+        context = context.request_stop_immediately()
     else:
-        context.request_stop()
+        context = context.request_stop()
     checkpoint = SMCCheckpoint.from_runtime(
         state=particle_state,
         context=context,

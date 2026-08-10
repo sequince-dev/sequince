@@ -27,7 +27,7 @@ def test_meta_smc_invalidates_evaluation_after_changing_proposal(
     runner.run.return_value = SMCResult([final_state], inner_context)
     outer_context = context_factory(metadata={"temperature": 0.0})
 
-    updated = MetaSMCStep(runner, posterior)(
+    updated, outer_context, _ = MetaSMCStep(runner, posterior)(
         ParticleState(particles),
         outer_context,
         rng,

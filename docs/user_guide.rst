@@ -63,8 +63,9 @@ functions. NUTS is the default algorithm:
 
 ``algorithm`` may also be ``"hmc"``, ``"random-walk"``, or a callable that
 constructs a BlackJAX sampling algorithm from the current scalar log-density.
-Acceptance and divergence diagnostics are stored in particle-state metadata as
-``blackjax_acceptance`` and ``blackjax_divergence``.
+Acceptance and divergence diagnostics are returned in the mutation step output
+under ``"acceptance"`` and ``"divergence"``. Per-iteration step outputs are
+available through ``SMCResult.outputs``.
 
 If you need full control, construct ``SequentialMonteCarlo`` manually by
 instantiating step and callback objects and supplying them in the desired order:
@@ -124,14 +125,17 @@ Custom steps and callbacks
 
 To implement bespoke step logic, derive from
 :class:`~sequince.steps.base.SMCStep`. Override the ``apply`` method to
-perform work and return the new state. The base class offers utilities for
-logging, stopping the overall run, and accessing metadata stored on the context,
-including the mutable ``StepContext.metadata`` dictionary for cross-step state.
+perform work and return ``(state, context, output)``. ``StepContext.shared``
+contains read-only user data, while current cross-step coordination values live
+in ``StepContext.metadata``. Update metadata with
+``context.with_metadata(...)`` and return the replacement context. Historical
+diagnostics belong in the explicit step output; the runner stores ordered
+per-iteration output tuples on :class:`~sequince.result.SMCResult`.
 
 Similarly, custom callbacks can be implemented by sub-classing
 :class:`~sequince.callbacks.SMCCallback` and overriding the ``apply`` method
-(with no return argument). Callbacks are provided with a history of all previous states
-in the form of a :class:`~sequince.result.SMCResults` instance, as well as the
-current context.
+Callbacks are provided with the current state, context, and result history. An
+observational callback returns ``None``; a callback that updates metadata or
+stop controls returns a replacement context.
 
 See :mod:`sequince.steps` and :mod:`sequince.callbacks` for a catalogue of the built-in components.

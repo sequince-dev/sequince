@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from .base import SMCStep, StepContext
@@ -12,6 +13,14 @@ if TYPE_CHECKING:
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConditionalStepOutput:
+    """Output from a step that may skip its child."""
+
+    executed: bool
+    child_output: Any = None
 
 
 class ContinueWhile(SMCStep):
@@ -40,9 +49,9 @@ class ContinueWhile(SMCStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, None]:
         if self._predicate(state, context):
-            context.clear_stop_request()
+            context = context.clear_stop_request()
             logger.debug(
                 "ContinueWhile cleared stop flags at iteration %d.", context.t
             )
@@ -50,7 +59,7 @@ class ContinueWhile(SMCStep):
             logger.debug(
                 "ContinueWhile left stop flags set at iteration %d.", context.t
             )
-        return state
+        return state, context, None
 
 
 class StopIf(SMCStep):
@@ -86,12 +95,12 @@ class StopIf(SMCStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, None]:
         if self._predicate(state, context):
             if self._immediate:
-                context.request_stop_immediately()
+                context = context.request_stop_immediately()
             else:
-                context.request_stop()
+                context = context.request_stop()
             logger.debug(
                 "StopIf set stop flags at iteration %d (immediate=%s).",
                 context.t,
@@ -101,7 +110,7 @@ class StopIf(SMCStep):
             logger.debug(
                 "StopIf left stop flag cleared at iteration %d.", context.t
             )
-        return state
+        return state, context, None
 
 
 class PeriodicStep(SMCStep):
@@ -133,7 +142,7 @@ class PeriodicStep(SMCStep):
         state: "ParticleState",
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> "ParticleState":
+    ) -> tuple["ParticleState", StepContext, ConditionalStepOutput]:
         if (context.t - self.offset) % self.n == 0:
             logger.debug(
                 "Applying step at iteration %d (every %d iterations with offset %d).",
@@ -141,7 +150,8 @@ class PeriodicStep(SMCStep):
                 self.n,
                 self.offset,
             )
-            return self.step.apply(state, context, rng)
+            state, context, output = self.step.apply(state, context, rng)
+            return state, context, ConditionalStepOutput(True, output)
         else:
             logger.debug(
                 "Skipping step at iteration %d (not a multiple of %d with offset %d).",
@@ -149,7 +159,7 @@ class PeriodicStep(SMCStep):
                 self.n,
                 self.offset,
             )
-            return state
+            return state, context, ConditionalStepOutput(False)
 
     def state_dict(self) -> dict[str, Any]:
         return {"step": self.step.state_dict()}
@@ -171,13 +181,15 @@ class RepeatStep(SMCStep):
         self.n = int(n)
 
     def apply(self, state, context, rng):
+        outputs = []
         for _ in range(self.n):
-            state = self.step(state, context, rng)
+            state, context, output = self.step(state, context, rng)
+            outputs.append(output)
 
-            if context.metadata.get("stop_immediately", False):
+            if context.stop_immediately:
                 break
 
-        return state
+        return state, context, tuple(outputs)
 
 
 class SequentialStep(SMCStep):
@@ -192,10 +204,12 @@ class SequentialStep(SMCStep):
         self.steps = tuple(steps)
 
     def apply(self, state, context, rng):
+        outputs = []
         for step in self.steps:
-            state = step(state, context, rng)
+            state, context, output = step(state, context, rng)
+            outputs.append(output)
 
-            if context.metadata.get("stop_immediately", False):
+            if context.stop_immediately:
                 break
 
-        return state
+        return state, context, tuple(outputs)

@@ -10,14 +10,13 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Michael J. Williams" }, { name = "Christian Chapman-Bird" }]
 dependencies = [
-    "scipy>=1.8",
+    "scipy>=1.16",
     "matplotlib>=3.5",
-    "numpy>=1.22",
-    "minipcn[array-api]>=0.2.0a4",
-    "array-api-compat>=1.5",
-    "array-api-extra",
-    "orng>=0.2.0a1",
-    "frozendict",
+    "numpy>=1.25.2",
+    "minipcn[array-api]>=0.2.0",
+    "array-api-compat>=1.13",
+    "array-api-extra>=0.10",
+    "orng>=0.2.0a2",
 ]
 dynamic = [
     "version"
@@ -37,6 +36,10 @@ include = ["sequince*"]
 [tool.setuptools_scm]
 
 [project.optional-dependencies]
+jax = [
+    "jax>0.5.3",
+    "jaxlib"
+]
 blackjax = [
     "blackjax>=1.2",
 ]
@@ -58,6 +61,8 @@ test = [
     "blackjax>=1.2",
     "emcee>=3.0",
     "h5py>=3",
+    "jax>0.5.3",
+    "jaxlib",
 ]
 dev = [
     "pre-commit",
