@@ -10,6 +10,7 @@ except Exception:  # pragma: no cover - optional dependency missing
 MutationStrategy = Literal[
     "blackjax",
     "emcee",
+    "gmm",
     "metropolis-hastings",
     "minipcn",
     "none",

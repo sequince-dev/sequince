@@ -18,6 +18,7 @@ from .emcee import (
     resolve_emcee_moves,
 )
 from .factory import get_mutation_step
+from .gmm import GaussianMixtureLike, GaussianMixtureRejuvenation
 from .kernels import (
     MUTATION_KERNELS,
     AdaptiveMaskedGaussianRandomWalk,
@@ -42,6 +43,8 @@ __all__ = [
     "EMCEE_MOVES",
     "EmceeMutation",
     "GaussianRandomWalk",
+    "GaussianMixtureLike",
+    "GaussianMixtureRejuvenation",
     "MUTATION_KERNELS",
     "MetropolisHastingsMutation",
     "MiniPCNMutation",
