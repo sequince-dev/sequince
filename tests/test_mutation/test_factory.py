@@ -7,7 +7,6 @@ import pytest
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.mutation import (
     BlackJAXMutation,
-    GaussianMixtureRejuvenation,
     GaussianRandomWalk,
     MetropolisHastingsMutation,
     MiniPCNMutation,
@@ -17,24 +16,6 @@ from sequince.steps.mutation import (
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
-
-
-class DummyGaussianMixture:
-    n_components = 2
-    converged = False
-    n_iter = 0
-
-    def fit(self, particles, context=None):
-        return self
-
-    def sample(self, n_samples, context=None, *, rng=None):
-        raise NotImplementedError
-
-    def state_dict(self):
-        return {}
-
-    def load_state_dict(self, state):
-        return None
 
 
 def test_get_mutation_step_constructs_blackjax(
@@ -61,39 +42,6 @@ def test_get_mutation_step_constructs_minipcn(
     mutation = get_mutation_step("minipcn", standard_normal_posterior)
 
     assert isinstance(mutation, MiniPCNMutation)
-
-
-def test_get_mutation_step_constructs_injected_gmm(
-    standard_normal_posterior,
-) -> None:
-    proposal = DummyGaussianMixture()
-    mutation = get_mutation_step(
-        "gmm",
-        standard_normal_posterior,
-        mutation_kwargs={"proposal": proposal},
-    )
-
-    assert isinstance(mutation, GaussianMixtureRejuvenation)
-    assert mutation.proposal is proposal
-
-
-def test_get_mutation_step_requires_gmm_proposal(
-    standard_normal_posterior,
-) -> None:
-    with pytest.raises(ValueError, match="proposal object"):
-        get_mutation_step("gmm", standard_normal_posterior)
-
-
-def test_get_mutation_step_rejects_multiple_gmm_steps(
-    standard_normal_posterior,
-) -> None:
-    with pytest.raises(ValueError, match="mutation_n_steps=1"):
-        get_mutation_step(
-            "gmm",
-            standard_normal_posterior,
-            mutation_n_steps=2,
-            mutation_kwargs={"proposal": DummyGaussianMixture()},
-        )
 
 
 def test_get_mutation_step_passes_transform_refit(
