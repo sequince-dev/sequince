@@ -46,7 +46,7 @@ def make_standard_bayesian_smc(
     always_resample: bool | None = None,
     resampling_kwargs: Dict[str, Any] | None = None,
     mutation: MutationStrategy | SMCStep = "minipcn",
-    mutation_n_steps: int = 5,
+    mutation_n_steps: int | None = None,
     mutation_kwargs: Dict[str, Any] | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
     particle_transform_kwargs: Dict[str, Any] | None = None,
@@ -106,12 +106,17 @@ def make_standard_bayesian_smc(
         Extra keyword arguments forwarded to the resampling step constructor.
     mutation:
         Mutation strategy to use. Accepts ``"blackjax"``, ``"emcee"``,
-        ``"metropolis-hastings"``, ``"minipcn"`` (default), ``"none"``, or a
-        pre-built ``SMCStep`` instance.
+        ``"gmm"``, ``"metropolis-hastings"``, ``"minipcn"`` (default),
+        ``"none"``, or a pre-built ``SMCStep`` instance. ``"gmm"`` is an
+        approximate direct redraw, not a target-invariant MCMC kernel.
     mutation_n_steps:
-        Number of mutation steps to run per iteration.
+        Number of mutation steps to run per iteration. Defaults to 5 for MCMC
+        mutations and 1 for ``"gmm"``. GMM rejuvenation rejects other values.
     mutation_kwargs:
         Extra keyword arguments forwarded to the mutation step constructor.
+        ``"gmm"`` requires an injected fitted-proposal object under
+        ``proposal`` (for example, a
+        ``sequince_proposals.GaussianMixtureProposal``).
         ``"metropolis-hastings"`` requires ``kernel`` and accepts optional
         ``kernel_kwargs``. For ``"emcee"``, ``move`` may be a named move,
         weighted move configuration, or the ``"bilby-de"`` preset.
@@ -206,6 +211,8 @@ def make_standard_bayesian_smc(
             "a ParticleTransform instance, or None."
         )
 
+    if mutation_n_steps is None and mutation != "gmm":
+        mutation_n_steps = 5
     mutation_step = get_mutation_step(
         mutation,
         target=posterior,
