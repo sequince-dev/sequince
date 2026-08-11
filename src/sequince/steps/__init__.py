@@ -13,12 +13,12 @@ from .mutation import (
     BlackJAXMutation,
     BlockedMetropolisHastingsMutation,
     EmceeMutation,
-    GaussianMixtureRejuvenation,
     MaskedGaussianRandomWalk,
     MetropolisBlock,
     MetropolisHastingsMutation,
     MiniPCNMutation,
     MutateIfResampled,
+    ProposalRejuvenation,
 )
 from .proposal import AdaptGaussianProposal
 from .resampling import (
@@ -55,12 +55,12 @@ __all__ = [
     "SMCTransformation",
     "TransformationStep",
     "EmceeMutation",
-    "GaussianMixtureRejuvenation",
     "MaskedGaussianRandomWalk",
     "MetropolisHastingsMutation",
     "MetropolisBlock",
     "MiniPCNMutation",
     "MutateIfResampled",
+    "ProposalRejuvenation",
     "MetaSMCStep",
     "AdaptGaussianProposal",
     "MultinomialResampling",

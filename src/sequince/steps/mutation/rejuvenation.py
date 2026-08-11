@@ -1,4 +1,4 @@
-"""Approximate direct rejuvenation using an injected Gaussian-mixture proposal."""
+"""Approximate direct rejuvenation using an injected generative proposal."""
 
 from __future__ import annotations
 
@@ -20,10 +20,8 @@ if TYPE_CHECKING:
     from ...state import ParticleState
 
 
-class GaussianMixtureLike(Protocol):
-    n_components: int
-    converged: bool
-    n_iter: int
+class GenerativeProposal(Protocol):
+    """Minimal fitted-proposal surface required for direct rejuvenation."""
 
     def fit(self, particles: Any, context: Any = None): ...
 
@@ -35,19 +33,13 @@ class GaussianMixtureLike(Protocol):
         rng: Any = None,
     ): ...
 
-    def state_dict(self) -> Mapping[str, Any]: ...
 
-    def load_state_dict(self, state: Mapping[str, Any]) -> None: ...
+class ProposalRejuvenation(SMCStep):
+    """Refit and directly redraw from an injected generative proposal.
 
-
-class GaussianMixtureRejuvenation(SMCStep):
-    """Refit and directly redraw from an injected Gaussian-mixture proposal.
-
-    This is an approximate rejuvenation step inspired by *Sequential Monte
-    Carlo with Gaussian Mixtures*, arXiv:2503.16028. Direct GMM samples are not,
-    in general, exact samples from the current SMC target. Unlike an MCMC
-    mutation kernel, this step does not preserve the target exactly and has no
-    Metropolis-Hastings correction.
+    Direct proposal draws are not, in general, exact samples from the current
+    SMC target. Unlike an MCMC mutation kernel, this step does not preserve the
+    target exactly and has no Metropolis-Hastings correction.
 
     A supplied transform defines the latent fitting space. Draws are mapped
     back to physical coordinates before the target evaluation is refreshed.
@@ -56,26 +48,25 @@ class GaussianMixtureRejuvenation(SMCStep):
     def __init__(
         self,
         target: SequentialTarget,
-        proposal: GaussianMixtureLike,
+        proposal: GenerativeProposal,
         *,
         transform: ParticleTransform | None = None,
     ) -> None:
         if not isinstance(target, SequentialTarget):
             raise TypeError(
-                "GaussianMixtureRejuvenation requires a SequentialTarget."
+                "ProposalRejuvenation requires a SequentialTarget."
             )
-        for method in ("fit", "sample", "state_dict", "load_state_dict"):
+        for method in ("fit", "sample"):
             if not callable(getattr(proposal, method, None)):
                 raise TypeError(
-                    "proposal must implement fit(), sample(), state_dict(), "
-                    "and load_state_dict()."
+                    "proposal must implement fit() and RNG-aware sample()."
                 )
         self._target = target
         self._proposal = proposal
         self._transform = transform
 
     @property
-    def proposal(self) -> GaussianMixtureLike:
+    def proposal(self) -> GenerativeProposal:
         """The proposal fitted by the most recent application."""
         return self._proposal
 
@@ -123,12 +114,18 @@ class GaussianMixtureRejuvenation(SMCStep):
             evaluation=evaluation,
             log_weights=log_weights,
         )
-        output = {
-            "n_components": self._proposal.n_components,
-            "converged": self._proposal.converged,
-            "n_iter": self._proposal.n_iter,
+        output: dict[str, Any] = {
+            "proposal": type(self._proposal).__name__,
             "approximate": True,
         }
+        diagnostics = getattr(self._proposal, "diagnostics", None)
+        if callable(diagnostics):
+            diagnostics = diagnostics()
+        if diagnostics is not None:
+            if not isinstance(diagnostics, Mapping):
+                raise TypeError("Proposal diagnostics must be a mapping.")
+            output.update(diagnostics)
+            output["approximate"] = True
         return updated, context, output
 
     def apply_functional(
@@ -139,20 +136,34 @@ class GaussianMixtureRejuvenation(SMCStep):
     ) -> tuple[ParticleState, StepContext, Any, Any]:
         del state, context, random_state
         raise NotImplementedError(
-            "GaussianMixtureRejuvenation uses eager fitted proposals and is "
+            "ProposalRejuvenation uses eager fitted proposals and is "
             "not supported by the functional/JIT API."
         )
 
     def state_dict(self) -> dict[str, Any]:
-        return {"proposal": dict(self._proposal.state_dict())}
+        state_fn = getattr(self._proposal, "state_dict", None)
+        if not callable(state_fn):
+            return {}
+        proposal_state = state_fn()
+        if not isinstance(proposal_state, Mapping):
+            raise TypeError("Proposal state_dict() must return a mapping.")
+        return {"proposal": dict(proposal_state)}
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        proposal_state = state.get("proposal", {})
+        if "proposal" not in state:
+            return
+        proposal_state = state["proposal"]
         if not isinstance(proposal_state, Mapping):
-            raise TypeError(
-                "GMM rejuvenation proposal state must be a mapping."
-            )
-        self._proposal.load_state_dict(proposal_state)
+            raise TypeError("Proposal rejuvenation state must be a mapping.")
+        load_fn = getattr(self._proposal, "load_state_dict", None)
+        if not callable(load_fn):
+            if proposal_state:
+                raise ValueError(
+                    f"{type(self._proposal).__name__} does not support "
+                    "checkpoint state."
+                )
+            return
+        load_fn(proposal_state)
 
 
-__all__ = ["GaussianMixtureLike", "GaussianMixtureRejuvenation"]
+__all__ = ["GenerativeProposal", "ProposalRejuvenation"]
