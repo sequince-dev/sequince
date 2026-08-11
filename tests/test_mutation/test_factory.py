@@ -141,3 +141,13 @@ def test_get_mutation_step_validates_mutation_name(
 ) -> None:
     with pytest.raises(ValueError, match="mutation must be"):
         get_mutation_step("unknown", standard_normal_posterior)  # type: ignore[arg-type]
+
+
+def test_factory_does_not_expose_proposal_rejuvenation(
+    standard_normal_posterior,
+) -> None:
+    with pytest.raises(ValueError, match="mutation must be"):
+        get_mutation_step(  # type: ignore[arg-type]
+            "proposal",
+            standard_normal_posterior,
+        )

@@ -18,6 +18,8 @@ from .flows import (
 from .utils import call_with_optional_context
 
 if TYPE_CHECKING:
+    from orng import RandomGenerator
+
     from .posterior import TemperedPosterior
     from .state import ParticleState
     from .steps.context import StepContext
@@ -40,6 +42,8 @@ class ProposalDistribution(Protocol):
         self,
         n_samples: int,
         context: StepContext | None = None,
+        *,
+        rng: RandomGenerator | int | None = None,
     ) -> Array:
         """Draw samples from the proposal distribution."""
 
@@ -47,6 +51,8 @@ class ProposalDistribution(Protocol):
         self,
         n_samples: int,
         context: StepContext | None = None,
+        *,
+        rng: RandomGenerator | int | None = None,
     ) -> tuple[Array, Array]:
         """Draw samples and return their log proposal densities."""
 
@@ -98,14 +104,20 @@ class FlowProposal(ProposalDistribution):
         self,
         n_samples: int,
         context: StepContext | None = None,
+        *,
+        rng: RandomGenerator | int | None = None,
     ) -> Array:
+        del rng
         return self._flow.sample(n_samples, context=context)
 
     def sample_and_log_prob(
         self,
         n_samples: int,
         context: StepContext | None = None,
+        *,
+        rng: RandomGenerator | int | None = None,
     ) -> tuple[Array, Array]:
+        del rng
         flow_sample_and_log_prob = getattr(
             self._flow, "sample_and_log_prob", None
         )

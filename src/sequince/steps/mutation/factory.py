@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from ...target import SequentialTarget
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from .blackjax import BlackJAXMutation
@@ -10,9 +11,6 @@ from .emcee import EmceeMutation
 from .kernels import get_mutation_kernel
 from .metropolis import MetropolisHastingsMutation
 from .minipcn import MiniPCNMutation
-
-if TYPE_CHECKING:
-    from ...target import SequentialTarget
 
 
 def get_mutation_step(

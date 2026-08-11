@@ -18,6 +18,7 @@ from .mutation import (
     MetropolisHastingsMutation,
     MiniPCNMutation,
     MutateIfResampled,
+    ProposalRejuvenation,
 )
 from .proposal import AdaptGaussianProposal
 from .resampling import (
@@ -59,6 +60,7 @@ __all__ = [
     "MetropolisBlock",
     "MiniPCNMutation",
     "MutateIfResampled",
+    "ProposalRejuvenation",
     "MetaSMCStep",
     "AdaptGaussianProposal",
     "MultinomialResampling",

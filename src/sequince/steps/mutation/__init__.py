@@ -32,6 +32,7 @@ from .kernels import (
 )
 from .metropolis import MetropolisHastingsMutation
 from .minipcn import MiniPCNMutation
+from .rejuvenation import GenerativeProposal, ProposalRejuvenation
 
 __all__ = [
     "AdaptiveMaskedGaussianRandomWalk",
@@ -42,6 +43,7 @@ __all__ = [
     "EMCEE_MOVES",
     "EmceeMutation",
     "GaussianRandomWalk",
+    "GenerativeProposal",
     "MUTATION_KERNELS",
     "MetropolisHastingsMutation",
     "MiniPCNMutation",
@@ -52,6 +54,7 @@ __all__ = [
     "MutationStep",
     "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",
+    "ProposalRejuvenation",
     "SymmetricMutationKernel",
     "TransformRefit",
     "evaluate_log_transition_ratio",
