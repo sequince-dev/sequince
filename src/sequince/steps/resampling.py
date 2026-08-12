@@ -52,7 +52,15 @@ class ResamplingStep(SMCStep):
         ess = state.effective_sample_size()
         n = state.log_weights.shape[0]
         ess_ratio = ess / n if n else 0.0
-        output: dict[str, object] = {"ess": ess, "resampled": False}
+        xp = namespace(state.log_weights)
+        output: dict[str, object] = {
+            "ess": ess,
+            "resampled": False,
+            "ancestors": xp.arange(
+                n,
+                device=get_device(state.log_weights),
+            ),
+        }
         if not self._should_resample(state):
             logger.debug(
                 "%s skipped resampling (ESS ratio=%.4f).",
@@ -70,6 +78,7 @@ class ResamplingStep(SMCStep):
         indices = self._choose_ancestors(weights, rng)
         context = context.with_metadata(ess=ess, resampled=True)
         output["resampled"] = True
+        output["ancestors"] = indices
         return state.resample(indices), context, output
 
     def _choose_ancestors(
@@ -127,11 +136,12 @@ class ResamplingStep(SMCStep):
         ess = 1.0 / xp.sum(xp.square(weights))
         rng = RandomGenerator.from_xp(xp, generator=random_state)
         indices = self._choose_ancestors(weights, rng)
-        updated = state.resample(indices, record_ancestors=False)
+        updated = state.resample(indices)
         context = context.with_metadata(ess=ess, resampled=xp.asarray(True))
         output = {
             "ess": ess,
             "resampled": xp.asarray(True),
+            "ancestors": indices,
         }
         return updated, context, rng.state(), output
 

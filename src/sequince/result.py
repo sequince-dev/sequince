@@ -4,7 +4,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import numpy as np
 from numpy.random import Generator as NumPyGenerator
@@ -27,6 +27,20 @@ def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
 
     _, ax = plt.subplots(**subplot_kwargs)
     return ax
+
+
+def _find_resampling_outputs(output: Any):
+    """Yield resampling output mappings nested in an iteration output."""
+    if isinstance(output, Mapping):
+        if "resampled" in output and "ess" in output:
+            yield output
+        for value in output.values():
+            yield from _find_resampling_outputs(value)
+    elif isinstance(output, (tuple, list)):
+        for value in output:
+            yield from _find_resampling_outputs(value)
+    elif hasattr(output, "child_output"):
+        yield from _find_resampling_outputs(output.child_output)
 
 
 @dataclass(frozen=True)
@@ -89,8 +103,27 @@ class SMCResult:
         """Return the log evidence of the final state."""
         return self.final_state.log_evidence
 
-    def log_evidence_variance(self) -> Array:
-        return self._log_evidence_variance_incremental()
+    def log_evidence_variance(
+        self,
+        method: Literal["incremental", "lee-whiteley"] = "incremental",
+    ) -> Array:
+        """Estimate the variance of the final log-evidence estimate.
+
+        ``"incremental"`` sums the per-iteration variance diagnostics. The
+        result ignores dependence between SMC iterations.
+
+        ``"lee-whiteley"`` uses the particle genealogy to estimate relative
+        evidence variance, which is also a delta-method estimate of log-evidence
+        variance. This estimator requires constant particle count and
+        multinomial resampling at every iteration. The resampling scheme is not
+        currently retained by :class:`SMCResult`, so callers are responsible for
+        ensuring that multinomial resampling was used.
+        """
+        if method == "incremental":
+            return self._log_evidence_variance_incremental()
+        if method == "lee-whiteley":
+            return self._log_evidence_variance_lee_whiteley()
+        raise ValueError(f"Unknown log-evidence variance method: {method!r}")
 
     def _log_evidence_variance_incremental(self) -> Array:
         xp = namespace(self.final_state.log_weights)
@@ -98,6 +131,90 @@ class SMCResult:
             "log_evidence_increment_variance",
         )
         return xp.sum(log_evidence_increments_variance)
+
+    def _log_evidence_variance_lee_whiteley(self) -> Array:
+        """Return the Lee--Whiteley evidence variance estimate."""
+        if len(self.outputs) != len(self.states):
+            raise ValueError(
+                "Lee-Whiteley variance estimation requires one output record "
+                "per particle state."
+            )
+
+        n_particles = self.final_state.particles.shape[0]
+        if n_particles <= 1:
+            raise ValueError(
+                "Lee-Whiteley variance estimation requires at least two "
+                "particles."
+            )
+
+        eve_indices = np.arange(n_particles)
+        for iteration, (state, output) in enumerate(
+            zip(self.states, self.outputs, strict=True)
+        ):
+            if state.particles.shape[0] != n_particles:
+                raise ValueError(
+                    "Lee-Whiteley variance estimation requires a constant "
+                    "particle count."
+                )
+
+            resampling_outputs = list(_find_resampling_outputs(output))
+            if len(resampling_outputs) != 1:
+                raise ValueError(
+                    "Lee-Whiteley variance estimation requires exactly one "
+                    f"resampling output per iteration; found "
+                    f"{len(resampling_outputs)} at iteration {iteration}."
+                )
+            if not bool(to_numpy(resampling_outputs[0]["resampled"])):
+                raise ValueError(
+                    "Lee-Whiteley variance estimation currently requires "
+                    "resampling at every iteration."
+                )
+
+            resampling_output = resampling_outputs[0]
+            if "ancestors" not in resampling_output:
+                raise ValueError(
+                    "Lee-Whiteley variance estimation requires recorded "
+                    f"ancestor indices at iteration {iteration}."
+                )
+            parents = np.asarray(to_numpy(resampling_output["ancestors"]))
+            if parents.shape != (n_particles,):
+                raise ValueError(
+                    "Ancestor indices must have shape "
+                    f"({n_particles},), got {parents.shape} at iteration "
+                    f"{iteration}."
+                )
+            if not np.issubdtype(parents.dtype, np.integer):
+                raise ValueError(
+                    "Ancestor indices must have an integer dtype."
+                )
+            if np.any((parents < 0) | (parents >= n_particles)):
+                raise ValueError(
+                    f"Ancestor indices are out of bounds at iteration {iteration}."
+                )
+            eve_indices = eve_indices[parents]
+
+        family_sizes = np.bincount(eve_indices, minlength=n_particles)
+        different_eve_pairs = n_particles**2 - np.sum(family_sizes**2)
+        correction = (n_particles / (n_particles - 1)) ** len(self.states)
+        variance = 1.0 - correction * different_eve_pairs / (
+            n_particles * (n_particles - 1)
+        )
+        xp = namespace(self.final_state.log_weights)
+        return asarray(variance, xp=xp, like=self.final_state.log_weights)
+
+    def log_evidence_standard_error(
+        self,
+        method: Literal["incremental", "lee-whiteley"] = "incremental",
+    ) -> Array:
+        """Return the standard error associated with an evidence variance."""
+        variance = self.log_evidence_variance(method=method)
+        if float(to_numpy(variance)) < 0.0:
+            raise ValueError(
+                "The estimated log-evidence variance is negative; a real "
+                "standard error cannot be computed."
+            )
+        xp = namespace(variance)
+        return xp.sqrt(variance)
 
     def log_evidence_history(self) -> Array:
         """Return the log evidence trajectory."""

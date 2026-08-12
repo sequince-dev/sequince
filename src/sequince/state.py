@@ -137,9 +137,7 @@ class ParticleState:
             **updates,
         )
 
-    def resample(
-        self, indices: Array, *, record_ancestors: bool = True
-    ) -> "ParticleState":
+    def resample(self, indices: Array) -> "ParticleState":
         """Return a resampled state using the provided ancestor indices."""
         xp = namespace(self.particles, indices)
         particles = asarray(self.particles, xp=xp)
@@ -161,11 +159,7 @@ class ParticleState:
                 if self.evaluation is None
                 else self.evaluation.take(indices)
             ),
-            metadata=(
-                dict(self.metadata, ancestors=indices)
-                if record_ancestors
-                else self.metadata
-            ),
+            metadata=self.metadata,
         )
 
     def to_dict(self) -> dict[str, Any]:
