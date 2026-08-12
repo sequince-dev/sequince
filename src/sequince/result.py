@@ -147,7 +147,6 @@ class SMCResult:
                 "particles."
             )
 
-        eve_indices = np.arange(n_particles)
         for iteration, (state, output) in enumerate(
             zip(self.states, self.outputs, strict=True)
         ):
@@ -191,9 +190,18 @@ class SMCResult:
                 raise ValueError(
                     f"Ancestor indices are out of bounds at iteration {iteration}."
                 )
-            eve_indices = eve_indices[parents]
-
-        family_sizes = np.bincount(eve_indices, minlength=n_particles)
+        initial_ancestor_indices = np.asarray(
+            to_numpy(self.final_state.initial_ancestor_indices)
+        )
+        if initial_ancestor_indices.shape != (n_particles,):
+            raise ValueError(
+                "Initial ancestor indices must match the final particle "
+                "population."
+            )
+        family_sizes = np.bincount(
+            initial_ancestor_indices,
+            minlength=n_particles,
+        )
         different_eve_pairs = n_particles**2 - np.sum(family_sizes**2)
         correction = (n_particles / (n_particles - 1)) ** len(self.states)
         variance = 1.0 - correction * different_eve_pairs / (

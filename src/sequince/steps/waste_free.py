@@ -284,6 +284,9 @@ class WasteFreeResampleMove(SMCStep):
                 new_particles,
                 evaluation=new_evaluation,
                 log_weights=log_weights,
+                initial_ancestor_indices=state.initial_ancestor_indices[
+                    selected_ancestor_indices
+                ],
             ),
             context,
             output,

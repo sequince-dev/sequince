@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     data_fields=(
         "particles",
         "log_weights",
+        "initial_ancestor_indices",
         "log_evidence",
         "evaluation",
         "metadata",
@@ -37,6 +38,7 @@ class ParticleState:
 
     particles: Array
     log_weights: Array
+    initial_ancestor_indices: Array
     log_evidence: float = 0.0
     evaluation: TargetEvaluation | None = None
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
@@ -46,6 +48,7 @@ class ParticleState:
         particles: Array,
         log_weights: Array | Real | None = None,
         log_evidence: float = 0.0,
+        initial_ancestor_indices: Array | None = None,
         evaluation: TargetEvaluation | None = None,
         metadata: MutableMapping[str, Any] | None = None,
     ) -> None:
@@ -56,6 +59,18 @@ class ParticleState:
         self.log_evidence = log_evidence
         self.evaluation = evaluation
         self.metadata = dict(metadata or {})
+        n = particles.shape[0]
+        if initial_ancestor_indices is None:
+            xp = namespace(self.particles)
+            initial_ancestor_indices = xp.arange(
+                n,
+                device=get_device(self.particles),
+            )
+        if initial_ancestor_indices.shape != (n,):
+            raise ValueError(
+                "Initial ancestor indices must match the particle population."
+            )
+        self.initial_ancestor_indices = initial_ancestor_indices
         if (
             evaluation is not None
             and evaluation.n_particles != particles.shape[0]
@@ -66,7 +81,6 @@ class ParticleState:
 
         if log_weights is None or isinstance(log_weights, Real):
             xp = namespace(self.particles)
-            n = self.particles.shape[0]
             value = (
                 float(log_weights) if log_weights is not None else -math.log(n)
             )
@@ -77,11 +91,19 @@ class ParticleState:
 
     def copy(self) -> "ParticleState":
         """Return a copy of the state preserving the array backend."""
-        xp = namespace(self.particles, self.log_weights)
+        xp = namespace(
+            self.particles,
+            self.log_weights,
+            self.initial_ancestor_indices,
+        )
         return ParticleState(
             particles=array_copy(self.particles, xp=xp),
             log_weights=array_copy(self.log_weights, xp=xp),
             log_evidence=self.log_evidence,
+            initial_ancestor_indices=array_copy(
+                self.initial_ancestor_indices,
+                xp=xp,
+            ),
             evaluation=(
                 None if self.evaluation is None else self.evaluation.copy()
             ),
@@ -154,6 +176,10 @@ class ParticleState:
             particles=new_particles,
             log_weights=log_weights,
             log_evidence=self.log_evidence,
+            initial_ancestor_indices=asarray(
+                self.initial_ancestor_indices,
+                xp=xp,
+            )[indices],
             evaluation=(
                 None
                 if self.evaluation is None
@@ -169,6 +195,7 @@ class ParticleState:
             "particles": copied.particles,
             "log_weights": copied.log_weights,
             "log_evidence": copied.log_evidence,
+            "initial_ancestor_indices": copied.initial_ancestor_indices,
             "evaluation": (
                 None
                 if copied.evaluation is None
@@ -184,7 +211,13 @@ class ParticleState:
             raise TypeError("ParticleState payload must be a mapping.")
         missing = {
             key
-            for key in ("particles", "log_weights", "log_evidence", "metadata")
+            for key in (
+                "particles",
+                "log_weights",
+                "log_evidence",
+                "initial_ancestor_indices",
+                "metadata",
+            )
             if key not in payload
         }
         if missing:
@@ -203,6 +236,7 @@ class ParticleState:
             particles=payload["particles"],
             log_weights=payload["log_weights"],
             log_evidence=float(payload["log_evidence"]),
+            initial_ancestor_indices=payload["initial_ancestor_indices"],
             evaluation=evaluation,
             metadata=copy.deepcopy(payload["metadata"]),
         )
