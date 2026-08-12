@@ -87,7 +87,7 @@ def test_with_updates_returns_new_state(particle_state: ParticleState) -> None:
     assert particle_state.log_evidence == 0.0
 
 
-def test_resample_returns_equal_weights_and_track_ancestors(
+def test_resample_returns_equal_weights_and_preserves_metadata(
     particle_state: ParticleState, rng
 ) -> None:
     n = len(particle_state.log_weights)
@@ -97,7 +97,7 @@ def test_resample_returns_equal_weights_and_track_ancestors(
     assert np.allclose(
         resampled.log_weights, np.full(len(indices), -np.log(len(indices)))
     )
-    assert np.array_equal(resampled.metadata["ancestors"], indices)
+    assert "ancestors" not in resampled.metadata
     assert resampled.metadata.get(
         "temperature"
     ) == particle_state.metadata.get("temperature")

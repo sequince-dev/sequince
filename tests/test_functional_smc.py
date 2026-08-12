@@ -269,6 +269,8 @@ def test_functional_iteration_can_be_jitted() -> None:
     assert updated.particles.shape == (4, 2)
     assert context.metadata["temperature"] == pytest.approx(0.5)
     assert len(outputs) == 3
+    assert outputs[1]["ancestors"].shape == (4,)
+    assert "ancestors" not in updated.metadata
     assert outputs[-1]["algorithm"] == "random-walk"
     assert not np.array_equal(
         jax.random.key_data(key),

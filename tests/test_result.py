@@ -1,6 +1,8 @@
+import numpy as np
 import pytest
 
 from sequince.result import MetaSMCResult, SMCResult
+from sequince.state import ParticleState
 from sequince.steps.meta import META_SMC_OUTPUT_KEY
 
 
@@ -40,6 +42,87 @@ def test_smc_results_append_state(
 
 def test_smc_results_summary(dummy_results: SMCResult) -> None:
     dummy_results.summary()
+
+
+def test_log_evidence_variance_dispatches_to_incremental(
+    particle_state, context_factory
+) -> None:
+    states = [
+        particle_state.with_updates(
+            metadata={"log_evidence_increment_variance": variance}
+        )
+        for variance in (0.1, 0.2)
+    ]
+    result = SMCResult(states, context_factory())
+
+    assert result.log_evidence_variance() == pytest.approx(0.3)
+    assert result.log_evidence_variance(method="incremental") == pytest.approx(
+        0.3
+    )
+    assert result.log_evidence_standard_error() == pytest.approx(np.sqrt(0.3))
+
+
+def test_lee_whiteley_log_evidence_variance(context_factory) -> None:
+    ancestors = (
+        np.array([0, 0, 2, 3]),
+        np.array([0, 1, 1, 3]),
+    )
+    states = [ParticleState(particles=np.zeros((4, 1))) for _ in ancestors]
+    outputs = tuple(
+        ({"ess": 4.0, "resampled": True, "ancestors": indices},)
+        for indices in ancestors
+    )
+    result = SMCResult(states, context_factory(), outputs=outputs)
+
+    assert result.log_evidence_variance(
+        method="lee-whiteley"
+    ) == pytest.approx(1.0 / 9.0)
+    assert result.log_evidence_standard_error(
+        method="lee-whiteley"
+    ) == pytest.approx(1.0 / 3.0)
+
+
+def test_lee_whiteley_requires_resampling_every_iteration(
+    context_factory,
+) -> None:
+    state = ParticleState(particles=np.zeros((4, 1)))
+    result = SMCResult(
+        [state],
+        context_factory(),
+        outputs=(
+            (
+                {
+                    "ess": 4.0,
+                    "resampled": False,
+                    "ancestors": np.arange(4),
+                },
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="resampling at every iteration"):
+        result.log_evidence_variance(method="lee-whiteley")
+
+
+def test_lee_whiteley_requires_ancestor_indices(context_factory) -> None:
+    state = ParticleState(particles=np.zeros((4, 1)))
+    result = SMCResult(
+        [state],
+        context_factory(),
+        outputs=(({"ess": 4.0, "resampled": True},),),
+    )
+
+    with pytest.raises(ValueError, match="recorded ancestor indices"):
+        result.log_evidence_variance(method="lee-whiteley")
+
+
+def test_log_evidence_variance_rejects_unknown_method(
+    dummy_results: SMCResult,
+) -> None:
+    with pytest.raises(
+        ValueError, match="Unknown log-evidence variance method"
+    ):
+        dummy_results.log_evidence_variance(method="unknown")  # type: ignore[arg-type]
 
 
 def test_get_meta_smc_results(dummy_results: SMCResult) -> None:
