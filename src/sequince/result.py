@@ -85,6 +85,20 @@ class SMCResult:
         """Return the last state produced by the run."""
         return self.states[-1]
 
+    def log_evidence(self) -> Array:
+        """Return the log evidence of the final state."""
+        return self.final_state.log_evidence
+
+    def log_evidence_variance(self) -> Array:
+        return self._log_evidence_variance_incremental()
+
+    def _log_evidence_variance_incremental(self) -> Array:
+        xp = namespace(self.final_state.log_weights)
+        log_evidence_increments_variance = self.metadata_history(
+            "log_evidence_increment_variance",
+        )
+        return xp.sum(log_evidence_increments_variance)
+
     def log_evidence_history(self) -> Array:
         """Return the log evidence trajectory."""
         reference = self.final_state.log_weights if self.states else None
