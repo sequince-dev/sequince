@@ -67,7 +67,16 @@ def test_lee_whiteley_log_evidence_variance(context_factory) -> None:
         np.array([0, 0, 2, 3]),
         np.array([0, 1, 1, 3]),
     )
-    states = [ParticleState(particles=np.zeros((4, 1))) for _ in ancestors]
+    initial_ancestor_indices = np.arange(4)
+    states = []
+    for indices in ancestors:
+        initial_ancestor_indices = initial_ancestor_indices[indices]
+        states.append(
+            ParticleState(
+                particles=np.zeros((4, 1)),
+                initial_ancestor_indices=initial_ancestor_indices,
+            )
+        )
     outputs = tuple(
         ({"ess": 4.0, "resampled": True, "ancestors": indices},)
         for indices in ancestors
