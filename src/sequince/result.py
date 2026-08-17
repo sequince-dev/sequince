@@ -28,8 +28,8 @@ EvidenceVarianceMethod = Literal[
 
 
 @dataclass(frozen=True)
-class FixedLagVarianceDiagnostics:
-    """Diagnostics for a fixed-lag genealogical evidence estimate.
+class FixedLagLeeWhiteleyDiagnostics:
+    """Diagnostics for a fixed-lag Lee--Whiteley evidence estimate.
 
     ``family_ess`` is the inverse concentration of the final normalized
     particle weight carried by each selected-lag ancestor. It lies between one
@@ -163,7 +163,9 @@ class SMCResult:
                 raise ValueError(
                     "method='fixed-lag-lee-whiteley' requires a non-negative lag."
                 )
-            variance, _ = self._log_evidence_variance_fixed_lag(lag)
+            variance, _ = self._log_evidence_variance_fixed_lag_lee_whiteley(
+                lag
+            )
             return variance
         raise ValueError(f"Unknown log-evidence variance method: {method!r}")
 
@@ -256,14 +258,15 @@ class SMCResult:
         """Return validated parent maps for resampling events in run order."""
         if len(self.outputs) != len(self.states):
             raise ValueError(
-                "Fixed-lag variance estimation requires one output record per "
-                "particle state."
+                "Fixed-lag Lee-Whiteley variance estimation requires one "
+                "output record per particle state."
             )
 
         n_particles = self.final_state.particles.shape[0]
         if n_particles <= 1:
             raise ValueError(
-                "Fixed-lag variance estimation requires at least two particles."
+                "Fixed-lag Lee-Whiteley variance estimation requires at least "
+                "two particles."
             )
 
         history: list[np.ndarray] = []
@@ -272,14 +275,14 @@ class SMCResult:
         ):
             if state.particles.shape[0] != n_particles:
                 raise ValueError(
-                    "Fixed-lag variance estimation requires a constant "
-                    "particle count."
+                    "Fixed-lag Lee-Whiteley variance estimation requires a "
+                    "constant particle count."
                 )
             resampling_outputs = list(_find_resampling_outputs(output))
             if len(resampling_outputs) != 1:
                 raise ValueError(
-                    "Fixed-lag variance estimation requires exactly one "
-                    f"resampling output per iteration; found "
+                    "Fixed-lag Lee-Whiteley variance estimation requires "
+                    "exactly one resampling output per iteration; found "
                     f"{len(resampling_outputs)} at iteration {iteration}."
                 )
             resampling_output = resampling_outputs[0]
@@ -287,8 +290,9 @@ class SMCResult:
                 continue
             if "ancestors" not in resampling_output:
                 raise ValueError(
-                    "Fixed-lag variance estimation requires recorded ancestor "
-                    f"indices at resampling iteration {iteration}."
+                    "Fixed-lag Lee-Whiteley variance estimation requires "
+                    "recorded ancestor indices at resampling iteration "
+                    f"{iteration}."
                 )
             parents = np.asarray(to_numpy(resampling_output["ancestors"]))
             if parents.shape != (n_particles,):
@@ -308,11 +312,11 @@ class SMCResult:
             history.append(parents)
         return history
 
-    def _log_evidence_variance_fixed_lag(
+    def _log_evidence_variance_fixed_lag_lee_whiteley(
         self,
         lag: int,
-    ) -> tuple[Array, FixedLagVarianceDiagnostics]:
-        """Return the recent-genealogy evidence variance and diagnostics."""
+    ) -> tuple[Array, FixedLagLeeWhiteleyDiagnostics]:
+        """Return the fixed-lag Lee--Whiteley variance and diagnostics."""
         if isinstance(lag, bool) or not isinstance(lag, int) or lag < 0:
             raise ValueError("lag must be a non-negative integer.")
 
@@ -341,7 +345,7 @@ class SMCResult:
             variance = float(-np.expm1(log_pair_term))
         # Finite-sample genealogical estimators can be slightly negative before
         # their large-N limit; preserve that signal rather than clipping it.
-        diagnostics = FixedLagVarianceDiagnostics(
+        diagnostics = FixedLagLeeWhiteleyDiagnostics(
             requested_lag=lag,
             traced_resampling_events=traced,
             total_resampling_events=len(history),
@@ -354,12 +358,14 @@ class SMCResult:
             diagnostics,
         )
 
-    def fixed_lag_variance_diagnostics(
+    def fixed_lag_lee_whiteley_diagnostics(
         self,
         lag: int,
-    ) -> FixedLagVarianceDiagnostics:
-        """Return ancestry-depletion diagnostics for an Olsson--Douc lag."""
-        _, diagnostics = self._log_evidence_variance_fixed_lag(lag)
+    ) -> FixedLagLeeWhiteleyDiagnostics:
+        """Return diagnostics for a fixed-lag Lee--Whiteley estimate."""
+        _, diagnostics = self._log_evidence_variance_fixed_lag_lee_whiteley(
+            lag
+        )
         return diagnostics
 
     def log_evidence_standard_error(

@@ -161,7 +161,7 @@ def test_fixed_lag_lee_whiteley_counts_resampling_events(
             method="fixed-lag-lee-whiteley", lag=1
         )
 
-    diagnostics = result.fixed_lag_variance_diagnostics(lag=1)
+    diagnostics = result.fixed_lag_lee_whiteley_diagnostics(lag=1)
     assert diagnostics.requested_lag == 1
     assert diagnostics.traced_resampling_events == 1
     assert diagnostics.total_resampling_events == 3
@@ -169,7 +169,7 @@ def test_fixed_lag_lee_whiteley_counts_resampling_events(
     assert diagnostics.family_ess == pytest.approx(8.0 / 3.0)
 
 
-def test_olsson_douc_full_lag_matches_lee_whiteley(
+def test_fixed_lag_lee_whiteley_full_lag_matches_lee_whiteley(
     context_factory,
 ) -> None:
     ancestors = (
@@ -202,7 +202,7 @@ def test_olsson_douc_full_lag_matches_lee_whiteley(
 
 
 @pytest.mark.parametrize("lag", [-1, 1.5, True])
-def test_olsson_douc_rejects_invalid_lag(
+def test_fixed_lag_lee_whiteley_rejects_invalid_lag(
     dummy_results: SMCResult,
     lag,
 ) -> None:
@@ -213,12 +213,12 @@ def test_olsson_douc_rejects_invalid_lag(
         )
 
 
-def test_olsson_douc_requires_lag(dummy_results: SMCResult) -> None:
+def test_fixed_lag_lee_whiteley_requires_lag(dummy_results: SMCResult) -> None:
     with pytest.raises(ValueError, match="requires a non-negative lag"):
         dummy_results.log_evidence_variance(method="fixed-lag-lee-whiteley")
 
 
-def test_olsson_douc_handles_no_resampling_and_terminal_weights(
+def test_fixed_lag_lee_whiteley_handles_no_resampling_and_terminal_weights(
     context_factory,
 ) -> None:
     state = ParticleState(
@@ -237,7 +237,7 @@ def test_olsson_douc_handles_no_resampling_and_terminal_weights(
     assert result.log_evidence_standard_error(
         method="fixed-lag-lee-whiteley", lag=4
     ) == pytest.approx(0.5)
-    diagnostics = result.fixed_lag_variance_diagnostics(lag=4)
+    diagnostics = result.fixed_lag_lee_whiteley_diagnostics(lag=4)
     assert diagnostics.traced_resampling_events == 0
     assert diagnostics.total_resampling_events == 0
     assert diagnostics.distinct_ancestors == 2
