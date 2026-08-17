@@ -368,7 +368,7 @@ class SMCResult:
         )
         return diagnostics
 
-    def log_evidence_standard_error(
+    def log_evidence_error(
         self,
         method: EvidenceVarianceMethod = "incremental",
         *,

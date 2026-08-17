@@ -59,7 +59,7 @@ def test_log_evidence_variance_dispatches_to_incremental(
     assert result.log_evidence_variance(method="incremental") == pytest.approx(
         0.3
     )
-    assert result.log_evidence_standard_error() == pytest.approx(np.sqrt(0.3))
+    assert result.log_evidence_error() == pytest.approx(np.sqrt(0.3))
 
 
 def test_lee_whiteley_log_evidence_variance(context_factory) -> None:
@@ -86,9 +86,9 @@ def test_lee_whiteley_log_evidence_variance(context_factory) -> None:
     assert result.log_evidence_variance(
         method="lee-whiteley"
     ) == pytest.approx(1.0 / 9.0)
-    assert result.log_evidence_standard_error(
-        method="lee-whiteley"
-    ) == pytest.approx(1.0 / 3.0)
+    assert result.log_evidence_error(method="lee-whiteley") == pytest.approx(
+        1.0 / 3.0
+    )
 
 
 def test_lee_whiteley_requires_resampling_every_iteration(
@@ -157,9 +157,7 @@ def test_fixed_lag_lee_whiteley_counts_resampling_events(
         method="fixed-lag-lee-whiteley", lag=3
     ) == pytest.approx(-5.0 / 27.0)
     with pytest.raises(ValueError, match="variance is negative"):
-        result.log_evidence_standard_error(
-            method="fixed-lag-lee-whiteley", lag=1
-        )
+        result.log_evidence_error(method="fixed-lag-lee-whiteley", lag=1)
 
     diagnostics = result.fixed_lag_lee_whiteley_diagnostics(lag=1)
     assert diagnostics.requested_lag == 1
@@ -234,7 +232,7 @@ def test_fixed_lag_lee_whiteley_handles_no_resampling_and_terminal_weights(
     assert result.log_evidence_variance(
         method="fixed-lag-lee-whiteley", lag=4
     ) == pytest.approx(0.25)
-    assert result.log_evidence_standard_error(
+    assert result.log_evidence_error(
         method="fixed-lag-lee-whiteley", lag=4
     ) == pytest.approx(0.5)
     diagnostics = result.fixed_lag_lee_whiteley_diagnostics(lag=4)
