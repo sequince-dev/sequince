@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,33 @@ def _find_resampling_outputs(output: Any):
             yield from _find_resampling_outputs(value)
     elif hasattr(output, "child_output"):
         yield from _find_resampling_outputs(output.child_output)
+
+
+def _warn_if_resampling_is_not_multinomial(
+    resampling_outputs: Sequence[Mapping[str, Any]],
+    *,
+    estimator: str,
+    stacklevel: int,
+) -> None:
+    """Warn once when an estimator's resampling assumption is not verified."""
+    schemes: set[str] = set()
+    for output in resampling_outputs:
+        if not bool(to_numpy(output["resampled"])):
+            continue
+        scheme = output.get("resampling_scheme")
+        schemes.add(
+            scheme if isinstance(scheme, str) and scheme else "unknown"
+        )
+
+    if schemes and schemes != {"multinomial"}:
+        observed = ", ".join(sorted(schemes))
+        warnings.warn(
+            f"{estimator} assumes multinomial resampling, but the recorded "
+            f"resampling schemes were: {observed}. The returned estimate may "
+            "not be theoretically justified.",
+            UserWarning,
+            stacklevel=stacklevel,
+        )
 
 
 @dataclass(frozen=True)
@@ -191,6 +219,7 @@ class SMCResult:
                 "particles."
             )
 
+        recorded_resampling_outputs: list[Mapping[str, Any]] = []
         for iteration, (state, output) in enumerate(
             zip(self.states, self.outputs, strict=True)
         ):
@@ -214,6 +243,7 @@ class SMCResult:
                 )
 
             resampling_output = resampling_outputs[0]
+            recorded_resampling_outputs.append(resampling_output)
             if "ancestors" not in resampling_output:
                 raise ValueError(
                     "Lee-Whiteley variance estimation requires recorded "
@@ -234,6 +264,11 @@ class SMCResult:
                 raise ValueError(
                     f"Ancestor indices are out of bounds at iteration {iteration}."
                 )
+        _warn_if_resampling_is_not_multinomial(
+            recorded_resampling_outputs,
+            estimator="Lee-Whiteley variance estimation",
+            stacklevel=4,
+        )
         initial_ancestor_indices = np.asarray(
             to_numpy(self.final_state.initial_ancestor_indices)
         )
@@ -270,6 +305,7 @@ class SMCResult:
             )
 
         history: list[np.ndarray] = []
+        recorded_resampling_outputs: list[Mapping[str, Any]] = []
         for iteration, (state, output) in enumerate(
             zip(self.states, self.outputs, strict=True)
         ):
@@ -286,6 +322,7 @@ class SMCResult:
                     f"{len(resampling_outputs)} at iteration {iteration}."
                 )
             resampling_output = resampling_outputs[0]
+            recorded_resampling_outputs.append(resampling_output)
             if not bool(to_numpy(resampling_output["resampled"])):
                 continue
             if "ancestors" not in resampling_output:
@@ -310,6 +347,11 @@ class SMCResult:
                     f"Ancestor indices are out of bounds at iteration {iteration}."
                 )
             history.append(parents)
+        _warn_if_resampling_is_not_multinomial(
+            recorded_resampling_outputs,
+            estimator="Fixed-lag Lee-Whiteley variance estimation",
+            stacklevel=5,
+        )
         return history
 
     def _log_evidence_variance_fixed_lag_lee_whiteley(
