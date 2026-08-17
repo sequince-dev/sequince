@@ -125,7 +125,7 @@ def test_lee_whiteley_requires_ancestor_indices(context_factory) -> None:
         result.log_evidence_variance(method="lee-whiteley")
 
 
-def test_olsson_douc_fixed_lag_counts_resampling_events(
+def test_fixed_lag_lee_whiteley_counts_resampling_events(
     context_factory,
 ) -> None:
     ancestors = (
@@ -148,16 +148,18 @@ def test_olsson_douc_fixed_lag_counts_resampling_events(
     result = SMCResult(states, context_factory(), outputs=outputs)
 
     assert result.log_evidence_variance(
-        method="olsson-douc", lag=0
+        method="fixed-lag-lee-whiteley", lag=0
     ) == pytest.approx(0.0)
     assert result.log_evidence_variance(
-        method="olsson-douc", lag=1
+        method="fixed-lag-lee-whiteley", lag=1
     ) == pytest.approx(-1.0 / 9.0)
     assert result.log_evidence_variance(
-        method="olsson-douc", lag=3
+        method="fixed-lag-lee-whiteley", lag=3
     ) == pytest.approx(-5.0 / 27.0)
     with pytest.raises(ValueError, match="variance is negative"):
-        result.log_evidence_standard_error(method="olsson-douc", lag=1)
+        result.log_evidence_standard_error(
+            method="fixed-lag-lee-whiteley", lag=1
+        )
 
     diagnostics = result.fixed_lag_variance_diagnostics(lag=1)
     assert diagnostics.requested_lag == 1
@@ -191,7 +193,7 @@ def test_olsson_douc_full_lag_matches_lee_whiteley(
     result = SMCResult(states, context_factory(), outputs=outputs)
 
     fixed_lag = result.log_evidence_variance(
-        method="olsson-douc",
+        method="fixed-lag-lee-whiteley",
         lag=100,
     )
     assert fixed_lag == pytest.approx(
@@ -206,14 +208,14 @@ def test_olsson_douc_rejects_invalid_lag(
 ) -> None:
     with pytest.raises(ValueError, match="non-negative integer"):
         dummy_results.log_evidence_variance(
-            method="olsson-douc",
+            method="fixed-lag-lee-whiteley",
             lag=lag,
         )
 
 
 def test_olsson_douc_requires_lag(dummy_results: SMCResult) -> None:
     with pytest.raises(ValueError, match="requires a non-negative lag"):
-        dummy_results.log_evidence_variance(method="olsson-douc")
+        dummy_results.log_evidence_variance(method="fixed-lag-lee-whiteley")
 
 
 def test_olsson_douc_handles_no_resampling_and_terminal_weights(
@@ -230,10 +232,10 @@ def test_olsson_douc_handles_no_resampling_and_terminal_weights(
     )
 
     assert result.log_evidence_variance(
-        method="olsson-douc", lag=4
+        method="fixed-lag-lee-whiteley", lag=4
     ) == pytest.approx(0.25)
     assert result.log_evidence_standard_error(
-        method="olsson-douc", lag=4
+        method="fixed-lag-lee-whiteley", lag=4
     ) == pytest.approx(0.5)
     diagnostics = result.fixed_lag_variance_diagnostics(lag=4)
     assert diagnostics.traced_resampling_events == 0

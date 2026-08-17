@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 EvidenceVarianceMethod = Literal[
     "incremental",
     "lee-whiteley",
-    "olsson-douc",
+    "fixed-lag-lee-whiteley",
 ]
 
 
@@ -144,27 +144,24 @@ class SMCResult:
         currently retained by :class:`SMCResult`, so callers are responsible for
         ensuring that multinomial resampling was used.
 
-        ``"olsson-douc"`` applies Olsson--Douc recent-ancestor truncation to
-        the Lee--Whiteley normalising-constant estimator. ``lag`` counts actual
-        resampling events, not SMC iterations. The result estimates the recent
-        terms of the asymptotic relative variance of the evidence, interpreted
-        as log-evidence variance by the delta method. A shorter lag avoids
-        genealogical collapse but omits older variance contributions; a longer
-        lag reduces this truncation bias while approaching the less stable
-        full-genealogy estimator. As for ``"lee-whiteley"``, multinomial
-        resampling and particle-wise mutation are theoretical requirements that
-        cannot currently be verified from a result object.
+        ``"fixed-lag-lee-whiteley"`` This estimator truncates the Lee-Whiteley
+        genealogical normalising-constant variance estimate to the most recent
+        ``lag`` resampling events. Particle families are therefore defined by
+        their ancestors ``lag`` resampling events before the final population
+        rather than by their time-zero ancestors.
         """
-        if method != "olsson-douc" and lag is not None:
-            raise ValueError("lag is only valid for method='olsson-douc'.")
+        if method != "fixed-lag-lee-whiteley" and lag is not None:
+            raise ValueError(
+                "lag is only valid for method='fixed-lag-lee-whiteley'."
+            )
         if method == "incremental":
             return self._log_evidence_variance_incremental()
         if method == "lee-whiteley":
             return self._log_evidence_variance_lee_whiteley()
-        if method == "olsson-douc":
+        if method == "fixed-lag-lee-whiteley":
             if lag is None:
                 raise ValueError(
-                    "method='olsson-douc' requires a non-negative lag."
+                    "method='fixed-lag-lee-whiteley' requires a non-negative lag."
                 )
             variance, _ = self._log_evidence_variance_fixed_lag(lag)
             return variance
