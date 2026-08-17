@@ -21,6 +21,8 @@ class NormalizingFlow(Protocol):
         self,
         particles: Array,
         context: StepContext | None = None,
+        *,
+        rng: Any = None,
         **kwargs: Any,
     ) -> "NormalizingFlow": ...
 
@@ -46,6 +48,8 @@ class NormalizingFlow(Protocol):
         self,
         num_samples: int = 1,
         context: StepContext | None = None,
+        *,
+        rng: Any = None,
     ) -> Array:
         """Draw samples from the flow distribution."""
         ...

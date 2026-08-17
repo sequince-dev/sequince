@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 class GenerativeProposal(Protocol):
     """Minimal fitted-proposal surface required for direct rejuvenation."""
 
-    def fit(self, particles: Any, context: Any = None): ...
+    def fit(self, particles: Any, context: Any = None, *, rng: Any = None): ...
 
     def sample(
         self,
@@ -85,7 +85,11 @@ class ProposalRejuvenation(SMCStep):
             latent, _ = fitted_transform.forward(physical, context=context)
             latent = asarray(latent, xp=xp, like=physical)
 
-        fitted_proposal = self._proposal.fit(latent, context=context)
+        fitted_proposal = self._proposal.fit(
+            latent,
+            context=context,
+            rng=rng,
+        )
         if fitted_proposal is not None:
             self._proposal = fitted_proposal
         new_latent = self._proposal.sample(
