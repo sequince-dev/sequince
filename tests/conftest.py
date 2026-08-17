@@ -77,11 +77,20 @@ class ShiftFlow:
         self.n_dim = n_dim
         self.shift = shift
         self.fitted_particles: np.ndarray | None = None
+        self.fit_kwargs: dict[str, Any] = {}
+        self.fit_rng: Any = None
 
     def fit(
-        self, values: Any, context: Any = None, **kwargs: Any
+        self,
+        values: Any,
+        context: Any = None,
+        *,
+        rng: Any = None,
+        **kwargs: Any,
     ) -> ShiftFlow:
-        del context, kwargs
+        del context
+        self.fit_rng = rng
+        self.fit_kwargs = dict(kwargs)
         self.fitted_particles = np.asarray(values, dtype=float).copy()
         return self
 
@@ -106,8 +115,14 @@ class ShiftFlow:
             array = array[:, np.newaxis]
         return -0.5 * np.sum((array - self.shift) ** 2, axis=1)
 
-    def sample(self, num_samples: int = 1, context: Any = None) -> np.ndarray:
-        del context
+    def sample(
+        self,
+        num_samples: int = 1,
+        context: Any = None,
+        *,
+        rng: Any = None,
+    ) -> np.ndarray:
+        del context, rng
         return np.full((num_samples, self.n_dim), self.shift, dtype=float)
 
     def state_dict(self) -> dict[str, np.ndarray | None]:
