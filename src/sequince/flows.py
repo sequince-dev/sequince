@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._typing import Array
+from .array_api import asarray
 
 if TYPE_CHECKING:
     from .steps.context import StepContext
@@ -57,7 +58,7 @@ class NormalizingFlow(Protocol):
 
 def flow_asarray(flow: NormalizingFlow, array: Any):
     """Cast ``array`` to the backend array type expected by ``flow``."""
-    return flow.xp.asarray(array)
+    return asarray(array, xp=flow.xp)
 
 
 def flow_state_dict(flow: NormalizingFlow) -> dict[str, Any]:
