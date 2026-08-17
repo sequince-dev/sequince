@@ -602,6 +602,7 @@ def test_multinomial_resampling_resamples_particles(
     assert "ancestors" not in resampled.metadata
     assert "ancestors" in output
     assert output["resampled"] is True
+    assert output["resampling_scheme"] == "multinomial"
 
 
 def test_skipped_resampling_outputs_identity_ancestors(
@@ -620,6 +621,7 @@ def test_skipped_resampling_outputs_identity_ancestors(
     np.testing.assert_array_equal(updated.log_weights, state.log_weights)
     assert context.metadata["resampled"] is False
     assert output["resampled"] is False
+    assert output["resampling_scheme"] == "multinomial"
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
@@ -646,6 +648,7 @@ def test_resampling_preserves_array_backend(
     assert namespace(updated.particles) is backend_ns
     assert namespace(updated.log_weights) is backend_ns
     assert namespace(output["ancestors"]) is backend_ns
+    assert output["resampling_scheme"] == step_type.resampling_scheme
 
 
 def test_adapt_gaussian_proposal_updates_scale(

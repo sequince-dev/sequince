@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -78,7 +80,14 @@ def test_lee_whiteley_log_evidence_variance(context_factory) -> None:
             )
         )
     outputs = tuple(
-        ({"ess": 4.0, "resampled": True, "ancestors": indices},)
+        (
+            {
+                "ess": 4.0,
+                "resampled": True,
+                "resampling_scheme": "multinomial",
+                "ancestors": indices,
+            },
+        )
         for indices in ancestors
     )
     result = SMCResult(states, context_factory(), outputs=outputs)
@@ -103,6 +112,7 @@ def test_lee_whiteley_requires_resampling_every_iteration(
                 {
                     "ess": 4.0,
                     "resampled": False,
+                    "resampling_scheme": "systematic",
                     "ancestors": np.arange(4),
                 },
             ),
@@ -125,6 +135,66 @@ def test_lee_whiteley_requires_ancestor_indices(context_factory) -> None:
         result.log_evidence_variance(method="lee-whiteley")
 
 
+@pytest.mark.parametrize(
+    ("scheme", "warning_match"),
+    [("systematic", "systematic"), (None, "unknown")],
+)
+def test_lee_whiteley_warns_for_non_multinomial_or_unknown_resampling(
+    context_factory,
+    scheme: str | None,
+    warning_match: str,
+) -> None:
+    state = ParticleState(
+        particles=np.zeros((4, 1)),
+        initial_ancestor_indices=np.array([0, 0, 2, 3]),
+    )
+    output: dict[str, object] = {
+        "ess": 4.0,
+        "resampled": True,
+        "ancestors": np.array([0, 0, 2, 3]),
+    }
+    if scheme is not None:
+        output["resampling_scheme"] = scheme
+    result = SMCResult(
+        [state],
+        context_factory(),
+        outputs=((output,),),
+    )
+
+    with pytest.warns(UserWarning, match=warning_match) as warning_records:
+        result.log_evidence_variance(method="lee-whiteley")
+
+    assert len(warning_records) == 1
+
+
+def test_fixed_lag_lee_whiteley_warns_for_non_multinomial_resampling(
+    context_factory,
+) -> None:
+    state = ParticleState(particles=np.zeros((4, 1)))
+    result = SMCResult(
+        [state],
+        context_factory(),
+        outputs=(
+            (
+                {
+                    "ess": 4.0,
+                    "resampled": True,
+                    "resampling_scheme": "stratified",
+                    "ancestors": np.array([0, 0, 2, 3]),
+                },
+            ),
+        ),
+    )
+
+    with pytest.warns(UserWarning, match="stratified") as warning_records:
+        result.log_evidence_variance(
+            method="fixed-lag-lee-whiteley",
+            lag=1,
+        )
+
+    assert len(warning_records) == 1
+
+
 def test_fixed_lag_lee_whiteley_counts_resampling_events(
     context_factory,
 ) -> None:
@@ -140,6 +210,7 @@ def test_fixed_lag_lee_whiteley_counts_resampling_events(
             {
                 "ess": 4.0,
                 "resampled": indices is not None,
+                "resampling_scheme": "multinomial",
                 "ancestors": (np.arange(4) if indices is None else indices),
             },
         )
@@ -185,7 +256,14 @@ def test_fixed_lag_lee_whiteley_full_lag_matches_lee_whiteley(
             )
         )
     outputs = tuple(
-        ({"ess": 4.0, "resampled": True, "ancestors": indices},)
+        (
+            {
+                "ess": 4.0,
+                "resampled": True,
+                "resampling_scheme": "multinomial",
+                "ancestors": indices,
+            },
+        )
         for indices in ancestors
     )
     result = SMCResult(states, context_factory(), outputs=outputs)
@@ -226,12 +304,25 @@ def test_fixed_lag_lee_whiteley_handles_no_resampling_and_terminal_weights(
     result = SMCResult(
         [state],
         context_factory(),
-        outputs=(({"ess": 1.6, "resampled": False}, None),),
+        outputs=(
+            (
+                {
+                    "ess": 1.6,
+                    "resampled": False,
+                    "resampling_scheme": "systematic",
+                },
+                None,
+            ),
+        ),
     )
 
-    assert result.log_evidence_variance(
-        method="fixed-lag-lee-whiteley", lag=4
-    ) == pytest.approx(0.25)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        variance = result.log_evidence_variance(
+            method="fixed-lag-lee-whiteley", lag=4
+        )
+
+    assert variance == pytest.approx(0.25)
     assert result.log_evidence_error(
         method="fixed-lag-lee-whiteley", lag=4
     ) == pytest.approx(0.5)

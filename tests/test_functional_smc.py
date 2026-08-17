@@ -271,6 +271,7 @@ def test_functional_iteration_can_be_jitted() -> None:
     assert context.metadata["temperature"] == pytest.approx(0.5)
     assert len(outputs) == 3
     assert outputs[1]["ancestors"].shape == (4,)
+    assert outputs[1]["resampling_scheme"] == "systematic"
     assert "ancestors" not in updated.metadata
     assert outputs[-1]["algorithm"] == "random-walk"
     assert not np.array_equal(
