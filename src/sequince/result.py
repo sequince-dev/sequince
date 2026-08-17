@@ -20,6 +20,29 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
 
+EvidenceVarianceMethod = Literal[
+    "incremental",
+    "lee-whiteley",
+    "olsson-douc",
+]
+
+
+@dataclass(frozen=True)
+class FixedLagVarianceDiagnostics:
+    """Diagnostics for a fixed-lag genealogical evidence estimate.
+
+    ``family_ess`` is the inverse concentration of the final normalized
+    particle weight carried by each selected-lag ancestor. It lies between one
+    and ``distinct_ancestors``; low values indicate genealogical depletion.
+    """
+
+    requested_lag: int
+    traced_resampling_events: int
+    total_resampling_events: int
+    distinct_ancestors: int
+    family_ess: float
+
+
 def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
     if ax is not None:
         return ax
@@ -105,7 +128,9 @@ class SMCResult:
 
     def log_evidence_variance(
         self,
-        method: Literal["incremental", "lee-whiteley"] = "incremental",
+        method: EvidenceVarianceMethod = "incremental",
+        *,
+        lag: int | None = None,
     ) -> Array:
         """Estimate the variance of the final log-evidence estimate.
 
@@ -118,11 +143,31 @@ class SMCResult:
         multinomial resampling at every iteration. The resampling scheme is not
         currently retained by :class:`SMCResult`, so callers are responsible for
         ensuring that multinomial resampling was used.
+
+        ``"olsson-douc"`` applies Olsson--Douc recent-ancestor truncation to
+        the Lee--Whiteley normalising-constant estimator. ``lag`` counts actual
+        resampling events, not SMC iterations. The result estimates the recent
+        terms of the asymptotic relative variance of the evidence, interpreted
+        as log-evidence variance by the delta method. A shorter lag avoids
+        genealogical collapse but omits older variance contributions; a longer
+        lag reduces this truncation bias while approaching the less stable
+        full-genealogy estimator. As for ``"lee-whiteley"``, multinomial
+        resampling and particle-wise mutation are theoretical requirements that
+        cannot currently be verified from a result object.
         """
+        if method != "olsson-douc" and lag is not None:
+            raise ValueError("lag is only valid for method='olsson-douc'.")
         if method == "incremental":
             return self._log_evidence_variance_incremental()
         if method == "lee-whiteley":
             return self._log_evidence_variance_lee_whiteley()
+        if method == "olsson-douc":
+            if lag is None:
+                raise ValueError(
+                    "method='olsson-douc' requires a non-negative lag."
+                )
+            variance, _ = self._log_evidence_variance_fixed_lag(lag)
+            return variance
         raise ValueError(f"Unknown log-evidence variance method: {method!r}")
 
     def _log_evidence_variance_incremental(self) -> Array:
@@ -210,12 +255,124 @@ class SMCResult:
         xp = namespace(self.final_state.log_weights)
         return asarray(variance, xp=xp, like=self.final_state.log_weights)
 
+    def _resampling_history(self) -> list[np.ndarray]:
+        """Return validated parent maps for resampling events in run order."""
+        if len(self.outputs) != len(self.states):
+            raise ValueError(
+                "Fixed-lag variance estimation requires one output record per "
+                "particle state."
+            )
+
+        n_particles = self.final_state.particles.shape[0]
+        if n_particles <= 1:
+            raise ValueError(
+                "Fixed-lag variance estimation requires at least two particles."
+            )
+
+        history: list[np.ndarray] = []
+        for iteration, (state, output) in enumerate(
+            zip(self.states, self.outputs, strict=True)
+        ):
+            if state.particles.shape[0] != n_particles:
+                raise ValueError(
+                    "Fixed-lag variance estimation requires a constant "
+                    "particle count."
+                )
+            resampling_outputs = list(_find_resampling_outputs(output))
+            if len(resampling_outputs) != 1:
+                raise ValueError(
+                    "Fixed-lag variance estimation requires exactly one "
+                    f"resampling output per iteration; found "
+                    f"{len(resampling_outputs)} at iteration {iteration}."
+                )
+            resampling_output = resampling_outputs[0]
+            if not bool(to_numpy(resampling_output["resampled"])):
+                continue
+            if "ancestors" not in resampling_output:
+                raise ValueError(
+                    "Fixed-lag variance estimation requires recorded ancestor "
+                    f"indices at resampling iteration {iteration}."
+                )
+            parents = np.asarray(to_numpy(resampling_output["ancestors"]))
+            if parents.shape != (n_particles,):
+                raise ValueError(
+                    "Ancestor indices must have shape "
+                    f"({n_particles},), got {parents.shape} at iteration "
+                    f"{iteration}."
+                )
+            if not np.issubdtype(parents.dtype, np.integer):
+                raise ValueError(
+                    "Ancestor indices must have an integer dtype."
+                )
+            if np.any((parents < 0) | (parents >= n_particles)):
+                raise ValueError(
+                    f"Ancestor indices are out of bounds at iteration {iteration}."
+                )
+            history.append(parents)
+        return history
+
+    def _log_evidence_variance_fixed_lag(
+        self,
+        lag: int,
+    ) -> tuple[Array, FixedLagVarianceDiagnostics]:
+        """Return the recent-genealogy evidence variance and diagnostics."""
+        if isinstance(lag, bool) or not isinstance(lag, int) or lag < 0:
+            raise ValueError("lag must be a non-negative integer.")
+
+        history = self._resampling_history()
+        n_particles = self.final_state.particles.shape[0]
+        traced = min(lag, len(history))
+        ancestors = np.arange(n_particles)
+        if traced:
+            for parents in reversed(history[-traced:]):
+                ancestors = parents[ancestors]
+
+        weights = np.asarray(to_numpy(self.final_state.weights), dtype=float)
+        family_weights = np.bincount(
+            ancestors,
+            weights=weights,
+            minlength=n_particles,
+        )
+        family_concentration = float(np.sum(family_weights**2))
+        different_family_mass = max(0.0, 1.0 - family_concentration)
+        if different_family_mass == 0.0:
+            variance = 1.0
+        else:
+            log_pair_term = (traced + 1) * math.log1p(
+                1.0 / (n_particles - 1)
+            ) + math.log(different_family_mass)
+            variance = float(-np.expm1(log_pair_term))
+        # Finite-sample genealogical estimators can be slightly negative before
+        # their large-N limit; preserve that signal rather than clipping it.
+        diagnostics = FixedLagVarianceDiagnostics(
+            requested_lag=lag,
+            traced_resampling_events=traced,
+            total_resampling_events=len(history),
+            distinct_ancestors=int(np.unique(ancestors).size),
+            family_ess=1.0 / family_concentration,
+        )
+        xp = namespace(self.final_state.log_weights)
+        return (
+            asarray(variance, xp=xp, like=self.final_state.log_weights),
+            diagnostics,
+        )
+
+    def fixed_lag_variance_diagnostics(
+        self,
+        lag: int,
+    ) -> FixedLagVarianceDiagnostics:
+        """Return ancestry-depletion diagnostics for an Olsson--Douc lag."""
+        _, diagnostics = self._log_evidence_variance_fixed_lag(lag)
+        return diagnostics
+
     def log_evidence_standard_error(
         self,
-        method: Literal["incremental", "lee-whiteley"] = "incremental",
+        method: EvidenceVarianceMethod = "incremental",
+        *,
+        lag: int | None = None,
     ) -> Array:
         """Return the standard error associated with an evidence variance."""
-        variance = self.log_evidence_variance(method=method)
+        variance = self.log_evidence_variance(method=method, lag=lag)
         if float(to_numpy(variance)) < 0.0:
             raise ValueError(
                 "The estimated log-evidence variance is negative; a real "
