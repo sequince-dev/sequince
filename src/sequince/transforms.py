@@ -123,14 +123,14 @@ class ParticleTransform:
         """Return the identity mapping plus zero log-determinants."""
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
-        zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
+        zeros = xp.zeros_like(arr[..., 0])
         return arr, zeros
 
     def inverse(self, values, context=None):
         """Return the identity mapping plus zero log-determinants."""
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
+        zeros = xp.zeros_like(arr[..., 0])
         return arr, zeros
 
 
@@ -465,7 +465,7 @@ class PeriodicBoundaryTransform(ParticleTransform):
                 lower + shifted - width * xp.floor(shifted / width)
             )
             arr = _replace_columns(arr, idx, wrapped_subset)
-        zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
+        zeros = xp.zeros_like(arr[..., 0])
         return arr, zeros
 
     def inverse(self, values, context=None):
