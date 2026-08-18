@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Mapping, Protocol, Sequence, cast
 
 import array_api_extra as xpx
 
@@ -83,8 +83,46 @@ class LogitMapping:
         return restored, log_abs_det
 
 
-_unit_interval_mapping_registry = {
+@pytree_dataclass(data_fields=(), meta_fields=("eps",))
+@dataclass(frozen=True)
+class CauchitMapping:
+    """Map the unit interval to the real line with a Cauchy quantile.
+
+    Parameters
+    ----------
+    eps : float, default=1e-6
+        Clamp values to ``[eps, 1 - eps]`` before applying the quantile.
+    """
+
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        _validate_mapping_eps(self.eps)
+
+    def forward(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        u = xp.clip(arr, self.eps, 1 - self.eps)
+        pi = xp.asarray(math.pi, dtype=u.dtype)
+        angle = pi * (u - 0.5)
+        transformed = xp.tan(angle)
+        log_abs_det = xp.log(pi) - 2.0 * xp.log(xp.abs(xp.cos(angle)))
+        return transformed, log_abs_det
+
+    def inverse(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        limit = math.tan(math.pi * (0.5 - self.eps))
+        z = xp.clip(arr, -limit, limit)
+        pi = xp.asarray(math.pi, dtype=z.dtype)
+        restored = xp.atan(z) / pi + 0.5
+        log_abs_det = -xp.log(pi) - xp.log1p(z * z)
+        return restored, log_abs_det
+
+
+_unit_interval_mapping_registry: dict[str, type[UnitIntervalMapping]] = {
     "logit": LogitMapping,
+    "cauchit": CauchitMapping,
 }
 
 
@@ -110,7 +148,7 @@ def get_unit_interval_mapping(
             "mapping must be a registered name or an object providing "
             "forward() and inverse()."
         )
-    return mapping
+    return cast(UnitIntervalMapping, mapping)
 
 
 def _to_index(columns):
@@ -454,7 +492,7 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         :class:`BoundedToUnitHypercubeTransform`.
     mapping : str | UnitIntervalMapping, default="logit"
         Built-in mapping name or an object implementing ``forward`` and
-        ``inverse``. The built-in option is ``"logit"``.
+        ``inverse``. Built-in options are ``"logit"`` and ``"cauchit"``.
     """
 
     mapping: str | UnitIntervalMapping = field(default="logit", kw_only=True)
