@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
@@ -395,6 +396,8 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         subset = arr[..., idx]
+        logit_limit = math.log((1.0 - self.eps) / self.eps)
+        subset = xp.clip(subset, -logit_limit, logit_limit)
         u = 1.0 / (1.0 + xp.exp(-subset))
         cube_values = _replace_columns(arr, idx, u)
         restored, base_log_det = super().inverse(cube_values, context=context)
