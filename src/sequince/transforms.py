@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
@@ -122,14 +123,14 @@ class ParticleTransform:
         """Return the identity mapping plus zero log-determinants."""
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
-        zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
+        zeros = xp.zeros_like(arr[..., 0])
         return arr, zeros
 
     def inverse(self, values, context=None):
         """Return the identity mapping plus zero log-determinants."""
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
+        zeros = xp.zeros_like(arr[..., 0])
         return arr, zeros
 
 
@@ -395,6 +396,8 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         subset = arr[..., idx]
+        logit_limit = math.log((1.0 - self.eps) / self.eps)
+        subset = xp.clip(subset, -logit_limit, logit_limit)
         u = 1.0 / (1.0 + xp.exp(-subset))
         cube_values = _replace_columns(arr, idx, u)
         restored, base_log_det = super().inverse(cube_values, context=context)
@@ -462,7 +465,7 @@ class PeriodicBoundaryTransform(ParticleTransform):
                 lower + shifted - width * xp.floor(shifted / width)
             )
             arr = _replace_columns(arr, idx, wrapped_subset)
-        zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
+        zeros = xp.zeros_like(arr[..., 0])
         return arr, zeros
 
     def inverse(self, values, context=None):
