@@ -8,6 +8,7 @@ from sequince.transforms import (
     CompositeTransform,
     FlowTransform,
     IdentityTransform,
+    LogitMapping,
     PeriodicBoundaryTransform,
 )
 
@@ -66,11 +67,8 @@ def test_bounded_to_unbounded_round_trip(particles):
     np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
 
 
-def test_bounded_to_unbounded_inverse_is_finite_in_extreme_tails():
-    transform = BoundedToUnboundedTransform(
-        {0: (-5.0, 5.0), 1: (-5.0, 5.0)},
-        eps=1e-6,
-    )
+def test_bounded_to_unbounded_inverse_is_stable_in_extreme_tails():
+    transform = BoundedToUnboundedTransform({0: (-5.0, 5.0), 1: (-5.0, 5.0)})
 
     particles, log_det = transform.inverse(
         np.array([[-100.0, 100.0]], dtype=np.float32)
@@ -80,6 +78,51 @@ def test_bounded_to_unbounded_inverse_is_finite_in_extreme_tails():
     assert np.all(np.isfinite(log_det))
     assert np.all(particles > -5.0)
     assert np.all(particles < 5.0)
+
+
+def test_bounded_to_unbounded_accepts_custom_mapping_strategy(particles):
+    class ShiftedLogit:
+        def __init__(self, shift):
+            self.shift = shift
+            self.base = LogitMapping()
+
+        def forward(self, values):
+            transformed, log_det = self.base.forward(values)
+            return transformed + self.shift, log_det
+
+        def inverse(self, values):
+            return self.base.inverse(values - self.shift)
+
+    transform = BoundedToUnboundedTransform(
+        {2: (0.0, 1.0)}, mapping=ShiftedLogit(2.0)
+    )
+    latent, log_det = transform.forward(particles)
+    restored, restore_log_det = transform.inverse(latent)
+
+    np.testing.assert_allclose(restored, particles, atol=1e-12)
+    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+
+
+def test_bounded_to_unbounded_rejects_unknown_mapping():
+    with pytest.raises(ValueError, match="Unknown unit-interval mapping"):
+        BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping="unknown")
+
+
+@pytest.mark.parametrize("eps", [0.0, 0.5])
+def test_unit_interval_mapping_validates_eps(eps):
+    with pytest.raises(ValueError, match="eps must lie"):
+        LogitMapping(eps=eps)
+
+
+def test_unit_interval_mapping_owns_eps():
+    mapping = LogitMapping(eps=0.1)
+    transform = BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping=mapping)
+
+    restored, log_det = transform.inverse(np.array([[-1e6]]))
+
+    assert transform.mapping is mapping
+    np.testing.assert_allclose(restored, [[0.1]], atol=1e-12)
+    assert np.all(np.isfinite(log_det))
 
 
 def test_bounded_to_unit_hypercube_round_trip(particles):
