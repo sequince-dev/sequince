@@ -293,10 +293,12 @@ def draw_initial_state(
             evaluation=evaluation,
         )
         if any(
-            bool(to_numpy(xp.any(xp.isnan(values))))
+            bool(to_numpy(xp.any(xp.isnan(values) | (values == float("inf")))))
             for values in evaluation.components.values()
         ):
-            raise ValueError("Posterior evaluation returned NaN values.")
+            raise ValueError(
+                "Posterior evaluation returned NaN or +inf values."
+            )
 
     return ParticleState(particles=particles, evaluation=evaluation)
 
