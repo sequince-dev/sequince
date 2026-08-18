@@ -4,6 +4,15 @@ import inspect
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
+from array_api_compat import (
+    is_cupy_namespace,
+    is_dask_namespace,
+    is_jax_namespace,
+    is_ndonnx_namespace,
+    is_numpy_namespace,
+    is_pydata_sparse_namespace,
+    is_torch_namespace,
+)
 from orng import RandomGenerator
 
 from ._scipy_compat import enable_scipy_array_api as _enable_scipy_array_api
@@ -15,6 +24,16 @@ if TYPE_CHECKING:
     from .steps.base import StepContext
 
 RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
+
+IS_NAMESPACE_FUNCTIONS = {
+    "numpy": is_numpy_namespace,
+    "torch": is_torch_namespace,
+    "jax": is_jax_namespace,
+    "cupy": is_cupy_namespace,
+    "dask": is_dask_namespace,
+    "pydata_sparse": is_pydata_sparse_namespace,
+    "ndonnx": is_ndonnx_namespace,
+}
 
 
 def pytree_dataclass(*, data_fields, meta_fields=()):
@@ -59,20 +78,81 @@ def resolve_rng(
     rng: RNGLike = None,
     *,
     backend: str | None = None,
+    xp: Any | None = None,
 ) -> RandomGenerator:
-    """Return an ORNG generator for the supplied RNG-like value."""
+    """Return an ORNG generator for the supplied RNG-like value.
+
+    Parameters
+    ----------
+    rng
+        An RNG-like value, which can be an ORNG RandomGenerator, a NumPy
+        Generator, an integer seed, or None (for a default generator).
+    backend
+        The backend to use for the ORNG RandomGenerator if `rng` is None or an
+        integer seed. Ignored if `rng` is an ORNG RandomGenerator or a NumPy
+        Generator.
+    xp
+        An array API namespace to use for the ORNG RandomGenerator if `rng` is
+        None or an integer seed. Ignored if `rng` is an ORNG RandomGenerator or
+        a NumPy Generator.
+
+    Returns
+    -------
+    RandomGenerator
+        An ORNG RandomGenerator instance corresponding to the provided `rng`
+        value, using the specified `backend` or `xp` if necessary.
+
+    Raises
+    ------
+    TypeError
+        If `rng` is not an ORNG RandomGenerator, a NumPy Generator, an integer
+        seed, or None.
+    ValueError
+        If both `backend` and `xp` are specified.
+    """
     if isinstance(rng, RandomGenerator):
         return rng
     if isinstance(rng, np.random.Generator):
         return RandomGenerator(backend="numpy", generator=rng)
-    if isinstance(rng, int):
-        return RandomGenerator(backend=backend or "numpy", seed=rng)
-    if rng is None:
-        return RandomGenerator(backend=backend or "numpy")
-    raise TypeError(
-        "rng must be an orng.RandomGenerator, numpy.random.Generator, "
-        "an int seed, or None."
-    )
+    if rng is not None and not isinstance(rng, int):
+        raise TypeError(
+            "rng must be an orng.RandomGenerator, numpy.random.Generator, "
+            "an int seed, or None."
+        )
+    if backend is not None and xp is not None:
+        raise ValueError("Specify either 'backend' or 'xp', not both.")
+    if xp is not None:
+        return RandomGenerator.from_xp(xp, seed=rng)
+    return RandomGenerator(backend=backend or "numpy", seed=rng)
+
+
+def determine_backend_name(
+    x: Array | None = None, xp: Any | None = None
+) -> str:
+    """Determine the backend name from an array or array API module.
+
+    Parameters
+    ----------
+    x : Array or None
+        The array to infer the backend from. If None, xp must be provided.
+    xp : Any or None
+        The array API module to infer the backend from. If None, x must be provided.
+
+    Returns
+    -------
+    str
+        The name of the backend. If the backend cannot be determined, returns "unknown".
+    """
+    if x is not None:
+        xp = namespace(x)
+    if xp is None:
+        raise ValueError(
+            "Either x or xp must be provided to determine backend."
+        )
+    for name, is_namespace_fn in IS_NAMESPACE_FUNCTIONS.items():
+        if is_namespace_fn(xp):
+            return name
+    return "unknown"
 
 
 def call_with_optional_context(

@@ -2,12 +2,15 @@ import os
 
 import numpy as np
 import pytest
+from orng import RandomGenerator
 
 from sequince.stats import ess_from_log_weights
 from sequince.utils import (
+    determine_backend_name,
     enable_scipy_array_api,
     in_bounds,
     normalize_log_weights,
+    resolve_rng,
 )
 
 
@@ -34,6 +37,60 @@ def test_normalize_log_weights():
 
     np.testing.assert_allclose(np.exp(normalized), [0.25, 0.75])
     assert np.isclose(log_norm, np.log(4.0))
+
+
+def test_resolve_rng_defaults_to_numpy():
+    assert resolve_rng().backend == "numpy"
+
+
+def test_resolve_rng_uses_array_namespace():
+    jnp = pytest.importorskip("jax.numpy")
+
+    assert resolve_rng(42, xp=jnp).backend == "jax"
+
+
+def test_resolve_rng_preserves_explicit_generator():
+    rng = RandomGenerator(backend="numpy", seed=42)
+
+    assert resolve_rng(rng, xp=np) is rng
+
+
+def test_resolve_rng_wraps_numpy_generator():
+    assert resolve_rng(np.random.default_rng()).backend == "numpy"
+
+
+def test_resolve_rng_rejects_backend_and_namespace():
+    with pytest.raises(ValueError, match="either 'backend' or 'xp'"):
+        resolve_rng(backend="numpy", xp=np)
+
+
+def test_resolve_rng_rejects_unsupported_rng():
+    with pytest.raises(TypeError, match="rng must be"):
+        resolve_rng("invalid")
+
+
+@pytest.mark.parametrize(
+    "module_name, name",
+    [
+        ("numpy", "numpy"),
+        ("torch", "torch"),
+        ("jax.numpy", "jax"),
+        ("cupy", "cupy"),
+    ],
+)
+def test_determine_backend_name(module_name, name):
+    xp = pytest.importorskip(module_name)
+    assert determine_backend_name(xp=xp) == name
+
+    x = xp.ones(2)
+    assert determine_backend_name(x=x) == name
+
+
+def test_determine_backend_name_for_unknown_namespace():
+    class UnknownNamespace:
+        __name__ = "not_a_real_namespace"
+
+    assert determine_backend_name(xp=UnknownNamespace()) == "unknown"
 
 
 def test_normalize_log_weights_can_be_jitted():
