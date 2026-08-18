@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Protocol, Sequence, cast
 
 import array_api_extra as xpx
+from scipy.special import ndtr, ndtri
 
 from .array_api import asarray, namespace, to_numpy
 from .flows import (
@@ -25,6 +26,167 @@ Bounds = (
     Mapping[int, tuple[float, float]]
     | tuple[tuple[int, tuple[float, float]], ...]
 )
+
+
+class UnitIntervalMapping(Protocol):
+    """Mapping between the open unit interval and the real line.
+
+    Implementations return the elementwise log absolute determinant alongside
+    transformed values. They must preserve the Array API namespace of their
+    input.
+    """
+
+    def forward(self, values):
+        """Map values in ``(0, 1)`` to the real line."""
+
+    def inverse(self, values):
+        """Map values on the real line back to ``(0, 1)``."""
+
+
+def _validate_mapping_eps(eps: float) -> None:
+    if not 0.0 < eps < 0.5:
+        raise ValueError("eps must lie strictly between 0 and 0.5.")
+
+
+@pytree_dataclass(data_fields=(), meta_fields=("eps",))
+@dataclass(frozen=True)
+class LogitMapping:
+    """Map the unit interval to the real line with a stabilized logit.
+
+    Parameters
+    ----------
+    eps : float, default=1e-6
+        Clamp values to ``[eps, 1 - eps]`` before applying the logit.
+    """
+
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        _validate_mapping_eps(self.eps)
+
+    def forward(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        u = xp.clip(arr, self.eps, 1 - self.eps)
+        transformed = xp.log(u) - xp.log1p(-u)
+        log_abs_det = -xp.log(u) - xp.log1p(-u)
+        return transformed, log_abs_det
+
+    def inverse(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        limit = math.log((1.0 - self.eps) / self.eps)
+        z = xp.clip(arr, -limit, limit)
+        softplus_negative_z = xp.maximum(-z, 0) + xp.log1p(xp.exp(-xp.abs(z)))
+        restored = xp.exp(-softplus_negative_z)
+        softplus_z = xp.maximum(z, 0) + xp.log1p(xp.exp(-xp.abs(z)))
+        log_abs_det = -softplus_negative_z - softplus_z
+        return restored, log_abs_det
+
+
+@pytree_dataclass(data_fields=(), meta_fields=("eps",))
+@dataclass(frozen=True)
+class CauchitMapping:
+    """Map the unit interval to the real line with a Cauchy quantile.
+
+    Parameters
+    ----------
+    eps : float, default=1e-6
+        Clamp values to ``[eps, 1 - eps]`` before applying the quantile.
+    """
+
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        _validate_mapping_eps(self.eps)
+
+    def forward(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        u = xp.clip(arr, self.eps, 1 - self.eps)
+        pi = xp.asarray(math.pi, dtype=u.dtype)
+        angle = pi * (u - 0.5)
+        transformed = xp.tan(angle)
+        log_abs_det = xp.log(pi) - 2.0 * xp.log(xp.abs(xp.cos(angle)))
+        return transformed, log_abs_det
+
+    def inverse(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        limit = math.tan(math.pi * (0.5 - self.eps))
+        z = xp.clip(arr, -limit, limit)
+        pi = xp.asarray(math.pi, dtype=z.dtype)
+        restored = xp.atan(z) / pi + 0.5
+        log_abs_det = -xp.log(pi) - xp.log1p(z * z)
+        return restored, log_abs_det
+
+
+@pytree_dataclass(data_fields=(), meta_fields=("eps",))
+@dataclass(frozen=True)
+class ProbitMapping:
+    """Map the unit interval to the real line with a normal quantile.
+
+    Parameters
+    ----------
+    eps : float, default=1e-6
+        Clamp values to ``[eps, 1 - eps]`` before applying the quantile.
+    """
+
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        _validate_mapping_eps(self.eps)
+
+    def forward(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        u = xp.clip(arr, self.eps, 1 - self.eps)
+        transformed = ndtri(u)
+        log_normalization = 0.5 * math.log(2.0 * math.pi)
+        log_abs_det = 0.5 * transformed * transformed + log_normalization
+        return transformed, log_abs_det
+
+    def inverse(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        limit = float(ndtri(1.0 - self.eps))
+        z = xp.clip(arr, -limit, limit)
+        restored = ndtr(z)
+        log_normalization = 0.5 * math.log(2.0 * math.pi)
+        log_abs_det = -0.5 * z * z - log_normalization
+        return restored, log_abs_det
+
+
+_unit_interval_mapping_registry: dict[str, type[UnitIntervalMapping]] = {
+    "logit": LogitMapping,
+    "cauchit": CauchitMapping,
+    "probit": ProbitMapping,
+}
+
+
+def get_unit_interval_mapping(
+    mapping: str | UnitIntervalMapping,
+) -> UnitIntervalMapping:
+    """Resolve a built-in mapping name or validate a mapping strategy object."""
+    if isinstance(mapping, str):
+        try:
+            mapping_cls = _unit_interval_mapping_registry[mapping.lower()]
+        except KeyError as exc:
+            valid = ", ".join(sorted(_unit_interval_mapping_registry))
+            raise ValueError(
+                f"Unknown unit-interval mapping '{mapping}'. "
+                f"Valid options are: {valid}."
+            ) from exc
+        return mapping_cls()
+
+    if not callable(getattr(mapping, "forward", None)) or not callable(
+        getattr(mapping, "inverse", None)
+    ):
+        raise TypeError(
+            "mapping must be a registered name or an object providing "
+            "forward() and inverse()."
+        )
+    return cast(UnitIntervalMapping, mapping)
 
 
 def _to_index(columns):
@@ -356,22 +518,29 @@ class BoundedToUnitHypercubeTransform(ParticleTransform):
         return updated, log_det_vec
 
 
-@pytree_dataclass(data_fields=(), meta_fields=("bounds", "eps"))
+@pytree_dataclass(data_fields=(), meta_fields=("bounds", "mapping"))
 @dataclass(frozen=True)
 class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
-    """Send bounded coordinates to the real line via an independent logit.
+    """Send bounded coordinates to the real line independently.
 
     Parameters
     ----------
     bounds : Mapping[int, tuple[float, float]]
         Dictionary of coordinate bounds, as defined in
         :class:`BoundedToUnitHypercubeTransform`.
-    eps : float, default=1e-6
-        Clamp parameter that keeps values a safe distance away from 0 and 1
-        before applying the logit.
+    mapping : str | UnitIntervalMapping, default="logit"
+        Built-in mapping name or an object implementing ``forward`` and
+        ``inverse``. Built-in options are ``"logit"``, ``"cauchit"``, and
+        ``"probit"``.
     """
 
-    eps: float = field(default=1e-6, kw_only=True)
+    mapping: str | UnitIntervalMapping = field(default="logit", kw_only=True)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        object.__setattr__(
+            self, "mapping", get_unit_interval_mapping(self.mapping)
+        )
 
     def forward(self, particles, context=None):
         scaled, base_log_det = super().forward(particles, context=context)
@@ -380,11 +549,8 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
             return scaled, base_log_det
         xp = namespace(scaled, base_log_det)
         arr = asarray(scaled, xp=xp)
-        subset = arr[..., idx]
-        u = xp.clip(subset, self.eps, 1 - self.eps)
-        transformed_subset = xp.log(u) - xp.log1p(-u)
+        transformed_subset, jac = self.mapping.forward(arr[..., idx])
         updated = _replace_columns(arr, idx, transformed_subset)
-        jac = -xp.log(u) - xp.log1p(-u)
         base_log_det = xp.asarray(base_log_det, dtype=updated.dtype)
         log_abs_det = base_log_det + xp.sum(jac, axis=-1)
         return updated, log_abs_det
@@ -395,16 +561,12 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
             return super().inverse(values, context=context)
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        subset = arr[..., idx]
-        logit_limit = math.log((1.0 - self.eps) / self.eps)
-        subset = xp.clip(subset, -logit_limit, logit_limit)
-        u = 1.0 / (1.0 + xp.exp(-subset))
+        u, jac = self.mapping.inverse(arr[..., idx])
         cube_values = _replace_columns(arr, idx, u)
         restored, base_log_det = super().inverse(cube_values, context=context)
         xp = namespace(restored, base_log_det, u)
         base_log_det = xp.asarray(base_log_det, dtype=restored.dtype)
-        jac = xp.sum(xp.log(u) + xp.log1p(-u), axis=-1)
-        log_abs_det = base_log_det + jac
+        log_abs_det = base_log_det + xp.sum(jac, axis=-1)
         return restored, log_abs_det
 
 

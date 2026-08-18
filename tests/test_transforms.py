@@ -5,10 +5,13 @@ from sequince.transforms import (
     AffineTransform,
     BoundedToUnboundedTransform,
     BoundedToUnitHypercubeTransform,
+    CauchitMapping,
     CompositeTransform,
     FlowTransform,
     IdentityTransform,
+    LogitMapping,
     PeriodicBoundaryTransform,
+    ProbitMapping,
 )
 
 
@@ -66,11 +69,8 @@ def test_bounded_to_unbounded_round_trip(particles):
     np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
 
 
-def test_bounded_to_unbounded_inverse_is_finite_in_extreme_tails():
-    transform = BoundedToUnboundedTransform(
-        {0: (-5.0, 5.0), 1: (-5.0, 5.0)},
-        eps=1e-6,
-    )
+def test_bounded_to_unbounded_inverse_is_stable_in_extreme_tails():
+    transform = BoundedToUnboundedTransform({0: (-5.0, 5.0), 1: (-5.0, 5.0)})
 
     particles, log_det = transform.inverse(
         np.array([[-100.0, 100.0]], dtype=np.float32)
@@ -80,6 +80,84 @@ def test_bounded_to_unbounded_inverse_is_finite_in_extreme_tails():
     assert np.all(np.isfinite(log_det))
     assert np.all(particles > -5.0)
     assert np.all(particles < 5.0)
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    ["cauchit", CauchitMapping(), "probit", ProbitMapping()],
+)
+def test_bounded_to_unbounded_mapping_round_trip(particles, mapping):
+    transform = BoundedToUnboundedTransform({2: (0.0, 1.0)}, mapping=mapping)
+    latent, log_det = transform.forward(particles)
+    restored, restore_log_det = transform.inverse(latent)
+
+    np.testing.assert_allclose(restored, particles, atol=1e-12)
+    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+
+
+def test_bounded_to_unbounded_accepts_custom_mapping_strategy(particles):
+    class ShiftedLogit:
+        def __init__(self, shift):
+            self.shift = shift
+            self.base = LogitMapping()
+
+        def forward(self, values):
+            transformed, log_det = self.base.forward(values)
+            return transformed + self.shift, log_det
+
+        def inverse(self, values):
+            return self.base.inverse(values - self.shift)
+
+    transform = BoundedToUnboundedTransform(
+        {2: (0.0, 1.0)}, mapping=ShiftedLogit(2.0)
+    )
+    latent, log_det = transform.forward(particles)
+    restored, restore_log_det = transform.inverse(latent)
+
+    np.testing.assert_allclose(restored, particles, atol=1e-12)
+    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+
+
+def test_bounded_to_unbounded_rejects_unknown_mapping():
+    with pytest.raises(ValueError, match="Unknown unit-interval mapping"):
+        BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping="unknown")
+
+
+@pytest.mark.parametrize(
+    "mapping_cls", [LogitMapping, CauchitMapping, ProbitMapping]
+)
+@pytest.mark.parametrize("eps", [0.0, 0.5])
+def test_unit_interval_mapping_validates_eps(mapping_cls, eps):
+    with pytest.raises(ValueError, match="eps must lie"):
+        mapping_cls(eps=eps)
+
+
+@pytest.mark.parametrize(
+    "mapping_cls", [LogitMapping, CauchitMapping, ProbitMapping]
+)
+def test_unit_interval_mapping_owns_eps(mapping_cls):
+    mapping = mapping_cls(eps=0.1)
+    transform = BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping=mapping)
+
+    restored, log_det = transform.inverse(np.array([[-1e6]]))
+
+    assert transform.mapping is mapping
+    np.testing.assert_allclose(restored, [[0.1]], atol=1e-12)
+    assert np.all(np.isfinite(log_det))
+
+
+def test_probit_mapping_known_values():
+    mapping = ProbitMapping()
+
+    transformed, log_det = mapping.forward(np.array([0.5]))
+    restored, inverse_log_det = mapping.inverse(transformed)
+
+    np.testing.assert_allclose(transformed, [0.0], atol=1e-12)
+    np.testing.assert_allclose(restored, [0.5], atol=1e-12)
+    np.testing.assert_allclose(
+        log_det, [0.5 * np.log(2.0 * np.pi)], atol=1e-12
+    )
+    np.testing.assert_allclose(log_det + inverse_log_det, 0.0, atol=1e-12)
 
 
 def test_bounded_to_unit_hypercube_round_trip(particles):
@@ -219,14 +297,17 @@ def test_flow_transform_preserves_input_namespace(particles):
     np.testing.assert_allclose(log_det + inverse_log_det, 0.0)
 
 
-def test_builtin_transforms_are_jittable_dataclass_pytrees():
+@pytest.mark.parametrize(
+    "mapping", [LogitMapping(), CauchitMapping(), ProbitMapping()]
+)
+def test_builtin_transforms_are_jittable_dataclass_pytrees(mapping):
     jax = pytest.importorskip("jax")
     jnp = pytest.importorskip("jax.numpy")
 
     particles = jnp.asarray([[0.2, 1.0], [0.8, 3.0]])
     transform = CompositeTransform(
         [
-            BoundedToUnboundedTransform({0: (0.0, 1.0)}),
+            BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping=mapping),
             AffineTransform(columns=[1]),
         ]
     )
