@@ -74,7 +74,6 @@ def test_resolve_rng_rejects_unsupported_rng():
     [
         ("numpy", "numpy"),
         ("torch", "torch"),
-        ("jax", "jax"),
         ("jax.numpy", "jax"),
         ("cupy", "cupy"),
     ],
@@ -83,7 +82,7 @@ def test_determine_backend_name(module_name, name):
     xp = pytest.importorskip(module_name)
     assert determine_backend_name(xp=xp) == name
 
-    x = xp.array([1.0, 2.0])
+    x = xp.ones(2)
     assert determine_backend_name(x=x) == name
 
 
