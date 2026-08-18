@@ -11,6 +11,7 @@ from sequince.transforms import (
     IdentityTransform,
     LogitMapping,
     PeriodicBoundaryTransform,
+    ProbitMapping,
 )
 
 
@@ -81,7 +82,10 @@ def test_bounded_to_unbounded_inverse_is_stable_in_extreme_tails():
     assert np.all(particles < 5.0)
 
 
-@pytest.mark.parametrize("mapping", ["cauchit", CauchitMapping()])
+@pytest.mark.parametrize(
+    "mapping",
+    ["cauchit", CauchitMapping(), "probit", ProbitMapping()],
+)
 def test_bounded_to_unbounded_mapping_round_trip(particles, mapping):
     transform = BoundedToUnboundedTransform({2: (0.0, 1.0)}, mapping=mapping)
     latent, log_det = transform.forward(particles)
@@ -119,14 +123,18 @@ def test_bounded_to_unbounded_rejects_unknown_mapping():
         BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping="unknown")
 
 
-@pytest.mark.parametrize("mapping_cls", [LogitMapping, CauchitMapping])
+@pytest.mark.parametrize(
+    "mapping_cls", [LogitMapping, CauchitMapping, ProbitMapping]
+)
 @pytest.mark.parametrize("eps", [0.0, 0.5])
 def test_unit_interval_mapping_validates_eps(mapping_cls, eps):
     with pytest.raises(ValueError, match="eps must lie"):
         mapping_cls(eps=eps)
 
 
-@pytest.mark.parametrize("mapping_cls", [LogitMapping, CauchitMapping])
+@pytest.mark.parametrize(
+    "mapping_cls", [LogitMapping, CauchitMapping, ProbitMapping]
+)
 def test_unit_interval_mapping_owns_eps(mapping_cls):
     mapping = mapping_cls(eps=0.1)
     transform = BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping=mapping)
@@ -136,6 +144,20 @@ def test_unit_interval_mapping_owns_eps(mapping_cls):
     assert transform.mapping is mapping
     np.testing.assert_allclose(restored, [[0.1]], atol=1e-12)
     assert np.all(np.isfinite(log_det))
+
+
+def test_probit_mapping_known_values():
+    mapping = ProbitMapping()
+
+    transformed, log_det = mapping.forward(np.array([0.5]))
+    restored, inverse_log_det = mapping.inverse(transformed)
+
+    np.testing.assert_allclose(transformed, [0.0], atol=1e-12)
+    np.testing.assert_allclose(restored, [0.5], atol=1e-12)
+    np.testing.assert_allclose(
+        log_det, [0.5 * np.log(2.0 * np.pi)], atol=1e-12
+    )
+    np.testing.assert_allclose(log_det + inverse_log_det, 0.0, atol=1e-12)
 
 
 def test_bounded_to_unit_hypercube_round_trip(particles):
@@ -275,14 +297,17 @@ def test_flow_transform_preserves_input_namespace(particles):
     np.testing.assert_allclose(log_det + inverse_log_det, 0.0)
 
 
-def test_builtin_transforms_are_jittable_dataclass_pytrees():
+@pytest.mark.parametrize(
+    "mapping", [LogitMapping(), CauchitMapping(), ProbitMapping()]
+)
+def test_builtin_transforms_are_jittable_dataclass_pytrees(mapping):
     jax = pytest.importorskip("jax")
     jnp = pytest.importorskip("jax.numpy")
 
     particles = jnp.asarray([[0.2, 1.0], [0.8, 3.0]])
     transform = CompositeTransform(
         [
-            BoundedToUnboundedTransform({0: (0.0, 1.0)}),
+            BoundedToUnboundedTransform({0: (0.0, 1.0)}, mapping=mapping),
             AffineTransform(columns=[1]),
         ]
     )

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Protocol, Sequence, cast
 
 import array_api_extra as xpx
+from scipy.special import ndtr, ndtri
 
 from .array_api import asarray, namespace, to_numpy
 from .flows import (
@@ -120,9 +121,46 @@ class CauchitMapping:
         return restored, log_abs_det
 
 
+@pytree_dataclass(data_fields=(), meta_fields=("eps",))
+@dataclass(frozen=True)
+class ProbitMapping:
+    """Map the unit interval to the real line with a normal quantile.
+
+    Parameters
+    ----------
+    eps : float, default=1e-6
+        Clamp values to ``[eps, 1 - eps]`` before applying the quantile.
+    """
+
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        _validate_mapping_eps(self.eps)
+
+    def forward(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        u = xp.clip(arr, self.eps, 1 - self.eps)
+        transformed = ndtri(u)
+        log_normalization = 0.5 * math.log(2.0 * math.pi)
+        log_abs_det = 0.5 * transformed * transformed + log_normalization
+        return transformed, log_abs_det
+
+    def inverse(self, values):
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        limit = float(ndtri(1.0 - self.eps))
+        z = xp.clip(arr, -limit, limit)
+        restored = ndtr(z)
+        log_normalization = 0.5 * math.log(2.0 * math.pi)
+        log_abs_det = -0.5 * z * z - log_normalization
+        return restored, log_abs_det
+
+
 _unit_interval_mapping_registry: dict[str, type[UnitIntervalMapping]] = {
     "logit": LogitMapping,
     "cauchit": CauchitMapping,
+    "probit": ProbitMapping,
 }
 
 
@@ -492,7 +530,8 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         :class:`BoundedToUnitHypercubeTransform`.
     mapping : str | UnitIntervalMapping, default="logit"
         Built-in mapping name or an object implementing ``forward`` and
-        ``inverse``. Built-in options are ``"logit"`` and ``"cauchit"``.
+        ``inverse``. Built-in options are ``"logit"``, ``"cauchit"``, and
+        ``"probit"``.
     """
 
     mapping: str | UnitIntervalMapping = field(default="logit", kw_only=True)
