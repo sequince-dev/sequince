@@ -7,8 +7,18 @@ from sequince.transforms import (
     BoundedToUnitHypercubeTransform,
     CompositeTransform,
     FlowTransform,
+    IdentityTransform,
     PeriodicBoundaryTransform,
 )
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [IdentityTransform(), PeriodicBoundaryTransform({1: (-np.pi, np.pi)})],
+)
+def test_transform_vector_log_det_is_scalar(transform):
+    _, log_det = transform.forward(np.array([0.0, 1.0, 2.0]))
+    assert np.ndim(log_det) == 0
 
 
 @pytest.fixture
@@ -54,6 +64,22 @@ def test_bounded_to_unbounded_round_trip(particles):
     restored, restore_log_det = transform.inverse(latent)
     np.testing.assert_allclose(restored, particles, atol=1e-12)
     np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+
+
+def test_bounded_to_unbounded_inverse_is_finite_in_extreme_tails():
+    transform = BoundedToUnboundedTransform(
+        {0: (-5.0, 5.0), 1: (-5.0, 5.0)},
+        eps=1e-6,
+    )
+
+    particles, log_det = transform.inverse(
+        np.array([[-100.0, 100.0]], dtype=np.float32)
+    )
+
+    assert np.all(np.isfinite(particles))
+    assert np.all(np.isfinite(log_det))
+    assert np.all(particles > -5.0)
+    assert np.all(particles < 5.0)
 
 
 def test_bounded_to_unit_hypercube_round_trip(particles):

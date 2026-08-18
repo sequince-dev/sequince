@@ -94,6 +94,19 @@ def test_draw_initial_state_rejects_invalid_proposal_output():
         draw_initial_state(proposal, 2)
 
 
+@pytest.mark.parametrize("invalid", [np.nan, np.inf])
+def test_draw_initial_state_raises_on_target_numerical_errors(invalid):
+    proposal = DeterministicProposal([[0.0], [1.0]])
+    posterior = TemperedPosterior(
+        log_prior=lambda particles, context: np.array([0.0, invalid]),
+        log_likelihood=lambda particles, context: np.zeros(len(particles)),
+        log_proposal=proposal,
+    )
+
+    with pytest.raises(ValueError, match=r"NaN or \+inf"):
+        draw_initial_state(proposal, 2, posterior=posterior)
+
+
 def test_draw_initial_state_forwards_rng_and_namespace():
     proposal = DeterministicProposal([[0.0], [1.0]])
     rng = object()
