@@ -81,7 +81,9 @@ class ProposalRejuvenation(SMCStep):
         fitted_transform = None
         latent = physical
         if self._transform is not None:
-            fitted_transform = self._transform.fit(physical, context=context)
+            fitted_transform = self._transform.fit(
+                physical, context=context, rng=rng
+            )
             latent, _ = fitted_transform.forward(physical, context=context)
             latent = asarray(latent, xp=xp, like=physical)
 

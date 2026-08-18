@@ -200,7 +200,9 @@ class BlackJAXMutation(MutationStep):
         if not is_jax_namespace(xp):
             raise TypeError("BlackJAXMutation requires JAX-backed particles.")
 
-        transform, context = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(
+            state.particles, context, rng=rng
+        )
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )

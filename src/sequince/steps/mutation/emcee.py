@@ -173,7 +173,9 @@ class EmceeMutation(MutationStep):
         import emcee
 
         xp = namespace(state.particles)
-        transform, context = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(
+            state.particles, context, rng=rng
+        )
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )

@@ -172,6 +172,8 @@ class MutationStep(SMCStep):
         self,
         particles: Array,
         context: StepContext,
+        *,
+        rng: Any = None,
     ) -> ParticleTransform:
         if self._transform is None:  # pragma: no cover - guarded by callers
             raise RuntimeError("Particle transform is not configured.")
@@ -179,26 +181,35 @@ class MutationStep(SMCStep):
         return self._transform.fit(
             asarray(particles, xp=xp),
             context=context,
+            rng=rng,
         )
 
     def _prepare_functional_transform(
         self,
         particles: Array,
         context: StepContext,
+        *,
+        rng: Any = None,
     ) -> tuple[ParticleTransform, StepContext]:
         transform = context.metadata[PARTICLE_TRANSFORM_KEY]
         if self._transform_refit in {"always", "per-context"}:
-            transform = self._fit_transform(particles, context)
+            transform = self._fit_transform(particles, context, rng=rng)
         context = context.with_metadata(**{PARTICLE_TRANSFORM_KEY: transform})
         return transform, context
 
     def _prepare_transform(
-        self, particles: Array, context: StepContext
+        self,
+        particles: Array,
+        context: StepContext,
+        *,
+        rng: Any = None,
     ) -> tuple[ParticleTransform | None, StepContext]:
         if self._transform is None:
             return None, context
         if _FUNCTIONAL_TRANSFORM_MARKER_KEY in context.metadata:
-            return self._prepare_functional_transform(particles, context)
+            return self._prepare_functional_transform(
+                particles, context, rng=rng
+            )
         triggered = (
             bool(self._transform_refit(particles, context))
             if callable(self._transform_refit)
@@ -219,7 +230,7 @@ class MutationStep(SMCStep):
             )
         )
         if should_fit:
-            transform = self._fit_transform(particles, context)
+            transform = self._fit_transform(particles, context, rng=rng)
             self._prepared_transform = transform
             self._prepared_context = context
         else:
