@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Protocol,
+    Self,
+    runtime_checkable,
+)
 
 from array_api_compat import device as get_device
 
@@ -15,7 +22,7 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
-from .utils import call_with_optional_context
+from .utils import call_with_optional_context, resolve_rng
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -28,6 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
 class ProposalDistribution(Protocol):
     """Protocol for proposal distributions used by bridged SMC targets."""
 
@@ -44,6 +52,7 @@ class ProposalDistribution(Protocol):
         context: StepContext | None = None,
         *,
         rng: RandomGenerator | int | None = None,
+        xp: Any | None = None,
     ) -> Array:
         """Draw samples from the proposal distribution."""
 
@@ -53,31 +62,70 @@ class ProposalDistribution(Protocol):
         context: StepContext | None = None,
         *,
         rng: RandomGenerator | int | None = None,
+        xp: Any | None = None,
     ) -> tuple[Array, Array]:
         """Draw samples and return their log proposal densities."""
 
 
-class FlowProposal(ProposalDistribution):
+@runtime_checkable
+class TrainableProposal(ProposalDistribution, Protocol):
+    """Proposal distribution that can be fitted to a particle population."""
+
+    def fit(
+        self,
+        particles: Array,
+        context: StepContext | None = None,
+        *,
+        rng: RandomGenerator | int | None = None,
+    ) -> Self:
+        """Fit the proposal and return the fitted proposal."""
+
+
+class FlowProposal(TrainableProposal):
     """Adapt a normalizing flow to the proposal-distribution interface."""
 
-    def __init__(self, flow: NormalizingFlow):
+    def __init__(
+        self,
+        flow: NormalizingFlow,
+        *,
+        fit_kwargs: Mapping[str, Any] | None = None,
+    ) -> None:
         self._flow = flow
+        self._fit_kwargs = dict(fit_kwargs or {})
+        reserved = {"context", "rng"}.intersection(self._fit_kwargs)
+        if reserved:
+            names = ", ".join(sorted(reserved))
+            raise ValueError(
+                f"fit_kwargs must not override proposal arguments: {names}."
+            )
 
     @property
     def flow(self) -> NormalizingFlow:
         return self._flow
 
     def clone(self) -> "FlowProposal":
-        return FlowProposal(clone_flow(self._flow))
+        return FlowProposal(
+            clone_flow(self._flow),
+            fit_kwargs=self._fit_kwargs,
+        )
 
     def fit(
         self,
         particles: Array,
         context: StepContext | None = None,
+        *,
+        rng: RandomGenerator | int | None = None,
     ) -> "FlowProposal":
         logger.info("Fitting flow proposal to %d particles", len(particles))
         backend_particles = flow_asarray(self._flow, particles)
-        self._flow.fit(backend_particles, context=context)
+        fitted_flow = self._flow.fit(
+            backend_particles,
+            context=context,
+            rng=rng,
+            **self._fit_kwargs,
+        )
+        if fitted_flow is not None:
+            self._flow = fitted_flow
         return self
 
     def state_dict(self) -> dict[str, Any]:
@@ -106,9 +154,16 @@ class FlowProposal(ProposalDistribution):
         context: StepContext | None = None,
         *,
         rng: RandomGenerator | int | None = None,
+        xp: Any | None = None,
     ) -> Array:
-        del rng
-        return self._flow.sample(n_samples, context=context)
+        samples = self._flow.sample(
+            n_samples,
+            context=context,
+            rng=rng,
+        )
+        if xp is not None:
+            samples = asarray(samples, xp=xp)
+        return samples
 
     def sample_and_log_prob(
         self,
@@ -116,29 +171,45 @@ class FlowProposal(ProposalDistribution):
         context: StepContext | None = None,
         *,
         rng: RandomGenerator | int | None = None,
+        xp: Any | None = None,
     ) -> tuple[Array, Array]:
-        del rng
         flow_sample_and_log_prob = getattr(
             self._flow, "sample_and_log_prob", None
         )
         if callable(flow_sample_and_log_prob):
-            return flow_sample_and_log_prob(
+            samples, log_prob = flow_sample_and_log_prob(
                 n_samples,
                 context=context,
+                rng=rng,
             )
-        samples = self.sample(n_samples, context=context)
-        return samples, self.log_prob(samples, context=context)
+        else:
+            samples = self.sample(
+                n_samples,
+                context=context,
+                rng=rng,
+                xp=xp,
+            )
+            log_prob = self.log_prob(samples, context=context)
+        if xp is not None:
+            samples = asarray(samples, xp=xp)
+            log_prob = asarray(log_prob, xp=xp)
+        return samples, log_prob
 
 
 def _proposal_batch(
     proposal: ProposalDistribution,
     n_particles: int,
     context: StepContext,
+    *,
+    rng: RandomGenerator | int | None = None,
+    xp: Any | None = None,
 ) -> tuple[Array, Array]:
     """Draw and validate one proposal batch."""
     particles, log_proposal = proposal.sample_and_log_prob(
         n_particles,
         context=context,
+        rng=rng,
+        xp=xp,
     )
     xp = namespace(particles, log_proposal)
     particles = asarray(particles, xp=xp)
@@ -182,6 +253,8 @@ def draw_initial_state(
     *,
     posterior: TemperedPosterior | None = None,
     context: StepContext | None = None,
+    rng: RandomGenerator | int | None = None,
+    xp: Any | None = None,
 ) -> "ParticleState":
     """Draw one initial population and retain its target evaluation.
 
@@ -202,6 +275,8 @@ def draw_initial_state(
         proposal,
         n_particles,
         evaluation_context,
+        rng=rng,
+        xp=xp,
     )
     xp = namespace(particles, log_proposal)
 
@@ -218,10 +293,12 @@ def draw_initial_state(
             evaluation=evaluation,
         )
         if any(
-            bool(to_numpy(xp.any(xp.isnan(values))))
+            bool(to_numpy(xp.any(xp.isnan(values) | (values == float("inf")))))
             for values in evaluation.components.values()
         ):
-            raise ValueError("Posterior evaluation returned NaN values.")
+            raise ValueError(
+                "Posterior evaluation returned NaN or +inf values."
+            )
 
     return ParticleState(particles=particles, evaluation=evaluation)
 
@@ -233,6 +310,8 @@ def draw_mcmc_initial_state(
     *,
     context: StepContext | None = None,
     max_batches: int = 100,
+    rng: RandomGenerator | int | None = None,
+    xp: Any | None = None,
 ) -> "ParticleState":
     """Draw finite-target starting particles for standalone MCMC.
 
@@ -250,6 +329,7 @@ def draw_mcmc_initial_state(
         raise ValueError("max_batches must be positive.")
 
     evaluation_context = context or StepContext(t=0)
+    generator = resolve_rng(rng)
     accepted: list[Array] = []
     accepted_evaluations: list[TargetEvaluation] = []
     n_accepted = 0
@@ -258,6 +338,8 @@ def draw_mcmc_initial_state(
             proposal,
             n_particles,
             evaluation_context,
+            rng=generator,
+            xp=xp,
         )
         xp = namespace(particles)
         evaluation = None

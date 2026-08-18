@@ -18,9 +18,11 @@ class EmpiricalGaussianProposal:
     def __init__(self) -> None:
         self.mean: np.ndarray | None = None
         self.scale: np.ndarray | None = None
+        self.fit_rng = None
 
-    def fit(self, particles, context=None):
+    def fit(self, particles, context=None, *, rng=None):
         del context
+        self.fit_rng = rng
         values = np.asarray(particles)
         self.mean = np.mean(values, axis=0)
         self.scale = np.std(values, axis=0) + 1e-6
@@ -48,9 +50,8 @@ def test_rejuvenates_with_minimal_generative_proposal(
     proposal = EmpiricalGaussianProposal()
     step = ProposalRejuvenation(standard_normal_posterior, proposal)
 
-    updated, returned_context, output = step.apply(
-        state, context, RandomGenerator(seed=7)
-    )
+    rng = RandomGenerator(seed=7)
+    updated, returned_context, output = step.apply(state, context, rng)
 
     assert returned_context is context
     assert updated.particles.shape == particles.shape
@@ -63,6 +64,7 @@ def test_rejuvenates_with_minimal_generative_proposal(
         "approximate": True,
     }
     assert step.state_dict() == {}
+    assert proposal.fit_rng is rng
 
 
 def test_requires_fit_and_sample(standard_normal_posterior) -> None:
