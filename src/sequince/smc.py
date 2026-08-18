@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -17,7 +16,7 @@ from .checkpoint import (
 from .result import SMCResult
 from .state import ParticleState
 from .steps.base import StepContext
-from .utils import normalize_log_weights, resolve_rng
+from .utils import array_safe_copy, normalize_log_weights, resolve_rng
 
 if TYPE_CHECKING:
     import numpy as np
@@ -668,7 +667,7 @@ class SequentialMonteCarlo:
     ) -> SMCRuntime:
         state = checkpoint.state.copy()
         history = checkpoint.history or (checkpoint.state,)
-        restored_metadata = copy.deepcopy(checkpoint.metadata)
+        restored_metadata = array_safe_copy(checkpoint.metadata)
 
         return SMCRuntime(
             state=state,
@@ -684,6 +683,6 @@ class SequentialMonteCarlo:
                 shared_context if shared_context is not None else {}
             ),
             metadata=restored_metadata,
-            outputs=list(copy.deepcopy(checkpoint.outputs)),
+            outputs=list(array_safe_copy(checkpoint.outputs)),
             rng=rng,
         )
