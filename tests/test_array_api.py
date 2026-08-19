@@ -6,6 +6,7 @@ from array_api_compat import device
 
 from sequince.array_api import (
     asarray,
+    copy,
     logsumexp,
     namespace,
     resolve_dtype,
@@ -13,7 +14,6 @@ from sequince.array_api import (
 )
 
 
-@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
 def test_to_numpy_from_supported_backends(backend, backend_factory):
     case = backend_factory(backend)
     xp = case.xp
@@ -27,7 +27,6 @@ def test_to_numpy_from_supported_backends(backend, backend_factory):
     assert resolve_dtype("float32", xp) is not None
 
 
-@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
 def test_asarray_matches_reference_namespace_device(backend, backend_factory):
     case = backend_factory(backend)
     xp = case.xp
@@ -42,6 +41,16 @@ def test_asarray_matches_reference_namespace_device(backend, backend_factory):
     assert device(result) == device(particles)
     assert result.dtype == resolve_dtype("float32", xp)
     np.testing.assert_allclose(to_numpy(result), source)
+
+
+def test_copy_returns_a_new_array(backend, backend_factory):
+    case = backend_factory(backend)
+    array = asarray([1.0, 2.0], xp=case.xp)
+    copied = copy(array, xp=case.xp)
+
+    assert copied is not array
+    np.testing.assert_array_equal(copied, array)
+    assert case.matches_namespace(copied)
 
 
 def test_to_numpy_detaches_torch_gradients():
