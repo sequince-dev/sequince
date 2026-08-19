@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from sequince.array_api import namespace, to_numpy
 from sequince.transforms import (
     AffineTransform,
     BoundedToUnboundedTransform,
@@ -15,6 +16,31 @@ from sequince.transforms import (
 )
 
 
+@pytest.fixture
+def particles(backend, backend_factory):
+    case = backend_factory(backend)
+    return case.xp.asarray(
+        [
+            [0.0, -1.0, 0.25],
+            [1.0, 2.0, 0.5],
+            [-0.5, 0.5, 0.9],
+        ],
+        dtype=case.particles.dtype,
+    )
+
+
+def assert_allclose(actual, expected, **kwargs):
+    np.testing.assert_allclose(
+        to_numpy(actual),
+        to_numpy(expected),
+        **kwargs,
+    )
+
+
+def assert_preserves_namespace(result, particles):
+    assert namespace(result) is namespace(particles)
+
+
 @pytest.mark.parametrize(
     "transform",
     [IdentityTransform(), PeriodicBoundaryTransform({1: (-np.pi, np.pi)})],
@@ -24,19 +50,8 @@ def test_transform_vector_log_det_is_scalar(transform):
     assert np.ndim(log_det) == 0
 
 
-@pytest.fixture
-def particles():
-    return np.array(
-        [
-            [0.0, -1.0, 0.25],
-            [1.0, 2.0, 0.5],
-            [-2.0, 0.5, 0.9],
-        ],
-        dtype=float,
-    )
-
-
 def test_affine_all_columns(particles):
+    xp = namespace(particles)
     transform = AffineTransform()
     fitted = transform.fit(particles)
     assert fitted is not transform
@@ -45,9 +60,11 @@ def test_affine_all_columns(particles):
     transform = fitted
     latent, log_det = transform.forward(particles)
     restored, restore_log_det = transform.inverse(latent)
-    np.testing.assert_allclose(restored, particles)
-    np.testing.assert_allclose(log_det + restore_log_det, 0.0)
-    np.testing.assert_allclose(np.mean(latent, axis=0), 0.0, atol=1e-12)
+    assert_preserves_namespace(latent, particles)
+    assert_preserves_namespace(log_det, particles)
+    assert_allclose(restored, particles, atol=1e-6)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-6)
+    assert_allclose(xp.mean(latent, axis=0), 0.0, atol=1e-6)
 
 
 def test_affine_subset(particles):
@@ -55,18 +72,12 @@ def test_affine_subset(particles):
     transform = transform.fit(particles)
     latent, _ = transform.forward(particles)
     restored, _ = transform.inverse(latent)
-    np.testing.assert_allclose(restored, particles)
-    assert np.allclose(latent[..., 1], particles[..., 1])
-    assert not np.allclose(latent[..., 0], particles[..., 0])
-
-
-def test_bounded_to_unbounded_round_trip(particles):
-    bounds = {2: (0.0, 1.0)}
-    transform = BoundedToUnboundedTransform(bounds)
-    latent, log_det = transform.forward(particles)
-    restored, restore_log_det = transform.inverse(latent)
-    np.testing.assert_allclose(restored, particles, atol=1e-12)
-    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(restored, particles, atol=1e-6)
+    assert_allclose(latent[..., 1], particles[..., 1])
+    assert not np.allclose(
+        to_numpy(latent[..., 0]), to_numpy(particles[..., 0])
+    )
 
 
 def test_bounded_to_unbounded_inverse_is_stable_in_extreme_tails():
@@ -84,15 +95,23 @@ def test_bounded_to_unbounded_inverse_is_stable_in_extreme_tails():
 
 @pytest.mark.parametrize(
     "mapping",
-    ["cauchit", CauchitMapping(), "probit", ProbitMapping()],
+    [
+        "cauchit",
+        CauchitMapping(),
+        "probit",
+        ProbitMapping(),
+        "logit",
+        LogitMapping(),
+    ],
 )
-def test_bounded_to_unbounded_mapping_round_trip(particles, mapping):
+def test_bounded_to_unbounded_round_trip(particles, mapping):
     transform = BoundedToUnboundedTransform({2: (0.0, 1.0)}, mapping=mapping)
     latent, log_det = transform.forward(particles)
     restored, restore_log_det = transform.inverse(latent)
 
-    np.testing.assert_allclose(restored, particles, atol=1e-12)
-    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(restored, particles, atol=1e-6)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-5)
 
 
 def test_bounded_to_unbounded_accepts_custom_mapping_strategy(particles):
@@ -114,8 +133,9 @@ def test_bounded_to_unbounded_accepts_custom_mapping_strategy(particles):
     latent, log_det = transform.forward(particles)
     restored, restore_log_det = transform.inverse(latent)
 
-    np.testing.assert_allclose(restored, particles, atol=1e-12)
-    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(restored, particles, atol=1e-6)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-5)
 
 
 def test_bounded_to_unbounded_rejects_unknown_mapping():
@@ -161,36 +181,32 @@ def test_probit_mapping_known_values():
 
 
 def test_bounded_to_unit_hypercube_round_trip(particles):
-    bounded_particles = np.array(
-        [
-            [0.0, -1.0, 0.25],
-            [1.0, 2.0, 0.5],
-            [-0.5, 0.5, 0.9],
-        ],
-        dtype=float,
-    )
+    bounded_particles = particles
     bounds = {0: (-1.0, 2.0), 2: (0.0, 1.0)}
     transform = BoundedToUnitHypercubeTransform(bounds)
     latent, log_det = transform.forward(bounded_particles)
-    assert np.all(latent[..., 0] >= 0.0 - 1e-12)
-    assert np.all(latent[..., 0] <= 1.0 + 1e-12)
-    assert np.all(latent[..., 2] >= 0.0 - 1e-12)
-    assert np.all(latent[..., 2] <= 1.0 + 1e-12)
+    assert np.all(to_numpy(latent[..., 0]) >= 0.0 - 1e-6)
+    assert np.all(to_numpy(latent[..., 0]) <= 1.0 + 1e-6)
+    assert np.all(to_numpy(latent[..., 2]) >= 0.0 - 1e-6)
+    assert np.all(to_numpy(latent[..., 2]) <= 1.0 + 1e-6)
     expected_log_det = -np.log(3.0)
-    np.testing.assert_allclose(log_det, expected_log_det)
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(log_det, expected_log_det, atol=1e-6)
     restored, restore_log_det = transform.inverse(latent)
-    np.testing.assert_allclose(restored, bounded_particles, atol=1e-12)
-    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-12)
+    assert_allclose(restored, bounded_particles, atol=1e-6)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-6)
 
 
 def test_periodic_boundary_transform(particles):
     bounds = {1: (-np.pi, np.pi)}
     transform = PeriodicBoundaryTransform(bounds)
     latent, log_det = transform.forward(particles)
-    assert np.allclose(log_det, 0.0)
-    assert np.all(latent[..., 1] >= -np.pi) and np.all(latent[..., 1] < np.pi)
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(log_det, 0.0)
+    assert np.all(to_numpy(latent[..., 1]) >= -np.pi)
+    assert np.all(to_numpy(latent[..., 1]) < np.pi)
     restored, _ = transform.inverse(latent)
-    np.testing.assert_allclose(restored, latent)
+    assert_allclose(restored, latent)
 
 
 def test_composite_transform(particles):
@@ -206,8 +222,9 @@ def test_composite_transform(particles):
     composite = fitted
     latent, log_det = composite.forward(particles)
     restored, restore_log_det = composite.inverse(latent)
-    np.testing.assert_allclose(restored, particles)
-    np.testing.assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(restored, particles, atol=1e-6)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-5)
 
 
 def test_flow_transform_round_trip_and_clone(particles, shift_flow_factory):
@@ -219,11 +236,10 @@ def test_flow_transform_round_trip_and_clone(particles, shift_flow_factory):
     latent, log_det = transform.forward(particles)
     restored, restore_log_det = transform.inverse(latent)
 
-    np.testing.assert_allclose(restored, particles)
-    np.testing.assert_allclose(log_det + restore_log_det, 0.0)
-    np.testing.assert_allclose(
-        getattr(transform.flow, "fitted_particles"), particles
-    )
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(restored, particles, atol=1e-6)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-6)
+    assert_allclose(getattr(transform.flow, "fitted_particles"), particles)
 
     cloned = transform.clone()
     assert isinstance(cloned, FlowTransform)
@@ -232,9 +248,7 @@ def test_flow_transform_round_trip_and_clone(particles, shift_flow_factory):
 
     restored_transform = FlowTransform(shift_flow_factory(n_dim=3))
     restored_transform.load_state_dict(transform.state_dict())
-    np.testing.assert_allclose(
-        restored_transform.flow.fitted_particles, particles
-    )
+    assert_allclose(restored_transform.flow.fitted_particles, particles)
 
 
 def test_flow_transform_passes_rng_and_fit_kwargs(particles, rng):
@@ -305,10 +319,10 @@ def test_flow_transform_preserves_input_namespace(particles):
     latent, log_det = transform.forward(particles)
     restored, inverse_log_det = transform.inverse(latent)
 
-    assert isinstance(latent, np.ndarray)
-    assert isinstance(log_det, np.ndarray)
-    np.testing.assert_allclose(restored, particles, atol=1e-12)
-    np.testing.assert_allclose(log_det + inverse_log_det, 0.0)
+    assert_preserves_namespace(latent, particles)
+    assert_preserves_namespace(log_det, particles)
+    assert_allclose(restored, particles, atol=1e-6)
+    assert_allclose(log_det + inverse_log_det, 0.0, atol=1e-6)
 
 
 @pytest.mark.parametrize(
