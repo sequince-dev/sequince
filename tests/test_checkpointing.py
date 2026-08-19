@@ -265,6 +265,37 @@ def test_checkpoint_version_one_payload_without_observation_still_loads(
     assert restored.result().context.observation is None
 
 
+def test_checkpoint_handles_non_leaf_torch_metadata(
+    particle_state: ParticleState,
+) -> None:
+    torch = pytest.importorskip("torch")
+    value = torch.tensor(0.0, requires_grad=True).exp()
+    context = StepContext(
+        t=0,
+        observation={"value": value},
+        metadata={"nested": [value]},
+    )
+    result = SMCResult(
+        states=[particle_state],
+        context=context,
+        outputs=(({"value": value},),),
+    )
+
+    checkpoint = SMCCheckpoint.from_runtime(
+        state=particle_state,
+        context=context,
+        result=result,
+        steps=[],
+    )
+    restored = SMCCheckpoint.from_dict(checkpoint.to_dict())
+
+    restored_value = restored.result().context.metadata["nested"][0]
+    assert torch.equal(restored_value, value)
+    assert restored_value is not value
+    assert torch.equal(restored.outputs[0][0]["value"], value)
+    assert torch.equal(restored.observation["value"], value)
+
+
 def test_checkpoint_round_trip_allows_missing_rng_state(
     particle_state: ParticleState,
 ) -> None:

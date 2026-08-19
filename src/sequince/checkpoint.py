@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
@@ -16,7 +15,7 @@ from .array_api import namespace
 from .result import SMCResult
 from .state import ParticleState
 from .steps.context import StepContext
-from .utils import resolve_rng
+from .utils import array_safe_copy, resolve_rng
 
 CHECKPOINT_VERSION = 1
 _HDF_KIND = "_sequince_kind"
@@ -224,7 +223,7 @@ class StepState:
             index=index,
             module=step_type.__module__,
             qualname=step_type.__qualname__,
-            state=copy.deepcopy(dict(state)),
+            state=array_safe_copy(dict(state)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -232,7 +231,7 @@ class StepState:
             "index": self.index,
             "module": self.module,
             "qualname": self.qualname,
-            "state": copy.deepcopy(self.state),
+            "state": array_safe_copy(self.state),
         }
 
     @classmethod
@@ -258,7 +257,7 @@ class StepState:
             index=int(payload["index"]),
             module=module,
             qualname=qualname,
-            state=copy.deepcopy(dict(state)),
+            state=array_safe_copy(dict(state)),
         )
 
 
@@ -295,7 +294,7 @@ def restore_steps(steps: Sequence[Any], states: Sequence[StepState]) -> None:
     for step, saved in zip(steps, states, strict=True):
         load_fn = getattr(step, "load_state_dict", None)
         if load_fn is not None:
-            load_fn(copy.deepcopy(saved.state))
+            load_fn(array_safe_copy(saved.state))
 
 
 @dataclass(frozen=True)
@@ -334,18 +333,18 @@ class SMCCheckpoint:
             state=state_copy,
             next_iteration=context.t + 1,
             next_observation_index=context.next_observation_index,
-            metadata=copy.deepcopy(
+            metadata=array_safe_copy(
                 {
                     key: value
                     for key, value in context.metadata.items()
                     if key != "particle_transform"
                 }
             ),
-            outputs=copy.deepcopy(tuple(result.outputs)),
+            outputs=array_safe_copy(tuple(result.outputs)),
             step_states=capture_step_states(steps),
             rng_state=None if rng is None else _rng_state_dict(rng),
             history=history,
-            observation=copy.deepcopy(context.observation),
+            observation=array_safe_copy(context.observation),
             initial_state=(
                 None
                 if result.initial_state is None
@@ -360,16 +359,16 @@ class SMCCheckpoint:
             "state": self.state.to_dict(),
             "next_iteration": self.next_iteration,
             "next_observation_index": self.next_observation_index,
-            "metadata": copy.deepcopy(self.metadata),
-            "outputs": copy.deepcopy(self.outputs),
+            "metadata": array_safe_copy(self.metadata),
+            "outputs": array_safe_copy(self.outputs),
             "step_states": [item.to_dict() for item in self.step_states],
-            "rng_state": copy.deepcopy(self.rng_state),
+            "rng_state": array_safe_copy(self.rng_state),
             "history": (
                 None
                 if self.history is None
                 else [item.to_dict() for item in self.history]
             ),
-            "observation": copy.deepcopy(self.observation),
+            "observation": array_safe_copy(self.observation),
             "initial_state": (
                 None
                 if self.initial_state is None
@@ -442,10 +441,10 @@ class SMCCheckpoint:
                 "non-negative."
             )
         return cls(
-            state=ParticleState.from_dict(copy.deepcopy(payload["state"])),
+            state=ParticleState.from_dict(array_safe_copy(payload["state"])),
             next_iteration=next_iteration,
             next_observation_index=next_observation_index,
-            metadata=copy.deepcopy(dict(payload["metadata"])),
+            metadata=array_safe_copy(dict(payload["metadata"])),
             outputs=tuple(
                 tuple(iteration) for iteration in payload["outputs"]
             ),
@@ -453,22 +452,22 @@ class SMCCheckpoint:
                 StepState.from_dict(item) for item in step_payload
             ),
             rng_state=(
-                None if rng_state is None else copy.deepcopy(dict(rng_state))
+                None if rng_state is None else array_safe_copy(dict(rng_state))
             ),
             history=(
                 None
                 if history_payload is None
                 else tuple(
-                    ParticleState.from_dict(copy.deepcopy(item))
+                    ParticleState.from_dict(array_safe_copy(item))
                     for item in history_payload
                 )
             ),
-            observation=copy.deepcopy(payload.get("observation")),
+            observation=array_safe_copy(payload.get("observation")),
             initial_state=(
                 None
                 if initial_state_payload is None
                 else ParticleState.from_dict(
-                    copy.deepcopy(initial_state_payload)
+                    array_safe_copy(initial_state_payload)
                 )
             ),
             version=version,
@@ -488,15 +487,15 @@ class SMCCheckpoint:
         context = StepContext(
             t=self.next_iteration - 1,
             next_observation_index=self.next_observation_index,
-            observation=copy.deepcopy(self.observation),
+            observation=array_safe_copy(self.observation),
             shared=dict(shared_context or {}),
-            metadata=copy.deepcopy(self.metadata),
+            metadata=array_safe_copy(self.metadata),
         )
         return SMCResult(
             states=states,
             context=context,
             initial_state=self.initial_state,
-            outputs=copy.deepcopy(self.outputs),
+            outputs=array_safe_copy(self.outputs),
         )
 
     def save_pickle(

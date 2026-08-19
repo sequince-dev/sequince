@@ -152,15 +152,14 @@ def copy(array: Any, *, xp: Any | None = None):
     """Copy an array without changing its namespace or device."""
     if xp is None:
         xp = _namespace_or_numpy(array)
-    arr = asarray(array, xp=xp)
     if hasattr(xp, "copy"):
         try:
-            return xp.copy(arr)  # type: ignore[attr-defined]
+            return xp.copy(array)  # type: ignore[attr-defined]
         except AttributeError:  # pragma: no cover - namespace lacks copy
             pass
-    if hasattr(arr, "clone"):
-        return arr.clone()
-    return xp.asarray(arr)
+    if hasattr(array, "clone"):
+        return array.clone()
+    return xp.asarray(array)
 
 
 def _numpy_result(

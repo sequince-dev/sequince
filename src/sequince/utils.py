@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import inspect
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
@@ -18,6 +20,7 @@ from orng import RandomGenerator
 from ._scipy_compat import enable_scipy_array_api as _enable_scipy_array_api
 from ._typing import Array
 from .array_api import asarray, logsumexp, namespace
+from .array_api import copy as copy_array
 from .exceptions import DegenerateWeightsError
 
 if TYPE_CHECKING:
@@ -34,6 +37,38 @@ IS_NAMESPACE_FUNCTIONS = {
     "pydata_sparse": is_pydata_sparse_namespace,
     "ndonnx": is_ndonnx_namespace,
 }
+
+
+def array_safe_copy(value: Any) -> Any:
+    """Recursively copy a value while preserving array backends.
+
+    Array leaves are copied using :func:`sequince.array_api.copy`. This avoids
+    calling :func:`copy.deepcopy` on backend arrays, which is unsupported for
+    some arrays such as non-leaf PyTorch tensors. Mappings, lists, and tuples
+    are copied recursively; other values use :func:`copy.deepcopy`.
+
+    Parameters
+    ----------
+    value
+        The value to copy.
+
+    Returns
+    -------
+    Any
+        An independent copy of ``value`` where supported by its array backend.
+    """
+    if isinstance(value, Mapping):
+        return {key: array_safe_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [array_safe_copy(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(array_safe_copy(item) for item in value)
+    if hasattr(value, "shape") and hasattr(value, "dtype"):
+        try:
+            return copy_array(value, xp=namespace(value))
+        except (TypeError, ValueError):
+            pass
+    return copy.deepcopy(value)
 
 
 def pytree_dataclass(*, data_fields, meta_fields=()):
