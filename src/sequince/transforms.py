@@ -18,7 +18,7 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
-from .utils import pytree_dataclass
+from .utils import RNGLike, pytree_dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ class ParticleTransform:
 
     Methods
     -------
-    fit(particles, context=None)
+    fit(particles, context=None, *, rng=None)
         Optionally adapt internal statistics using the provided particle cloud.
     forward(particles, context=None)
         Map particles into a transformed space and return log-Jacobian values.
@@ -277,8 +277,9 @@ class ParticleTransform:
 
         return copy.deepcopy(self)
 
-    def fit(self, particles, context=None):
+    def fit(self, particles, context=None, *, rng: RNGLike = None):
         """Return a transform fitted to the supplied ``particles``."""
+        del rng
         return self
 
     def forward(self, particles, context=None):
@@ -310,7 +311,14 @@ class FlowTransform(ParticleTransform):
     fit_kwargs: Mapping[str, Any] | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "fit_kwargs", dict(self.fit_kwargs or {}))
+        fit_kwargs = dict(self.fit_kwargs or {})
+        reserved = {"context", "rng"}.intersection(fit_kwargs)
+        if reserved:
+            names = ", ".join(sorted(reserved))
+            raise ValueError(
+                f"fit_kwargs must not override transform arguments: {names}."
+            )
+        object.__setattr__(self, "fit_kwargs", fit_kwargs)
 
     def clone(self) -> "FlowTransform":
         return replace(self, flow=clone_flow(self.flow))
@@ -324,7 +332,7 @@ class FlowTransform(ParticleTransform):
             raise TypeError("FlowTransform state 'flow' must be a mapping.")
         load_flow_state_dict(self.flow, flow_state)
 
-    def fit(self, particles, context=None):
+    def fit(self, particles, context=None, *, rng: RNGLike = None):
         flow = clone_flow(self.flow)
         backend_particles = flow_asarray(flow, particles)
         logger.debug(
@@ -334,6 +342,7 @@ class FlowTransform(ParticleTransform):
         fitted_flow = flow.fit(
             backend_particles,
             context=context,
+            rng=rng,
             **(self.fit_kwargs or {}),
         )
         if fitted_flow is None:
@@ -392,7 +401,8 @@ class AffineTransform(ParticleTransform):
     def __post_init__(self) -> None:
         object.__setattr__(self, "columns", _to_index(self.columns))
 
-    def fit(self, particles, context=None):
+    def fit(self, particles, context=None, *, rng: RNGLike = None):
+        del rng
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         idx = self.columns
@@ -659,11 +669,11 @@ class CompositeTransform(ParticleTransform):
     def clone(self):
         return CompositeTransform([t.clone() for t in self.transforms])
 
-    def fit(self, particles, context=None):
+    def fit(self, particles, context=None, *, rng: RNGLike = None):
         data = particles
         fitted_transforms = []
         for transform in self.transforms:
-            fitted = transform.fit(data, context=context)
+            fitted = transform.fit(data, context=context, rng=rng)
             fitted_transforms.append(fitted)
             data, _ = fitted.forward(data, context=context)
         return replace(self, transforms=tuple(fitted_transforms))

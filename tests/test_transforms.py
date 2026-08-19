@@ -237,7 +237,7 @@ def test_flow_transform_round_trip_and_clone(particles, shift_flow_factory):
     )
 
 
-def test_flow_transform_passes_fit_kwargs(particles):
+def test_flow_transform_passes_rng_and_fit_kwargs(particles, rng):
     class RecordingFlow:
         xp = np
 
@@ -259,11 +259,25 @@ def test_flow_transform_passes_fit_kwargs(particles):
         fit_kwargs={"n_epochs": 7, "batch_size": 2},
     )
 
-    fitted = transform.fit(particles)
+    fitted = transform.fit(particles, rng=rng)
 
     assert transform.flow.fit_options is None
-    assert fitted.flow.fit_options == {"n_epochs": 7, "batch_size": 2}
+    assert fitted.flow.fit_options == {
+        "rng": rng,
+        "n_epochs": 7,
+        "batch_size": 2,
+    }
     assert fitted.fit_kwargs == {"n_epochs": 7, "batch_size": 2}
+
+
+@pytest.mark.parametrize("reserved", ["context", "rng"])
+def test_flow_transform_rejects_reserved_fit_kwargs(
+    shift_flow_factory, reserved
+):
+    with pytest.raises(ValueError, match=reserved):
+        FlowTransform(
+            shift_flow_factory(n_dim=2), fit_kwargs={reserved: object()}
+        )
 
 
 def test_flow_transform_preserves_input_namespace(particles):

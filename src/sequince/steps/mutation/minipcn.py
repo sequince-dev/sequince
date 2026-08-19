@@ -91,7 +91,7 @@ class MiniPCNMutation(MutationStep):
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, MiniPCNOutput]:
         sampler, latent_particles, transform, context = self._prepare_sampler(
-            state, context
+            state, context, rng=rng
         )
 
         chain, history = sampler.sample(
@@ -121,9 +121,15 @@ class MiniPCNMutation(MutationStep):
         random_state: Any,
     ) -> tuple[ParticleState, StepContext, Any, MiniPCNOutput]:
         """Run MiniPCN while explicitly threading backend random state."""
-        sampler, latent_particles, transform, context = self._prepare_sampler(
-            state, context
+        from orng import RandomGenerator
+
+        transform_rng = RandomGenerator.from_xp(
+            namespace(random_state), generator=random_state
         )
+        sampler, latent_particles, transform, context = self._prepare_sampler(
+            state, context, rng=transform_rng
+        )
+        random_state = transform_rng.state()
         return_last_only = not self._store_chains
         chain, history, next_random_state = sampler.sample_functional(
             latent_particles,
@@ -152,12 +158,16 @@ class MiniPCNMutation(MutationStep):
         self,
         state: ParticleState,
         context: StepContext,
+        *,
+        rng: Any = None,
     ) -> tuple[Any, Array, ParticleTransform | None, StepContext]:
         """Prepare the latent particles and MiniPCN sampler."""
         from minipcn import Sampler
 
         xp = namespace(state.particles)
-        transform, context = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(
+            state.particles, context, rng=rng
+        )
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )

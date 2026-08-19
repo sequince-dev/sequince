@@ -10,6 +10,17 @@ from sequince import ParticleState
 from sequince.steps import ProposalRejuvenation
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import GenerativeProposal
+from sequince.transforms import ParticleTransform
+
+
+class RecordingTransform(ParticleTransform):
+    def __init__(self) -> None:
+        self.fit_rng = None
+
+    def fit(self, particles, context=None, *, rng=None):
+        del particles, context
+        self.fit_rng = rng
+        return self
 
 
 class EmpiricalGaussianProposal:
@@ -48,7 +59,10 @@ def test_rejuvenates_with_minimal_generative_proposal(
         log_evidence=1.25,
     )
     proposal = EmpiricalGaussianProposal()
-    step = ProposalRejuvenation(standard_normal_posterior, proposal)
+    transform = RecordingTransform()
+    step = ProposalRejuvenation(
+        standard_normal_posterior, proposal, transform=transform
+    )
 
     rng = RandomGenerator(seed=7)
     updated, returned_context, output = step.apply(state, context, rng)
@@ -65,6 +79,7 @@ def test_rejuvenates_with_minimal_generative_proposal(
     }
     assert step.state_dict() == {}
     assert proposal.fit_rng is rng
+    assert transform.fit_rng is rng
 
 
 def test_requires_fit_and_sample(standard_normal_posterior) -> None:
