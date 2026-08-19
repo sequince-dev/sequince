@@ -46,6 +46,9 @@ class BackendCase:
     def rng(self, seed: int) -> RandomGenerator:
         return RandomGenerator(backend=self.name, seed=seed)
 
+    def matches_namespace(self, array: Any) -> bool:
+        return namespace(array) is self.xp
+
 
 class AnalyticProposal:
     def __init__(self, n_dim: int, quadratic_scale: float = 0.0) -> None:
