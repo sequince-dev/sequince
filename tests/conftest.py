@@ -194,6 +194,12 @@ def backend_factory() -> Callable[[str], BackendCase]:
     return _backend_factory
 
 
+@pytest.fixture(params=["numpy", "torch", "jax", "cupy"])
+def backend(request: pytest.FixtureRequest) -> str:
+    """Name of each supported Array API backend."""
+    return request.param
+
+
 @pytest.fixture
 def standard_normal_log_prob() -> Callable[..., Any]:
     return _standard_normal_log_prob
