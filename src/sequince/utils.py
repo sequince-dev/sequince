@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
 from array_api_compat import (
+    is_array_api_obj,
     is_cupy_namespace,
     is_dask_namespace,
     is_jax_namespace,
@@ -57,17 +58,14 @@ def array_safe_copy(value: Any) -> Any:
     Any
         An independent copy of ``value`` where supported by its array backend.
     """
+    if is_array_api_obj(value):
+        return copy_array(value, xp=namespace(value))
     if isinstance(value, Mapping):
         return {key: array_safe_copy(item) for key, item in value.items()}
     if isinstance(value, list):
         return [array_safe_copy(item) for item in value]
     if isinstance(value, tuple):
         return tuple(array_safe_copy(item) for item in value)
-    if hasattr(value, "shape") and hasattr(value, "dtype"):
-        try:
-            return copy_array(value, xp=namespace(value))
-        except (TypeError, ValueError):
-            pass
     return copy.deepcopy(value)
 
 
