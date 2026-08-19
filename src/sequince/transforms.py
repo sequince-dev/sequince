@@ -77,10 +77,16 @@ class LogitMapping:
         arr = asarray(values, xp=xp)
         limit = math.log((1.0 - self.eps) / self.eps)
         z = xp.clip(arr, -limit, limit)
-        softplus_negative_z = xp.maximum(-z, 0) + xp.log1p(xp.exp(-xp.abs(z)))
+
+        zero = xp.zeros_like(z)
+        log_term = xp.log1p(xp.exp(-xp.abs(z)))
+
+        softplus_negative_z = xp.maximum(-z, zero) + log_term
         restored = xp.exp(-softplus_negative_z)
-        softplus_z = xp.maximum(z, 0) + xp.log1p(xp.exp(-xp.abs(z)))
+
+        softplus_z = xp.maximum(z, zero) + log_term
         log_abs_det = -softplus_negative_z - softplus_z
+
         return restored, log_abs_det
 
 
