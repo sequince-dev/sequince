@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import numpy as np
 from numpy.random import Generator as NumPyGenerator
@@ -20,6 +21,29 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
 
+EvidenceVarianceMethod = Literal[
+    "incremental",
+    "lee-whiteley",
+    "fixed-lag-lee-whiteley",
+]
+
+
+@dataclass(frozen=True)
+class FixedLagLeeWhiteleyDiagnostics:
+    """Diagnostics for a fixed-lag Lee--Whiteley evidence estimate.
+
+    ``family_ess`` is the inverse concentration of the final normalized
+    particle weight carried by each selected-lag ancestor. It lies between one
+    and ``distinct_ancestors``; low values indicate genealogical depletion.
+    """
+
+    requested_lag: int
+    traced_resampling_events: int
+    total_resampling_events: int
+    distinct_ancestors: int
+    family_ess: float
+
+
 def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
     if ax is not None:
         return ax
@@ -27,6 +51,47 @@ def _prepare_axis(ax: Any, **subplot_kwargs: Any) -> Any:
 
     _, ax = plt.subplots(**subplot_kwargs)
     return ax
+
+
+def _find_resampling_outputs(output: Any):
+    """Yield resampling output mappings nested in an iteration output."""
+    if isinstance(output, Mapping):
+        if "resampled" in output and "ess" in output:
+            yield output
+        for value in output.values():
+            yield from _find_resampling_outputs(value)
+    elif isinstance(output, (tuple, list)):
+        for value in output:
+            yield from _find_resampling_outputs(value)
+    elif hasattr(output, "child_output"):
+        yield from _find_resampling_outputs(output.child_output)
+
+
+def _warn_if_resampling_is_not_multinomial(
+    resampling_outputs: Sequence[Mapping[str, Any]],
+    *,
+    estimator: str,
+    stacklevel: int,
+) -> None:
+    """Warn once when an estimator's resampling assumption is not verified."""
+    schemes: set[str] = set()
+    for output in resampling_outputs:
+        if not bool(to_numpy(output["resampled"])):
+            continue
+        scheme = output.get("resampling_scheme")
+        schemes.add(
+            scheme if isinstance(scheme, str) and scheme else "unknown"
+        )
+
+    if schemes and schemes != {"multinomial"}:
+        observed = ", ".join(sorted(schemes))
+        warnings.warn(
+            f"{estimator} assumes multinomial resampling, but the recorded "
+            f"resampling schemes were: {observed}. The returned estimate may "
+            "not be theoretically justified.",
+            UserWarning,
+            stacklevel=stacklevel,
+        )
 
 
 @dataclass(frozen=True)
@@ -84,6 +149,282 @@ class SMCResult:
     def final_state(self) -> ParticleState:
         """Return the last state produced by the run."""
         return self.states[-1]
+
+    def log_evidence(self) -> Array:
+        """Return the log evidence of the final state."""
+        return self.final_state.log_evidence
+
+    def log_evidence_variance(
+        self,
+        method: EvidenceVarianceMethod = "incremental",
+        *,
+        lag: int | None = None,
+    ) -> Array:
+        """Estimate the variance of the final log-evidence estimate.
+
+        ``"incremental"`` sums the per-iteration variance diagnostics. The
+        result ignores dependence between SMC iterations.
+
+        ``"lee-whiteley"`` uses the particle genealogy to estimate relative
+        evidence variance, which is also a delta-method estimate of log-evidence
+        variance. This estimator requires constant particle count and
+        multinomial resampling at every iteration. The resampling scheme is not
+        currently retained by :class:`SMCResult`, so callers are responsible for
+        ensuring that multinomial resampling was used.
+
+        ``"fixed-lag-lee-whiteley"`` This estimator truncates the Lee-Whiteley
+        genealogical normalising-constant variance estimate to the most recent
+        ``lag`` resampling events. Particle families are therefore defined by
+        their ancestors ``lag`` resampling events before the final population
+        rather than by their time-zero ancestors.
+        """
+        if method != "fixed-lag-lee-whiteley" and lag is not None:
+            raise ValueError(
+                "lag is only valid for method='fixed-lag-lee-whiteley'."
+            )
+        if method == "incremental":
+            return self._log_evidence_variance_incremental()
+        if method == "lee-whiteley":
+            return self._log_evidence_variance_lee_whiteley()
+        if method == "fixed-lag-lee-whiteley":
+            if lag is None:
+                raise ValueError(
+                    "method='fixed-lag-lee-whiteley' requires a non-negative lag."
+                )
+            variance, _ = self._log_evidence_variance_fixed_lag_lee_whiteley(
+                lag
+            )
+            return variance
+        raise ValueError(f"Unknown log-evidence variance method: {method!r}")
+
+    def _log_evidence_variance_incremental(self) -> Array:
+        xp = namespace(self.final_state.log_weights)
+        log_evidence_increments_variance = self.metadata_history(
+            "log_evidence_increment_variance",
+        )
+        return xp.sum(log_evidence_increments_variance)
+
+    def _log_evidence_variance_lee_whiteley(self) -> Array:
+        """Return the Lee--Whiteley evidence variance estimate."""
+        if len(self.outputs) != len(self.states):
+            raise ValueError(
+                "Lee-Whiteley variance estimation requires one output record "
+                "per particle state."
+            )
+
+        n_particles = self.final_state.particles.shape[0]
+        if n_particles <= 1:
+            raise ValueError(
+                "Lee-Whiteley variance estimation requires at least two "
+                "particles."
+            )
+
+        recorded_resampling_outputs: list[Mapping[str, Any]] = []
+        for iteration, (state, output) in enumerate(
+            zip(self.states, self.outputs, strict=True)
+        ):
+            if state.particles.shape[0] != n_particles:
+                raise ValueError(
+                    "Lee-Whiteley variance estimation requires a constant "
+                    "particle count."
+                )
+
+            resampling_outputs = list(_find_resampling_outputs(output))
+            if len(resampling_outputs) != 1:
+                raise ValueError(
+                    "Lee-Whiteley variance estimation requires exactly one "
+                    f"resampling output per iteration; found "
+                    f"{len(resampling_outputs)} at iteration {iteration}."
+                )
+            if not bool(to_numpy(resampling_outputs[0]["resampled"])):
+                raise ValueError(
+                    "Lee-Whiteley variance estimation currently requires "
+                    "resampling at every iteration."
+                )
+
+            resampling_output = resampling_outputs[0]
+            recorded_resampling_outputs.append(resampling_output)
+            if "ancestors" not in resampling_output:
+                raise ValueError(
+                    "Lee-Whiteley variance estimation requires recorded "
+                    f"ancestor indices at iteration {iteration}."
+                )
+            parents = np.asarray(to_numpy(resampling_output["ancestors"]))
+            if parents.shape != (n_particles,):
+                raise ValueError(
+                    "Ancestor indices must have shape "
+                    f"({n_particles},), got {parents.shape} at iteration "
+                    f"{iteration}."
+                )
+            if not np.issubdtype(parents.dtype, np.integer):
+                raise ValueError(
+                    "Ancestor indices must have an integer dtype."
+                )
+            if np.any((parents < 0) | (parents >= n_particles)):
+                raise ValueError(
+                    f"Ancestor indices are out of bounds at iteration {iteration}."
+                )
+        _warn_if_resampling_is_not_multinomial(
+            recorded_resampling_outputs,
+            estimator="Lee-Whiteley variance estimation",
+            stacklevel=4,
+        )
+        initial_ancestor_indices = np.asarray(
+            to_numpy(self.final_state.initial_ancestor_indices)
+        )
+        if initial_ancestor_indices.shape != (n_particles,):
+            raise ValueError(
+                "Initial ancestor indices must match the final particle "
+                "population."
+            )
+        family_sizes = np.bincount(
+            initial_ancestor_indices,
+            minlength=n_particles,
+        )
+        different_eve_pairs = n_particles**2 - np.sum(family_sizes**2)
+        correction = (n_particles / (n_particles - 1)) ** len(self.states)
+        variance = 1.0 - correction * different_eve_pairs / (
+            n_particles * (n_particles - 1)
+        )
+        xp = namespace(self.final_state.log_weights)
+        return asarray(variance, xp=xp, like=self.final_state.log_weights)
+
+    def _resampling_history(self) -> list[np.ndarray]:
+        """Return validated parent maps for resampling events in run order."""
+        if len(self.outputs) != len(self.states):
+            raise ValueError(
+                "Fixed-lag Lee-Whiteley variance estimation requires one "
+                "output record per particle state."
+            )
+
+        n_particles = self.final_state.particles.shape[0]
+        if n_particles <= 1:
+            raise ValueError(
+                "Fixed-lag Lee-Whiteley variance estimation requires at least "
+                "two particles."
+            )
+
+        history: list[np.ndarray] = []
+        recorded_resampling_outputs: list[Mapping[str, Any]] = []
+        for iteration, (state, output) in enumerate(
+            zip(self.states, self.outputs, strict=True)
+        ):
+            if state.particles.shape[0] != n_particles:
+                raise ValueError(
+                    "Fixed-lag Lee-Whiteley variance estimation requires a "
+                    "constant particle count."
+                )
+            resampling_outputs = list(_find_resampling_outputs(output))
+            if len(resampling_outputs) != 1:
+                raise ValueError(
+                    "Fixed-lag Lee-Whiteley variance estimation requires "
+                    "exactly one resampling output per iteration; found "
+                    f"{len(resampling_outputs)} at iteration {iteration}."
+                )
+            resampling_output = resampling_outputs[0]
+            recorded_resampling_outputs.append(resampling_output)
+            if not bool(to_numpy(resampling_output["resampled"])):
+                continue
+            if "ancestors" not in resampling_output:
+                raise ValueError(
+                    "Fixed-lag Lee-Whiteley variance estimation requires "
+                    "recorded ancestor indices at resampling iteration "
+                    f"{iteration}."
+                )
+            parents = np.asarray(to_numpy(resampling_output["ancestors"]))
+            if parents.shape != (n_particles,):
+                raise ValueError(
+                    "Ancestor indices must have shape "
+                    f"({n_particles},), got {parents.shape} at iteration "
+                    f"{iteration}."
+                )
+            if not np.issubdtype(parents.dtype, np.integer):
+                raise ValueError(
+                    "Ancestor indices must have an integer dtype."
+                )
+            if np.any((parents < 0) | (parents >= n_particles)):
+                raise ValueError(
+                    f"Ancestor indices are out of bounds at iteration {iteration}."
+                )
+            history.append(parents)
+        _warn_if_resampling_is_not_multinomial(
+            recorded_resampling_outputs,
+            estimator="Fixed-lag Lee-Whiteley variance estimation",
+            stacklevel=5,
+        )
+        return history
+
+    def _log_evidence_variance_fixed_lag_lee_whiteley(
+        self,
+        lag: int,
+    ) -> tuple[Array, FixedLagLeeWhiteleyDiagnostics]:
+        """Return the fixed-lag Lee--Whiteley variance and diagnostics."""
+        if isinstance(lag, bool) or not isinstance(lag, int) or lag < 0:
+            raise ValueError("lag must be a non-negative integer.")
+
+        history = self._resampling_history()
+        n_particles = self.final_state.particles.shape[0]
+        traced = min(lag, len(history))
+        ancestors = np.arange(n_particles)
+        if traced:
+            for parents in reversed(history[-traced:]):
+                ancestors = parents[ancestors]
+
+        weights = np.asarray(to_numpy(self.final_state.weights), dtype=float)
+        family_weights = np.bincount(
+            ancestors,
+            weights=weights,
+            minlength=n_particles,
+        )
+        family_concentration = float(np.sum(family_weights**2))
+        different_family_mass = max(0.0, 1.0 - family_concentration)
+        if different_family_mass == 0.0:
+            variance = 1.0
+        else:
+            log_pair_term = (traced + 1) * math.log1p(
+                1.0 / (n_particles - 1)
+            ) + math.log(different_family_mass)
+            variance = float(-np.expm1(log_pair_term))
+        # Finite-sample genealogical estimators can be slightly negative before
+        # their large-N limit; preserve that signal rather than clipping it.
+        diagnostics = FixedLagLeeWhiteleyDiagnostics(
+            requested_lag=lag,
+            traced_resampling_events=traced,
+            total_resampling_events=len(history),
+            distinct_ancestors=int(np.unique(ancestors).size),
+            family_ess=1.0 / family_concentration,
+        )
+        xp = namespace(self.final_state.log_weights)
+        return (
+            asarray(variance, xp=xp, like=self.final_state.log_weights),
+            diagnostics,
+        )
+
+    def fixed_lag_lee_whiteley_diagnostics(
+        self,
+        lag: int,
+    ) -> FixedLagLeeWhiteleyDiagnostics:
+        """Return diagnostics for a fixed-lag Lee--Whiteley estimate."""
+        _, diagnostics = self._log_evidence_variance_fixed_lag_lee_whiteley(
+            lag
+        )
+        return diagnostics
+
+    def log_evidence_error(
+        self,
+        method: EvidenceVarianceMethod = "incremental",
+        *,
+        lag: int | None = None,
+    ) -> Array:
+        """Return the standard error associated with an evidence variance."""
+        variance = self.log_evidence_variance(method=method, lag=lag)
+        if float(to_numpy(variance)) < 0.0:
+            raise ValueError(
+                "The estimated log-evidence variance is negative; a real "
+                "standard error cannot be computed."
+            )
+        xp = namespace(variance)
+        return xp.sqrt(variance)
 
     def log_evidence_history(self) -> Array:
         """Return the log evidence trajectory."""

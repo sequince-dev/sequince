@@ -297,6 +297,7 @@ def draw_additional_samples(
     resampled_state = ParticleState(
         particles=resampled_particles,
         log_evidence=state.log_evidence,
+        initial_ancestor_indices=state.initial_ancestor_indices[indices],
         evaluation=(
             None
             if state.evaluation is None

@@ -56,11 +56,11 @@ def main() -> None:
         log_prior=log_prior,
         log_likelihood=log_likelihood,
         target_ess_ratio=evolving_target_ess_ratio(0.4, 0.9),
-        max_temperature=1.0,
         min_delta=1e-8,
+        resampling="multinomial",
         always_resample=True,
         mutation="minipcn",
-        mutation_n_steps=10,
+        mutation_n_steps=8,
         particle_transform="affine",
         auto_normalize=True,
     )
@@ -78,11 +78,24 @@ def main() -> None:
     )
 
     posterior_state = result.final_state
-    log_evidence = posterior_state.log_evidence
-    print(f"Estimated log evidence: {log_evidence:.4f}")
+    # Compute the log evidence and its standard error
+    log_evidence = result.log_evidence()
+    log_evidence_error = result.log_evidence_error()
+    # The log evidence error can also be estimated using other methods
+    # For example the Lee-Whiteley method aims to capture the variance of the
+    # log evidence estimate due to resampling and mutation steps.
+    # However, this is only valid when using multinomial resampling
+    log_evidence_error_lw = result.log_evidence_error(method="lee-whiteley")
+    print(
+        f"Estimated log evidence: {log_evidence:.4f} ± {log_evidence_error:.4f}"
+    )
+    print(
+        f"Estimated log evidence (Lee-Whiteley): {log_evidence:.4f} ± {log_evidence_error_lw:.4f}"
+    )
     print(f"True log evidence:      {true_log_evidence:.4f}")
 
     # Draw additional posterior samples
+    # This does not affect the log evidence estimate
     print("Drawing additional posterior samples...")
     posterior_state, result = draw_additional_samples(
         log_prior=log_prior,
@@ -91,7 +104,7 @@ def main() -> None:
         rng=rng,
         n_particles=1000,
         mutation="minipcn",
-        mutation_n_steps=10,
+        mutation_n_steps=4,
     )
 
     # Analyze the posterior particles

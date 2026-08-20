@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import array_api_extra as xpx
 from array_api_compat import device as get_device
 
 from .._typing import Array
 from ..array_api import asarray, namespace
-from ..utils import normalize_log_weights
+from ..utils import normalize_log_weights, pytree_dataclass
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
@@ -18,6 +19,36 @@ if TYPE_CHECKING:
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
+
+
+@pytree_dataclass(
+    data_fields=("ess", "resampled", "ancestors"),
+    meta_fields=("resampling_scheme",),
+)
+@dataclass(frozen=True)
+class ResamplingOutput(Mapping[str, Any]):
+    """Fixed-structure resampling output with a static scheme label."""
+
+    ess: float | Array
+    resampled: bool | Array
+    ancestors: Array
+    resampling_scheme: str
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in {
+            "ess",
+            "resampled",
+            "ancestors",
+            "resampling_scheme",
+        }:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self):
+        return iter(("ess", "resampled", "ancestors", "resampling_scheme"))
+
+    def __len__(self) -> int:
+        return 4
 
 
 class ResamplingStep(SMCStep):
@@ -34,6 +65,8 @@ class ResamplingStep(SMCStep):
         ``ess_threshold``).
     """
 
+    resampling_scheme: ClassVar[str] = "unknown"
+
     def __init__(
         self,
         *,
@@ -48,11 +81,15 @@ class ResamplingStep(SMCStep):
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> tuple[ParticleState, StepContext, dict[str, object]]:
+    ) -> tuple[ParticleState, StepContext, ResamplingOutput]:
         ess = state.effective_sample_size()
         n = state.log_weights.shape[0]
         ess_ratio = ess / n if n else 0.0
-        output: dict[str, object] = {"ess": ess, "resampled": False}
+        xp = namespace(state.log_weights)
+        identity_ancestors = xp.arange(
+            n,
+            device=get_device(state.log_weights),
+        )
         if not self._should_resample(state):
             logger.debug(
                 "%s skipped resampling (ESS ratio=%.4f).",
@@ -60,7 +97,16 @@ class ResamplingStep(SMCStep):
                 ess_ratio,
             )
             context = context.with_metadata(ess=ess, resampled=False)
-            return state, context, output
+            return (
+                state,
+                context,
+                ResamplingOutput(
+                    ess=ess,
+                    resampled=False,
+                    ancestors=identity_ancestors,
+                    resampling_scheme=self.resampling_scheme,
+                ),
+            )
         logger.debug(
             "%s performing resampling (ESS ratio=%.4f).",
             self.__class__.__name__,
@@ -69,8 +115,16 @@ class ResamplingStep(SMCStep):
         weights = state.weights
         indices = self._choose_ancestors(weights, rng)
         context = context.with_metadata(ess=ess, resampled=True)
-        output["resampled"] = True
-        return state.resample(indices), context, output
+        return (
+            state.resample(indices),
+            context,
+            ResamplingOutput(
+                ess=ess,
+                resampled=True,
+                ancestors=indices,
+                resampling_scheme=self.resampling_scheme,
+            ),
+        )
 
     def _choose_ancestors(
         self, weights: Array, rng: "RandomGenerator"
@@ -104,7 +158,7 @@ class ResamplingStep(SMCStep):
         state: ParticleState,
         context: StepContext,
         random_state: object,
-    ) -> tuple[ParticleState, StepContext, object, dict[str, object]]:
+    ) -> tuple[ParticleState, StepContext, object, ResamplingOutput]:
         """Resample while explicitly threading RNG state.
 
         The initial compiled subset requires unconditional resampling.  A
@@ -127,12 +181,14 @@ class ResamplingStep(SMCStep):
         ess = 1.0 / xp.sum(xp.square(weights))
         rng = RandomGenerator.from_xp(xp, generator=random_state)
         indices = self._choose_ancestors(weights, rng)
-        updated = state.resample(indices, record_ancestors=False)
+        updated = state.resample(indices)
         context = context.with_metadata(ess=ess, resampled=xp.asarray(True))
-        output = {
-            "ess": ess,
-            "resampled": xp.asarray(True),
-        }
+        output = ResamplingOutput(
+            ess=ess,
+            resampled=xp.asarray(True),
+            ancestors=indices,
+            resampling_scheme=self.resampling_scheme,
+        )
         return updated, context, rng.state(), output
 
     def _should_resample(self, state: ParticleState) -> bool:
@@ -148,6 +204,8 @@ class ResamplingStep(SMCStep):
 class MultinomialResampling(ResamplingStep):
     """Draw ancestors with replacement according to the weights."""
 
+    resampling_scheme = "multinomial"
+
     def _choose_ancestors(
         self, weights: Array, rng: "RandomGenerator"
     ) -> Array:
@@ -159,6 +217,8 @@ class MultinomialResampling(ResamplingStep):
 
 class StratifiedResampling(ResamplingStep):
     """Stratified resampling for reduced variance."""
+
+    resampling_scheme = "stratified"
 
     def _choose_ancestors(
         self, weights: Array, rng: "RandomGenerator"
@@ -175,6 +235,8 @@ class StratifiedResampling(ResamplingStep):
 
 class SystematicResampling(ResamplingStep):
     """Systematic resampling for reduced variance."""
+
+    resampling_scheme = "systematic"
 
     def _choose_ancestors(
         self, weights: Array, rng: "RandomGenerator"

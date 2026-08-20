@@ -267,8 +267,12 @@ def test_functional_iteration_can_be_jitted() -> None:
     )
 
     assert updated.particles.shape == (4, 2)
+    assert updated.initial_ancestor_indices.shape == (4,)
     assert context.metadata["temperature"] == pytest.approx(0.5)
     assert len(outputs) == 3
+    assert outputs[1]["ancestors"].shape == (4,)
+    assert outputs[1]["resampling_scheme"] == "systematic"
+    assert "ancestors" not in updated.metadata
     assert outputs[-1]["algorithm"] == "random-walk"
     assert not np.array_equal(
         jax.random.key_data(key),
@@ -331,6 +335,10 @@ def test_functional_iteration_matches_host_iteration() -> None:
     np.testing.assert_allclose(
         actual_state.log_evidence,
         expected.final_state.log_evidence,
+    )
+    np.testing.assert_array_equal(
+        actual_state.initial_ancestor_indices,
+        expected.final_state.initial_ancestor_indices,
     )
     np.testing.assert_allclose(
         actual_context.metadata["temperature"],

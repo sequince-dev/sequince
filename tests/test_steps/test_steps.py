@@ -545,7 +545,11 @@ def test_systematic_resampling_skips_when_not_required(
     context = context_factory()
     step = SystematicResampling(ess_threshold=0.2, always_resample=False)
     result, context, output = step(normalized, context, rng)
-    assert result is normalized  # no resampling expected
+    np.testing.assert_array_equal(result.particles, normalized.particles)
+    np.testing.assert_array_equal(result.log_weights, normalized.log_weights)
+    np.testing.assert_array_equal(
+        output["ancestors"], np.arange(normalized.particles.shape[0])
+    )
     assert output["resampled"] is False
 
 
@@ -595,8 +599,29 @@ def test_multinomial_resampling_resamples_particles(
             resampled.log_weights, -np.log(resampled.log_weights.size)
         ),
     )
-    assert "ancestors" in resampled.metadata
+    assert "ancestors" not in resampled.metadata
+    assert "ancestors" in output
     assert output["resampled"] is True
+    assert output["resampling_scheme"] == "multinomial"
+
+
+def test_skipped_resampling_outputs_identity_ancestors(
+    particle_state: ParticleState, context_factory, rng
+) -> None:
+    state = particle_state
+    step = MultinomialResampling(ess_threshold=None)
+
+    updated, context, output = step(state, context_factory(), rng)
+
+    np.testing.assert_array_equal(
+        output["ancestors"], np.arange(state.particles.shape[0])
+    )
+    assert "ancestors" not in updated.metadata
+    np.testing.assert_array_equal(updated.particles, state.particles)
+    np.testing.assert_array_equal(updated.log_weights, state.log_weights)
+    assert context.metadata["resampled"] is False
+    assert output["resampled"] is False
+    assert output["resampling_scheme"] == "multinomial"
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
@@ -614,7 +639,7 @@ def test_resampling_preserves_array_backend(
     particles = case.particles
     backend_ns = namespace(particles)
 
-    updated, _, _ = step_type(always_resample=True)(
+    updated, _, output = step_type(always_resample=True)(
         case.state(),
         context_factory(),
         case.rng(1234),
@@ -622,7 +647,8 @@ def test_resampling_preserves_array_backend(
 
     assert namespace(updated.particles) is backend_ns
     assert namespace(updated.log_weights) is backend_ns
-    assert namespace(updated.metadata["ancestors"]) is backend_ns
+    assert namespace(output["ancestors"]) is backend_ns
+    assert output["resampling_scheme"] == step_type.resampling_scheme
 
 
 def test_adapt_gaussian_proposal_updates_scale(
@@ -767,7 +793,7 @@ def test_waste_free_resample_move_preserves_array_backend(
         GaussianRandomWalk(scale=0.4),
         proposals_per_particle=2,
     )
-    updated, _, _ = step(
+    updated, _, output = step(
         case.state(),
         context_factory(shared={"temperature": 1.0}),
         case.rng(1234),
@@ -775,7 +801,7 @@ def test_waste_free_resample_move_preserves_array_backend(
 
     assert namespace(updated.particles) is backend_ns
     assert namespace(updated.log_weights) is backend_ns
-    assert namespace(updated.metadata["ancestors"]) is backend_ns
+    assert namespace(output["ancestors"]) is backend_ns
     assert updated.particles.shape == particles.shape
     assert updated.log_weights.shape == case.log_weights.shape
 

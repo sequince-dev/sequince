@@ -13,11 +13,16 @@ def test_copy_creates_independent_state(particle_state: ParticleState) -> None:
     copied = particle_state.copy()
     copied.particles[0, 0] = 99.0
     copied.log_weights[0] = -5.0
+    copied.initial_ancestor_indices[0] = 2
     copied.metadata["temperature"] = 10.0
     copied.metadata["nested"]["values"].append(2.0)
 
     assert not np.array_equal(copied.particles, particle_state.particles)
     assert not np.array_equal(copied.log_weights, particle_state.log_weights)
+    np.testing.assert_array_equal(
+        particle_state.initial_ancestor_indices,
+        np.arange(particle_state.particles.shape[0]),
+    )
     assert particle_state.metadata["temperature"] == 0.0
     assert particle_state.metadata["nested"] == {"values": [1.0]}
 
@@ -78,6 +83,7 @@ def test_state_resamples_and_serializes_target_evaluation() -> None:
     restored = ParticleState.from_dict(resampled.to_dict())
 
     np.testing.assert_allclose(restored.particles[:, 0], [3.0, 1.0, 3.0])
+    np.testing.assert_array_equal(restored.initial_ancestor_indices, [2, 0, 2])
     assert restored.evaluation is not None
     np.testing.assert_allclose(
         restored.evaluation["log_likelihood"],
@@ -101,7 +107,7 @@ def test_with_updates_returns_new_state(particle_state: ParticleState) -> None:
     assert particle_state.log_evidence == 0.0
 
 
-def test_resample_returns_equal_weights_and_track_ancestors(
+def test_resample_returns_equal_weights_and_preserves_metadata(
     particle_state: ParticleState, rng
 ) -> None:
     n = len(particle_state.log_weights)
@@ -111,8 +117,28 @@ def test_resample_returns_equal_weights_and_track_ancestors(
     assert np.allclose(
         resampled.log_weights, np.full(len(indices), -np.log(len(indices)))
     )
-    assert np.array_equal(resampled.metadata["ancestors"], indices)
+    assert "ancestors" not in resampled.metadata
     assert resampled.metadata.get(
         "temperature"
     ) == particle_state.metadata.get("temperature")
     assert resampled.log_evidence == particle_state.log_evidence
+
+
+def test_resample_composes_initial_ancestor_indices() -> None:
+    state = ParticleState(particles=np.zeros((4, 1)))
+
+    first = state.resample(np.array([0, 0, 2, 3]))
+    second = first.resample(np.array([0, 1, 1, 3]))
+
+    np.testing.assert_array_equal(first.initial_ancestor_indices, [0, 0, 2, 3])
+    np.testing.assert_array_equal(
+        second.initial_ancestor_indices, [0, 0, 0, 3]
+    )
+
+
+def test_initial_ancestor_indices_must_match_particles() -> None:
+    with pytest.raises(ValueError, match="must match the particle population"):
+        ParticleState(
+            particles=np.zeros((4, 1)),
+            initial_ancestor_indices=np.arange(3),
+        )

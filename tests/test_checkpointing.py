@@ -763,6 +763,7 @@ def test_malformed_checkpoint_payload_raises() -> None:
                         "particles": np.zeros((2, 1)),
                         "log_weights": np.zeros(2),
                         "log_evidence": 0.0,
+                        "initial_ancestor_indices": np.arange(2),
                         "metadata": {},
                     }
                 ],

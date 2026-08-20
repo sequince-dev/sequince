@@ -240,8 +240,7 @@ class WasteFreeResampleMove(SMCStep):
         if squeeze_last:
             new_particles = new_particles[:, 0]
 
-        metadata = dict(state.metadata)
-        metadata["ancestors"] = ancestor_indices
+        selected_ancestor_indices = ancestor_indices[selected % n]
         mean_acceptance = (
             float(xp.mean(xp.concat(tuple(acceptance_history), axis=0)))
             if acceptance_history
@@ -271,6 +270,7 @@ class WasteFreeResampleMove(SMCStep):
             device=get_device(log_weight_template),
         )
         output = {
+            "ancestors": selected_ancestor_indices,
             "acceptance": mean_acceptance,
             "acceptance_by_round": tuple(acceptance_by_round),
             "selected_proposals": selected_proposals,
@@ -284,7 +284,9 @@ class WasteFreeResampleMove(SMCStep):
                 new_particles,
                 evaluation=new_evaluation,
                 log_weights=log_weights,
-                metadata=metadata,
+                initial_ancestor_indices=state.initial_ancestor_indices[
+                    selected_ancestor_indices
+                ],
             ),
             context,
             output,
