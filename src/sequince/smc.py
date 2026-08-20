@@ -493,11 +493,12 @@ class SequentialMonteCarlo:
             ]
 
             if checkpoint_writers:
-                include_history = any(
-                    writer.include_history for writer in checkpoint_writers
-                )
                 save_rng = any(
                     writer.save_rng for writer in checkpoint_writers
+                )
+                detach_checkpoint = any(
+                    writer.requires_detached_checkpoint
+                    for writer in checkpoint_writers
                 )
                 checkpoint = SMCCheckpoint.from_runtime(
                     state=state,
@@ -505,7 +506,7 @@ class SequentialMonteCarlo:
                     result=result,
                     steps=self._steps,
                     rng=execution_state if save_rng else None,
-                    include_history=include_history,
+                    detach=detach_checkpoint,
                 )
                 for writer in checkpoint_writers:
                     writer.write(checkpoint)
@@ -665,13 +666,13 @@ class SequentialMonteCarlo:
         shared_context: Mapping[str, Any] | None,
         rng: Any,
     ) -> SMCRuntime:
-        state = checkpoint.state.copy()
-        history = checkpoint.history or (checkpoint.state,)
+        states = [item.copy() for item in checkpoint.states]
+        state = states[-1]
         restored_metadata = array_safe_copy(checkpoint.metadata)
 
         return SMCRuntime(
             state=state,
-            produced_states=[item.copy() for item in history],
+            produced_states=states,
             initial_state=(
                 None
                 if checkpoint.initial_state is None
