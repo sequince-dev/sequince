@@ -69,7 +69,7 @@ def array_safe_copy(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def pytree_dataclass(*, data_fields, meta_fields=()):
+def pytree_dataclass(*, data_fields, meta_fields=(), drop_fields=()):
     try:
         import jax
     except ModuleNotFoundError as exc:
@@ -81,6 +81,7 @@ def pytree_dataclass(*, data_fields, meta_fields=()):
         cls,
         data_fields=data_fields,
         meta_fields=meta_fields,
+        drop_fields=drop_fields,
     )
 
 
