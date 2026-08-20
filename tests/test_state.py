@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import inspect
-
 import numpy as np
 import pytest
 
@@ -305,7 +303,6 @@ def test_persistent_state_append_does_not_mutate_history() -> None:
         "temperatures",
         "log_evidences",
         "batch_size",
-        "log_evidence",
     ],
 )
 def test_persistent_state_with_updates_rejects_structural_fields(
@@ -321,23 +318,33 @@ def test_persistent_state_with_updates_rejects_structural_fields(
         history.with_updates(**{field: 1.0})
 
 
-def test_persistent_state_scalar_log_evidence_is_read_only() -> None:
+def test_persistent_state_scalar_log_evidence_can_differ_from_history() -> (
+    None
+):
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
         log_evidence=0.7,
     )
 
-    with pytest.raises(AttributeError, match="derived from"):
-        history.log_evidence = 2.0
+    weighted = history.with_updates(log_evidence=2.0)
 
     assert history.log_evidence == pytest.approx(0.7)
+    assert weighted.log_evidence == pytest.approx(2.0)
+    np.testing.assert_allclose(weighted.log_evidences, [0.7])
 
 
-def test_persistent_state_constructor_has_no_scalar_log_evidence() -> None:
-    parameters = inspect.signature(PersistentParticleState).parameters
+def test_persistent_state_constructor_accepts_scalar_log_evidence() -> None:
+    history = PersistentParticleState(
+        particles=np.zeros((2, 1)),
+        temperatures=[0.0],
+        log_evidences=[0.7],
+        batch_size=2,
+        log_evidence=2.0,
+    )
 
-    assert "log_evidence" not in parameters
+    assert history.log_evidence == pytest.approx(2.0)
+    np.testing.assert_allclose(history.log_evidences, [0.7])
 
 
 def test_persistent_state_with_updates_accepts_log_weights() -> None:
