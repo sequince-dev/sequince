@@ -38,12 +38,15 @@ def test_sequince_runs_with_array_backends(
     assert final_state.particles.shape == particles.shape
     assert namespace(final_state.particles) is backend_ns
 
-    samples = results.posterior_samples(
+    samples, sample_weights = results.posterior_samples(
         n_samples=particles.shape[0],
         rng=case.rng(4321),
     )
     assert samples.shape[0] == particles.shape[0]
     assert namespace(samples) is backend_ns
+    assert sample_weights.shape == (particles.shape[0],)
+    assert namespace(sample_weights) is backend_ns
+    assert float(xp.sum(sample_weights)) == pytest.approx(1.0)
 
     mean = results.weighted_mean()
     assert namespace(mean) is backend_ns

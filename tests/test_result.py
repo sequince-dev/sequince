@@ -46,6 +46,110 @@ def test_smc_results_summary(dummy_results: SMCResult) -> None:
     dummy_results.summary()
 
 
+@pytest.fixture
+def weighted_results(context_factory) -> SMCResult:
+    state = ParticleState(
+        particles=np.arange(4.0)[:, None],
+        log_weights=np.log([0.1, 0.2, 0.3, 0.4]),
+    )
+    return SMCResult([state], context_factory())
+
+
+def test_posterior_samples_returns_final_particles_and_weights(
+    weighted_results: SMCResult,
+) -> None:
+    samples, weights = weighted_results.posterior_samples()
+
+    np.testing.assert_array_equal(
+        samples, weighted_results.final_state.particles
+    )
+    np.testing.assert_allclose(weights, [0.1, 0.2, 0.3, 0.4])
+    np.testing.assert_allclose(weights.sum(), 1.0)
+
+
+def test_posterior_samples_downselects_and_renormalizes_weights(
+    weighted_results: SMCResult,
+) -> None:
+    samples, weights = weighted_results.posterior_samples(
+        n_samples=2,
+        rng=1234,
+        method="weights",
+    )
+
+    assert samples.shape == (2, 1)
+    assert np.unique(samples, axis=0).shape[0] == 2
+    selected = samples[:, 0].astype(int)
+    expected = np.array([0.1, 0.2, 0.3, 0.4])[selected]
+    np.testing.assert_allclose(weights, expected / expected.sum())
+
+
+def test_posterior_samples_multinomial_is_reproducible_and_equal_weighted(
+    weighted_results: SMCResult,
+) -> None:
+    first_samples, first_weights = weighted_results.posterior_samples(
+        n_samples=20,
+        rng=1234,
+        method="multinomial",
+    )
+    second_samples, second_weights = weighted_results.posterior_samples(
+        n_samples=20,
+        rng=1234,
+        method="multinomial",
+    )
+
+    np.testing.assert_array_equal(first_samples, second_samples)
+    np.testing.assert_array_equal(first_weights, second_weights)
+    np.testing.assert_allclose(first_weights, np.full(20, 1.0 / 20.0))
+
+
+def test_posterior_samples_rejection_returns_unique_equal_weight_samples(
+    context_factory,
+) -> None:
+    state = ParticleState(particles=np.arange(4.0)[:, None])
+    result = SMCResult([state], context_factory())
+
+    samples, weights = result.posterior_samples(
+        n_samples=2,
+        rng=1234,
+        method="rejection",
+    )
+
+    assert samples.shape == (2, 1)
+    assert np.unique(samples, axis=0).shape[0] == 2
+    np.testing.assert_allclose(weights, [0.5, 0.5])
+
+
+@pytest.mark.parametrize("method", ["weights", "rejection"])
+def test_posterior_samples_rejects_too_many_unique_samples(
+    weighted_results: SMCResult,
+    method: str,
+) -> None:
+    with pytest.raises(ValueError, match="cannot exceed the particle count"):
+        weighted_results.posterior_samples(
+            n_samples=5,
+            method=method,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("method", ["weights", "rejection", "multinomial"])
+def test_posterior_samples_requires_positive_sample_count(
+    weighted_results: SMCResult,
+    method: str,
+) -> None:
+    with pytest.raises(ValueError, match="n_samples must be positive"):
+        weighted_results.posterior_samples(
+            n_samples=0,
+            method=method,  # type: ignore[arg-type]
+        )
+
+
+def test_posterior_samples_rejects_unknown_method(
+    weighted_results: SMCResult,
+) -> None:
+    with pytest.raises(ValueError, match="Unknown posterior sampling method"):
+        weighted_results.posterior_samples(method="unknown")  # type: ignore[arg-type]
+
+
 def test_log_evidence_variance_dispatches_to_incremental(
     particle_state, context_factory
 ) -> None:
