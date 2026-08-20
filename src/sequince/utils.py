@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
+from acai import while_loop
 from array_api_compat import (
     is_array_api_obj,
     is_cupy_namespace,
@@ -38,6 +39,55 @@ IS_NAMESPACE_FUNCTIONS = {
     "pydata_sparse": is_pydata_sparse_namespace,
     "ndonnx": is_ndonnx_namespace,
 }
+
+
+def bisect_monotone_decreasing(
+    criterion: Callable[[Array], Array],
+    lower: Array,
+    upper: Array,
+    target: Array,
+    *,
+    tolerance: Array,
+    max_iterations: int,
+) -> tuple[Array, Array]:
+    """Refine a bracket around a decreasing criterion's target crossing.
+
+    The returned lower bound is the largest tested value whose criterion is at
+    least ``target``; the upper bound is the smallest tested value below it.
+    Callers own endpoint validation and the policy for selecting a final value
+    from the returned bracket.
+
+    The loop uses :func:`acai.while_loop`, preserving structured control flow
+    under JAX compilation while retaining eager behavior on other backends.
+    """
+    xp = namespace(lower, upper, target, tolerance)
+
+    def continue_bisection(carry: tuple[Any, Array, Array]) -> Array:
+        iteration, low, high = carry
+        below_iteration_limit = iteration < max_iterations
+        above_tolerance = high - low > tolerance
+        return xp.logical_and(below_iteration_limit, above_tolerance)
+
+    def refine_bracket(
+        carry: tuple[Any, Array, Array],
+    ) -> tuple[Any, Array, Array]:
+        iteration, low, high = carry
+        middle = 0.5 * (low + high)
+        value = criterion(middle)
+        move_low = value >= target
+        return (
+            iteration + 1,
+            xp.where(move_low, middle, low),
+            xp.where(move_low, high, middle),
+        )
+
+    _, low, high = while_loop(
+        continue_bisection,
+        refine_bracket,
+        (0, lower, upper),
+        xp=xp,
+    )
+    return low, high
 
 
 def array_safe_copy(value: Any) -> Any:
