@@ -358,9 +358,10 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
     temperature is bisected over the interval from the current temperature to
     one. If the requested ESS cannot be attained while advancing, the current
     temperature is repeated so that another batch can be added to the archive.
-    Once temperature one is selected, the weighting requests a normal runner
-    stop. When ``target_total_ess`` is configured, temperature-one batches are
-    instead accumulated until the complete archive reaches that ESS.
+    Once temperature one is selected, the weighting requests an immediate
+    runner stop. When ``target_total_ess`` is configured, temperature-one
+    batches are instead accumulated until the complete archive reaches that
+    ESS.
 
     Parameters
     ----------
@@ -516,7 +517,7 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
             self._target_total_ess is None
             or float(output["effective_sample_size"]) >= self._target_total_ess
         ):
-            context = context.request_stop()
+            context = context.request_stop_immediately()
         return weighted, context, output
 
     def apply_functional(
