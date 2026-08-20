@@ -20,7 +20,7 @@ from .proposals import (
 )
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
-from .state import ParticleState
+from .state import ParticleState, PersistentParticleState
 from .target import SequentialTarget, TargetEvaluation, TemperedTarget
 
 try:
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DegenerateWeightsError",
     "ParticleState",
+    "PersistentParticleState",
     "ProposalDistribution",
     "MCMCResult",
     "MarkovChainMonteCarlo",
