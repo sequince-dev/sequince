@@ -111,7 +111,7 @@ class ParticleState:
         )
 
     def normalize(self) -> tuple["ParticleState", float]:
-        """Return a new state with normalized log weights and updated evidence."""
+        """Return a new state with normalized log weights and normalizer."""
         state = self.copy()
         xp = namespace(state.log_weights)
         state.log_weights, log_norm = normalize_log_weights(
@@ -119,7 +119,6 @@ class ParticleState:
             xp=xp,
         )
         _validate_log_normalizer(log_norm, xp=xp)
-        state.log_evidence += log_norm
         return state, log_norm
 
     @property

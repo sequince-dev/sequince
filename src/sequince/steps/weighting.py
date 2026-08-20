@@ -228,7 +228,8 @@ class IncrementalWeighting(SMCStep):
             log_weights=state.log_weights + increments
         )
         if self._normalize_after:
-            updated_state, _ = updated_state.normalize()
+            updated_state, log_norm = updated_state.normalize()
+            updated_state.log_evidence += log_norm
         logger.debug(
             "IncrementalWeighting: mean increment %.6f (normalize_after=%s).",
             float(to_numpy(xp.sum(increments) / increments.shape[0])),
@@ -486,7 +487,8 @@ class TemperedWeighting(BaseTemperedStep):
             metadata=metadata,
         )
         if self._normalize_after:
-            updated_state, _ = updated_state.normalize()
+            updated_state, log_norm = updated_state.normalize()
+            updated_state.log_evidence += log_norm
         context = context.with_metadata(
             temperature=target_temperature,
             temperature_delta=temperature_delta,
