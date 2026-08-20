@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import math
+from collections.abc import Mapping
 from numbers import Integral
 from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from .state import ParticleState
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
+logger = logging.getLogger(__name__)
 
 __all__ = ["make_persistent_bayesian_smc", "make_standard_bayesian_smc"]
 
@@ -270,6 +273,7 @@ def make_persistent_bayesian_smc(
     particle_transform: ParticleTransform | str | None = "affine",
     particle_transform_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
+    logging_frequency: int = 1,
     callbacks: Sequence[
         Callable[[ParticleState, StepContext, SMCResult], None]
     ]
@@ -286,7 +290,9 @@ def make_persistent_bayesian_smc(
     The caller should initialize an ordinary :class:`ParticleState` containing
     ``n_particles`` draws from the initial target. The first persistence step
     archives that state at temperature zero, and the adaptive weighting step
-    requests a normal runner stop once its terminal ESS condition is met.
+    requests an immediate runner stop once its terminal ESS condition is met.
+    Progress is logged every ``logging_frequency`` iterations and once more for
+    the terminal weighted state. Set ``logging_frequency=0`` to disable it.
 
     For more details see https://arxiv.org/abs/2407.20722.
     """
@@ -384,9 +390,61 @@ def make_persistent_bayesian_smc(
     if mutation_step is not None:
         steps.append(mutation_step)
 
+    configured_callbacks = list(callbacks or ())
+    if logging_frequency > 0:
+
+        def logging_callback(
+            state: ParticleState,
+            context: StepContext,
+            result: SMCResult,
+        ) -> None:
+            if (
+                context.t % logging_frequency != 0
+                and not context.stop_requested
+            ):
+                return
+            archive = persist_step.persistent_state
+            # PersistParticles always runs before iteration callbacks.
+            if archive is None:  # pragma: no cover
+                n_batches = 0
+                archive_size = 0
+            else:
+                n_batches = archive.n_batches
+                archive_size = archive.n_particles
+            temperature = float(context.metadata.get("temperature", 0.0))
+            temperature_delta = float(
+                context.metadata.get("temperature_delta", 0.0)
+            )
+            outputs = result.outputs[-1]
+            weighting_output = outputs[1]
+            persistent_ess = float(weighting_output["effective_sample_size"])
+            required_ess = (
+                target_total_ess
+                if temperature >= 1.0 and target_total_ess is not None
+                else target_ess
+            )
+            mutation = outputs[3] if len(outputs) > 3 else None
+            acceptance = (
+                f", Acceptance={float(mutation['acceptance']):.3f}"
+                if isinstance(mutation, Mapping) and "acceptance" in mutation
+                else ""
+            )
+            logger.info(
+                f"Persistent SMC iteration {context.t}: "
+                f"Temperature={temperature:.6g} "
+                f"(delta={temperature_delta:.3g}), "
+                f"Batches={n_batches}, "
+                f"Archive size={archive_size}, "
+                f"Persistent ESS={persistent_ess:.1f}/{required_ess:.1f}, "
+                f"Log evidence={float(state.log_evidence):+.6g}"
+                f"{acceptance}"
+            )
+
+        configured_callbacks.append(logging_callback)
+
     return SequentialMonteCarlo(
         steps=steps,
-        callbacks=callbacks,
+        callbacks=configured_callbacks,
         checkpoint_writers=checkpoint_writers,
         auto_normalize=auto_normalize,
     )
