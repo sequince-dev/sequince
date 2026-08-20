@@ -36,7 +36,7 @@ def test_copy_handles_non_leaf_torch_metadata() -> None:
     assert copied.metadata["nested"][0] is not value
 
 
-def test_normalize_updates_log_weights_and_evidence(
+def test_normalize_updates_log_weights(
     particle_state: ParticleState,
 ) -> None:
     normalized, log_norm = particle_state.normalize()
