@@ -423,6 +423,8 @@ def test_adaptive_persistent_weighting_jumps_to_one_and_matches_fixed(
     assert float(output["temperature"]) == pytest.approx(1.0)
     assert float(output["effective_sample_size"]) >= 3.0
     assert float(output["target_ess"]) == pytest.approx(3.0)
+    assert adaptive_context.stop_requested
+    assert not adaptive_context.stop_immediately
     np.testing.assert_allclose(adaptive.log_weights, fixed.log_weights)
     np.testing.assert_allclose(adaptive.log_evidence, fixed.log_evidence)
     np.testing.assert_allclose(
@@ -457,6 +459,7 @@ def test_adaptive_persistent_weighting_selects_intermediate_temperature(
         60.0, rel=1e-7
     )
     assert weighted.effective_sample_size() == pytest.approx(60.0, rel=1e-7)
+    assert not next_context.stop_requested
 
 
 def test_adaptive_persistent_weighting_repeats_current_temperature(
@@ -478,6 +481,69 @@ def test_adaptive_persistent_weighting_repeats_current_temperature(
         0.0
     )
     assert weighted.n_particles == 100
+    assert not next_context.stop_requested
+
+
+def test_adaptive_persistent_weighting_accumulates_terminal_batches(
+    monkeypatch,
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    active, context = _evaluated_state(
+        target,
+        np.zeros((4, 1)),
+        temperature=1.0,
+    )
+    persist = PersistParticles()
+    first_history, _, _ = persist.apply(active, context, rng)
+
+    def fail_bisection(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("bisection must not run at temperature one")
+
+    monkeypatch.setattr(
+        "sequince.steps.persistent.bisect_monotone_decreasing",
+        fail_bisection,
+    )
+    step = PersistentAdaptiveTemperedWeighting(
+        target,
+        target_ess=3.0,
+        target_total_ess=6.0,
+    )
+
+    first_weighted, first_context, first_output = step.apply(
+        first_history,
+        context,
+        rng,
+    )
+
+    assert float(first_output["temperature"]) == pytest.approx(1.0)
+    assert float(first_output["temperature_delta"]) == pytest.approx(0.0)
+    assert float(first_output["effective_sample_size"]) == pytest.approx(4.0)
+    assert float(first_output["target_total_ess"]) == pytest.approx(6.0)
+    assert float(first_weighted.metadata["target_total_ess"]) == pytest.approx(
+        6.0
+    )
+    assert not first_context.stop_requested
+
+    repeated_active = first_weighted.resample(np.arange(4))
+    second_history, _, _ = persist.apply(
+        repeated_active,
+        first_context,
+        rng,
+    )
+    _, second_context, second_output = step.apply(
+        second_history,
+        first_context,
+        rng,
+    )
+
+    np.testing.assert_allclose(second_history.temperatures, [1.0, 1.0])
+    assert float(second_output["temperature"]) == pytest.approx(1.0)
+    assert float(second_output["temperature_delta"]) == pytest.approx(0.0)
+    assert float(second_output["effective_sample_size"]) == pytest.approx(8.0)
+    assert second_context.stop_requested
+    assert not second_context.stop_immediately
 
 
 def test_adaptive_persistent_weighting_advances_after_repeated_zero_batch(
@@ -584,6 +650,7 @@ def test_adaptive_persistent_weighting_preserves_backend(
     ("kwargs", "match"),
     [
         ({"target_ess": 0.0}, "target_ess must be positive"),
+        ({"target_total_ess": 0.0}, "target_total_ess must be positive"),
         (
             {"temperature_tolerance": 0.0},
             "temperature_tolerance must be positive",
