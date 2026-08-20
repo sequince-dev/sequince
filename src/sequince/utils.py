@@ -61,12 +61,17 @@ def bisect_monotone_decreasing(
     under JAX compilation while retaining eager behavior on other backends.
     """
     xp = namespace(lower, upper, target, tolerance)
+    uses_structured_loop = is_jax_namespace(xp)
 
-    def continue_bisection(carry: tuple[Any, Array, Array]) -> Array:
+    def continue_bisection(carry: tuple[Any, Array, Array]) -> Any:
         iteration, low, high = carry
-        below_iteration_limit = iteration < max_iterations
         above_tolerance = high - low > tolerance
-        return xp.logical_and(below_iteration_limit, above_tolerance)
+        if uses_structured_loop:
+            return xp.logical_and(
+                iteration < max_iterations,
+                above_tolerance,
+            )
+        return iteration < max_iterations and above_tolerance
 
     def refine_bracket(
         carry: tuple[Any, Array, Array],

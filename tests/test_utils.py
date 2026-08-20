@@ -38,6 +38,22 @@ def test_bisection_refines_bracket_without_endpoint_policy() -> None:
     assert 1.0 not in evaluated
 
 
+def test_bisection_uses_backend_native_torch_condition() -> None:
+    torch = pytest.importorskip("torch")
+
+    low, high = bisect_monotone_decreasing(
+        lambda value: 1.0 - value,
+        torch.asarray(0.0),
+        torch.asarray(1.0),
+        torch.asarray(0.3),
+        tolerance=torch.asarray(1e-6),
+        max_iterations=40,
+    )
+
+    assert float(low) <= 0.7 <= float(high)
+    assert float(high - low) <= 1e-6
+
+
 @pytest.mark.parametrize("module_name", ["numpy", "jax.numpy", "torch"])
 def test_array_safe_copy_preserves_array_backend(module_name):
     xp = pytest.importorskip(module_name)
