@@ -21,6 +21,7 @@ from .mutation import (
     ProposalRejuvenation,
 )
 from .persistent import (
+    PersistentAdaptiveTemperedWeighting,
     PersistentTemperedWeighting,
     PersistParticles,
     persistent_log_mixture_denominator,
@@ -68,6 +69,7 @@ __all__ = [
     "MutateIfResampled",
     "ProposalRejuvenation",
     "PersistParticles",
+    "PersistentAdaptiveTemperedWeighting",
     "PersistentTemperedWeighting",
     "persistent_log_mixture_denominator",
     "persistent_log_weights",
