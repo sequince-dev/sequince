@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 from scipy.special import logsumexp
@@ -11,6 +13,7 @@ from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState, PersistentParticleState
 from sequince.steps.context import StepContext
 from sequince.steps.persistent import (
+    PersistentAdaptiveTemperedWeighting,
     PersistentTemperedWeighting,
     PersistParticles,
     persistent_log_mixture_denominator,
@@ -399,3 +402,198 @@ def test_persist_particles_state_round_trip(rng) -> None:
     )
     np.testing.assert_allclose(restored.persistent_state.temperatures, [0.0])
     np.testing.assert_allclose(restored.persistent_state.log_evidences, [0.2])
+
+
+def test_adaptive_persistent_weighting_jumps_to_one_and_matches_fixed(
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    active, context = _evaluated_state(
+        target, np.array([[-0.1], [0.0], [0.1], [0.2]])
+    )
+    history, _, _ = PersistParticles().apply(active, context, rng)
+
+    adaptive, adaptive_context, output = PersistentAdaptiveTemperedWeighting(
+        target, target_ess=3.0
+    ).apply(history, context, rng)
+    fixed, fixed_context, _ = PersistentTemperedWeighting(
+        target, temperature=1.0
+    ).apply(history, context, rng)
+
+    assert float(output["temperature"]) == pytest.approx(1.0)
+    assert float(output["effective_sample_size"]) >= 3.0
+    assert float(output["target_ess"]) == pytest.approx(3.0)
+    np.testing.assert_allclose(adaptive.log_weights, fixed.log_weights)
+    np.testing.assert_allclose(adaptive.log_evidence, fixed.log_evidence)
+    np.testing.assert_allclose(
+        adaptive_context.metadata["temperature"],
+        fixed_context.metadata["temperature"],
+    )
+
+
+def test_adaptive_persistent_weighting_selects_intermediate_temperature(
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    active, context = _evaluated_state(
+        target, np.linspace(-3.0, 3.0, 101)[:, None]
+    )
+    history, _, _ = PersistParticles().apply(active, context, rng)
+    step = PersistentAdaptiveTemperedWeighting(
+        target,
+        target_ess=60.0,
+        temperature_tolerance=1e-9,
+        max_bisection_iter=60,
+    )
+
+    weighted, next_context, output = step.apply(history, context, rng)
+
+    temperature = float(output["temperature"])
+    assert 0.0 < temperature < 1.0
+    assert float(next_context.metadata["temperature_delta"]) == pytest.approx(
+        temperature
+    )
+    assert float(output["effective_sample_size"]) == pytest.approx(
+        60.0, rel=1e-7
+    )
+    assert weighted.effective_sample_size() == pytest.approx(60.0, rel=1e-7)
+
+
+def test_adaptive_persistent_weighting_repeats_current_temperature(
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    active, context = _evaluated_state(
+        target, np.linspace(-1.0, 1.0, 100)[:, None]
+    )
+    history, _, _ = PersistParticles().apply(active, context, rng)
+
+    weighted, next_context, output = PersistentAdaptiveTemperedWeighting(
+        target, target_ess=200.0
+    ).apply(history, context, rng)
+
+    assert float(output["temperature"]) == pytest.approx(0.0)
+    assert float(output["temperature_delta"]) == pytest.approx(0.0)
+    assert float(next_context.metadata["temperature_delta"]) == pytest.approx(
+        0.0
+    )
+    assert weighted.n_particles == 100
+
+
+def test_adaptive_persistent_weighting_advances_after_repeated_zero_batch(
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    active, context = _evaluated_state(
+        target, np.linspace(-3.0, 3.0, 100)[:, None]
+    )
+    persist = PersistParticles()
+    first_history, _, _ = persist.apply(active, context, rng)
+    step = PersistentAdaptiveTemperedWeighting(
+        target,
+        target_ess=150.0,
+        temperature_tolerance=1e-9,
+        max_bisection_iter=60,
+    )
+
+    first_weighted, repeated_context, first_output = step.apply(
+        first_history, context, rng
+    )
+    assert float(first_output["temperature"]) == pytest.approx(0.0)
+
+    repeated_active = first_weighted.resample(np.arange(100))
+    second_history, _, _ = persist.apply(
+        repeated_active, repeated_context, rng
+    )
+    second_weighted, _, second_output = step.apply(
+        second_history, repeated_context, rng
+    )
+
+    assert second_history.batch_size == 100
+    assert second_history.n_particles == 200
+    np.testing.assert_allclose(second_history.temperatures, [0.0, 0.0])
+    assert 0.0 < float(second_output["temperature"]) < 1.0
+    assert float(second_output["effective_sample_size"]) == pytest.approx(
+        150.0, rel=1e-7
+    )
+    assert second_weighted.effective_sample_size() == pytest.approx(
+        150.0, rel=1e-7
+    )
+
+
+def test_adaptive_and_fixed_persistent_weighting_agree_and_preserve_history(
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    first, context = _evaluated_state(
+        target, np.array([[-2.0], [-0.5], [0.5], [2.0]])
+    )
+    second, _ = _evaluated_state(
+        target,
+        np.array([[-1.5], [0.0], [1.0], [2.5]]),
+        temperature=0.25,
+        log_evidence=0.3,
+    )
+    history = PersistentParticleState.from_state(
+        first, temperature=0.0, log_evidence=0.0
+    ).append(second, temperature=0.25, log_evidence=0.3)
+    context = context.with_metadata(temperature=0.25)
+    original_temperatures = np.array(history.temperatures, copy=True)
+    original_log_evidences = np.array(history.log_evidences, copy=True)
+
+    adaptive, _, output = PersistentAdaptiveTemperedWeighting(
+        target,
+        target_ess=5.0,
+        temperature_tolerance=1e-10,
+        max_bisection_iter=60,
+    ).apply(history, context, rng)
+    fixed, _, _ = PersistentTemperedWeighting(
+        target, temperature=output["temperature"]
+    ).apply(history, context, rng)
+
+    np.testing.assert_allclose(adaptive.log_weights, fixed.log_weights)
+    np.testing.assert_allclose(adaptive.log_evidence, fixed.log_evidence)
+    np.testing.assert_allclose(adaptive.temperatures, original_temperatures)
+    np.testing.assert_allclose(adaptive.log_evidences, original_log_evidences)
+    np.testing.assert_allclose(history.temperatures, original_temperatures)
+    np.testing.assert_allclose(history.log_evidences, original_log_evidences)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
+def test_adaptive_persistent_weighting_preserves_backend(
+    backend: str, backend_factory, rng
+) -> None:
+    case = backend_factory(backend)
+    target, _ = _linear_target()
+    context = StepContext(t=0, metadata={"temperature": 0.0})
+    evaluation = target.prepare_evaluation(case.particles, context)
+    active = case.state().with_updates(evaluation=evaluation)
+    history, _, _ = PersistParticles().apply(active, context, rng)
+
+    weighted, _, output = PersistentAdaptiveTemperedWeighting(
+        target, target_ess=1.0
+    ).apply(history, context, rng)
+
+    assert namespace(weighted.log_weights) is case.xp
+    assert namespace(output["effective_sample_size"]) is case.xp
+    assert namespace(output["target_ess"]) is case.xp
+    assert float(output["temperature"]) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"target_ess": 0.0}, "target_ess must be positive"),
+        (
+            {"temperature_tolerance": 0.0},
+            "temperature_tolerance must be positive",
+        ),
+        ({"max_bisection_iter": 0}, "max_bisection_iter must be positive"),
+    ],
+)
+def test_adaptive_persistent_weighting_validates_search_settings(
+    kwargs: dict[str, Any], match: str
+) -> None:
+    target, _ = _linear_target()
+    with pytest.raises(ValueError, match=match):
+        PersistentAdaptiveTemperedWeighting(target, **kwargs)
