@@ -11,14 +11,19 @@ from sequince.transforms import FlowTransform, ParticleTransform
 
 
 class CountingTransform(ParticleTransform):
-    def __init__(self, fits: list[np.ndarray]):
+    def __init__(
+        self, fits: list[np.ndarray], fit_rngs: list[object] | None = None
+    ):
         self.fits = fits
+        self.fit_rngs = fit_rngs
 
     def clone(self):
-        return CountingTransform(self.fits)
+        return CountingTransform(self.fits, self.fit_rngs)
 
-    def fit(self, particles, context=None):
+    def fit(self, particles, context=None, *, rng=None):
         self.fits.append(np.asarray(particles).copy())
+        if self.fit_rngs is not None:
+            self.fit_rngs.append(rng)
         return self
 
 
@@ -26,13 +31,14 @@ class ReplacingTransform(ParticleTransform):
     def __init__(self, fitted: bool = False):
         self.fitted = fitted
 
-    def fit(self, particles, context=None):
+    def fit(self, particles, context=None, *, rng=None):
+        del rng
         return ReplacingTransform(fitted=True)
 
 
 class PreparingMutation(MutationStep):
     def apply(self, state, context, rng):
-        _, context = self._prepare_transform(state.particles, context)
+        _, context = self._prepare_transform(state.particles, context, rng=rng)
         return state, context, None
 
 
@@ -63,6 +69,21 @@ def test_always_refits_transform_for_each_application(
     mutation(particle_state, context, rng)
 
     assert len(fits) == 2
+
+
+def test_mutation_passes_rng_when_fitting_transform(
+    particle_state, context_factory, rng
+) -> None:
+    fits: list[np.ndarray] = []
+    fit_rngs: list[object] = []
+    mutation = PreparingMutation(
+        lambda particles, context: np.zeros(particles.shape[0]),
+        transform=CountingTransform(fits, fit_rngs),
+    )
+
+    mutation(particle_state, context_factory(), rng)
+
+    assert fit_rngs == [rng]
 
 
 def test_mutation_retains_transform_returned_by_fit(
@@ -101,9 +122,12 @@ def test_mutation_clones_flow_once_when_fitting_transform(
         transform=FlowTransform(shift_flow_factory(n_dim=2)),
     )
 
-    mutation(particle_state, context_factory(), rng)
+    _, context, _ = mutation(particle_state, context_factory(), rng)
 
     assert clone_calls == 1
+    fitted = context.metadata["particle_transform"]
+    assert isinstance(fitted, FlowTransform)
+    assert getattr(fitted.flow, "fit_rng") is rng
 
 
 def test_per_context_refit_reuses_transform_across_alternating_rounds(

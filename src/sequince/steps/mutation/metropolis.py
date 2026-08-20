@@ -122,7 +122,9 @@ class MetropolisHastingsMutation(MutationStep):
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         xp = namespace(state.particles)
-        transform, context = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(
+            state.particles, context, rng=rng
+        )
         current = asarray(
             self._forward_transform(state.particles, transform, context),
             xp=xp,

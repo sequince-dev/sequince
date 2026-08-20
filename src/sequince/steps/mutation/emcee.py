@@ -160,7 +160,8 @@ class EmceeMutation(MutationStep):
             raise ValueError("n_steps must be >= 1.")
         self._n_steps = n_steps
         self._move = resolve_emcee_moves(move) or emcee.moves.StretchMove()
-        self._run_kwargs: dict[str, Any] = run_kwargs or {}
+        self._run_kwargs: dict[str, Any] = dict(run_kwargs or {})
+        self._run_kwargs.setdefault("progress", False)
         self._kwargs: dict[str, Any] = kwargs
 
     def apply(
@@ -172,7 +173,9 @@ class EmceeMutation(MutationStep):
         import emcee
 
         xp = namespace(state.particles)
-        transform, context = self._prepare_transform(state.particles, context)
+        transform, context = self._prepare_transform(
+            state.particles, context, rng=rng
+        )
         latent_particles = self._forward_transform(
             state.particles, transform, context
         )
@@ -241,7 +244,6 @@ class EmceeMutation(MutationStep):
         state_result = sampler.run_mcmc(
             initial_positions,
             self._n_steps,
-            progress=False,
             **self._run_kwargs,
         )
         new_positions = state_result.coords

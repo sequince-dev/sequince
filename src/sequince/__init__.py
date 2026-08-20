@@ -12,7 +12,12 @@ from .exceptions import DegenerateWeightsError
 from .mcmc import MarkovChainMonteCarlo, MCMCResult, make_mcmc
 from .posterior import TemperedPosterior
 from .prebuilt_samplers import make_standard_bayesian_smc
-from .proposals import draw_initial_state, draw_mcmc_initial_state
+from .proposals import (
+    ProposalDistribution,
+    TrainableProposal,
+    draw_initial_state,
+    draw_mcmc_initial_state,
+)
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .state import ParticleState
@@ -28,6 +33,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DegenerateWeightsError",
     "ParticleState",
+    "ProposalDistribution",
     "MCMCResult",
     "MarkovChainMonteCarlo",
     "SequentialMonteCarlo",
@@ -37,6 +43,7 @@ __all__ = [
     "TemperedTarget",
     "TemperedPosterior",
     "TargetEvaluation",
+    "TrainableProposal",
     "make_standard_bayesian_smc",
     "make_mcmc",
     "draw_initial_state",

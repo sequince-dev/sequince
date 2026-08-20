@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -14,6 +13,7 @@ from .array_api import asarray, namespace
 from .array_api import copy as array_copy
 from .utils import (
     _validate_log_normalizer,
+    array_safe_copy,
     normalize_log_weights,
     pytree_dataclass,
 )
@@ -107,7 +107,7 @@ class ParticleState:
             evaluation=(
                 None if self.evaluation is None else self.evaluation.copy()
             ),
-            metadata=copy.deepcopy(self.metadata),
+            metadata=array_safe_copy(self.metadata),
         )
 
     def normalize(self) -> tuple["ParticleState", float]:
@@ -238,5 +238,5 @@ class ParticleState:
             log_evidence=float(payload["log_evidence"]),
             initial_ancestor_indices=payload["initial_ancestor_indices"],
             evaluation=evaluation,
-            metadata=copy.deepcopy(payload["metadata"]),
+            metadata=array_safe_copy(payload["metadata"]),
         )

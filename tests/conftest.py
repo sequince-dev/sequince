@@ -46,6 +46,9 @@ class BackendCase:
     def rng(self, seed: int) -> RandomGenerator:
         return RandomGenerator(backend=self.name, seed=seed)
 
+    def matches_namespace(self, array: Any) -> bool:
+        return namespace(array) is self.xp
+
 
 class AnalyticProposal:
     def __init__(self, n_dim: int, quadratic_scale: float = 0.0) -> None:
@@ -77,11 +80,20 @@ class ShiftFlow:
         self.n_dim = n_dim
         self.shift = shift
         self.fitted_particles: np.ndarray | None = None
+        self.fit_kwargs: dict[str, Any] = {}
+        self.fit_rng: Any = None
 
     def fit(
-        self, values: Any, context: Any = None, **kwargs: Any
+        self,
+        values: Any,
+        context: Any = None,
+        *,
+        rng: Any = None,
+        **kwargs: Any,
     ) -> ShiftFlow:
-        del context, kwargs
+        del context
+        self.fit_rng = rng
+        self.fit_kwargs = dict(kwargs)
         self.fitted_particles = np.asarray(values, dtype=float).copy()
         return self
 
@@ -106,8 +118,14 @@ class ShiftFlow:
             array = array[:, np.newaxis]
         return -0.5 * np.sum((array - self.shift) ** 2, axis=1)
 
-    def sample(self, num_samples: int = 1, context: Any = None) -> np.ndarray:
-        del context
+    def sample(
+        self,
+        num_samples: int = 1,
+        context: Any = None,
+        *,
+        rng: Any = None,
+    ) -> np.ndarray:
+        del context, rng
         return np.full((num_samples, self.n_dim), self.shift, dtype=float)
 
     def state_dict(self) -> dict[str, np.ndarray | None]:
@@ -177,6 +195,12 @@ def _backend_factory(backend: str) -> BackendCase:
 def backend_factory() -> Callable[[str], BackendCase]:
     """Return the shared Array API backend constructor."""
     return _backend_factory
+
+
+@pytest.fixture(params=["numpy", "torch", "jax", "cupy"])
+def backend(request: pytest.FixtureRequest) -> str:
+    """Name of each supported Array API backend."""
+    return request.param
 
 
 @pytest.fixture

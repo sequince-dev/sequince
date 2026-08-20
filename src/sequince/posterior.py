@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
@@ -16,6 +15,7 @@ from .target import (
     _evaluate_component,
 )
 from .transforms import ParticleTransform, get_prebuilt_transform
+from .utils import array_safe_copy
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -303,7 +303,7 @@ def draw_additional_samples(
             if state.evaluation is None
             else state.evaluation.take(indices)
         ),
-        metadata=copy.deepcopy(state.metadata),
+        metadata=array_safe_copy(state.metadata),
     )
 
     if isinstance(particle_transform, str):

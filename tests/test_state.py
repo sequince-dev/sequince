@@ -27,6 +27,20 @@ def test_copy_creates_independent_state(particle_state: ParticleState) -> None:
     assert particle_state.metadata["nested"] == {"values": [1.0]}
 
 
+def test_copy_handles_non_leaf_torch_metadata() -> None:
+    torch = pytest.importorskip("torch")
+    value = torch.tensor(0.0, requires_grad=True).exp()
+    state = ParticleState(
+        particles=torch.zeros((2, 1)),
+        metadata={"nested": [value]},
+    )
+
+    copied = state.copy()
+
+    assert torch.equal(copied.metadata["nested"][0], value)
+    assert copied.metadata["nested"][0] is not value
+
+
 def test_normalize_updates_log_weights_and_evidence(
     particle_state: ParticleState,
 ) -> None:

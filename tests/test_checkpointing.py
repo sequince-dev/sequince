@@ -151,6 +151,43 @@ def _assert_results_equal(
     assert left.outputs == right.outputs
 
 
+def test_runtime_checkpoint_detaches_callback_states_without_duplicates(
+    particle_state: ParticleState,
+) -> None:
+    final_state = particle_state.with_updates(
+        particles=np.asarray(particle_state.particles) + 1.0
+    )
+    context = StepContext(t=1, metadata={"temperature": 1.0})
+    result = SMCResult(
+        states=[particle_state, final_state],
+        context=context,
+        initial_state=particle_state,
+    )
+
+    checkpoint = SMCCheckpoint.from_runtime(
+        final_state,
+        context,
+        result,
+        steps=[],
+    )
+    borrowed = SMCCheckpoint.from_runtime(
+        final_state,
+        context,
+        result,
+        steps=[],
+        detach=False,
+    )
+
+    assert checkpoint.state is not final_state
+    assert len(checkpoint.states) == 2
+    assert checkpoint.states[0] is not particle_state
+    assert checkpoint.initial_state is not particle_state
+    assert borrowed.state is final_state
+    assert borrowed.states == (particle_state, final_state)
+    assert borrowed.initial_state is particle_state
+    assert "history" not in checkpoint.to_dict()
+
+
 def _make_smc(
     *checkpoint_writers, step: SMCStep | None = None
 ) -> SequentialMonteCarlo:
@@ -246,7 +283,7 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
     )
 
 
-def test_checkpoint_version_one_payload_without_observation_still_loads(
+def test_current_checkpoint_payload_without_observation_still_loads(
     particle_state: ParticleState,
 ) -> None:
     context = StepContext(t=0, observation={"batch": 1})
@@ -263,6 +300,37 @@ def test_checkpoint_version_one_payload_without_observation_still_loads(
 
     assert restored.observation is None
     assert restored.result().context.observation is None
+
+
+def test_checkpoint_handles_non_leaf_torch_metadata(
+    particle_state: ParticleState,
+) -> None:
+    torch = pytest.importorskip("torch")
+    value = torch.tensor(0.0, requires_grad=True).exp()
+    context = StepContext(
+        t=0,
+        observation={"value": value},
+        metadata={"nested": [value]},
+    )
+    result = SMCResult(
+        states=[particle_state],
+        context=context,
+        outputs=(({"value": value},),),
+    )
+
+    checkpoint = SMCCheckpoint.from_runtime(
+        state=particle_state,
+        context=context,
+        result=result,
+        steps=[],
+    )
+    restored = SMCCheckpoint.from_dict(checkpoint.to_dict())
+
+    restored_value = restored.result().context.metadata["nested"][0]
+    assert torch.equal(restored_value, value)
+    assert restored_value is not value
+    assert torch.equal(restored.outputs[0][0]["value"], value)
+    assert torch.equal(restored.observation["value"], value)
 
 
 def test_checkpoint_round_trip_allows_missing_rng_state(
@@ -333,11 +401,13 @@ def test_hdf5_checkpoint_writer_writes_latest_checkpoint(
     )
 
     with h5py.File(file_path, "r") as h5_file:
-        assert len(h5_file["checkpoint/history"]) == 3
+        assert "history" not in h5_file["checkpoint"]
+        states_group = h5_file["checkpoint/states"]
+        assert len(states_group) == 3
         runtime = h5_file["checkpoint/runtime"]
         assert isinstance(runtime, h5py.Group)
-        assert isinstance(runtime["state"], h5py.Group)
-        assert isinstance(runtime["state/particles"], h5py.Dataset)
+        assert "state" not in runtime
+        assert "states" not in runtime
         assert isinstance(runtime["metadata/nested"], h5py.Group)
         assert isinstance(runtime["metadata/nested/values"], h5py.Group)
         assert (
@@ -345,7 +415,7 @@ def test_hdf5_checkpoint_writer_writes_latest_checkpoint(
             == "pickle"
         )
         assert isinstance(
-            h5_file["checkpoint/history/00000000/particles"], h5py.Dataset
+            h5_file["checkpoint/states/00000000/particles"], h5py.Dataset
         )
         checkpoint = SMCCheckpoint.load_hdf5(h5_file, path="checkpoint")
 
@@ -354,6 +424,40 @@ def test_hdf5_checkpoint_writer_writes_latest_checkpoint(
     assert checkpoint.next_iteration == 3
     assert checkpoint.next_observation_index == 3
     assert checkpoint.rng_state is not None
+
+
+def test_hdf5_checkpoint_serializes_each_result_state_once(
+    particle_state: ParticleState,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    result = _make_smc().run(
+        particle_state,
+        num_steps=3,
+        rng=resolve_rng(123),
+    )
+    checkpoint = SMCCheckpoint.from_runtime(
+        result.final_state,
+        result.context,
+        result,
+        steps=[StochasticStep()],
+        rng=resolve_rng(123),
+        detach=False,
+    )
+    original = ParticleState.to_dict
+    calls = 0
+
+    def counting_to_dict(self):
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(ParticleState, "to_dict", counting_to_dict)
+    with h5py.File(tmp_path / "copy_count.h5", "w") as h5_file:
+        checkpoint.save_hdf5(h5_file)
+
+    # Three result states plus the separately retained initial state.
+    assert calls == 4
 
 
 def test_hdf5_checkpoint_writer_respects_every_and_optional_rng(
@@ -383,27 +487,7 @@ def test_hdf5_checkpoint_writer_respects_every_and_optional_rng(
     _assert_states_equal(checkpoint.state, result.states[1])
 
 
-def test_hdf5_checkpoint_can_omit_result_history(
-    particle_state: ParticleState,
-    tmp_path,
-) -> None:
-    file_path = tmp_path / "checkpoint_without_history.h5"
-    writer = HDF5CheckpointWriter(file_path, include_history=False)
-    _make_smc(writer).run(
-        particle_state,
-        num_steps=2,
-        rng=123,
-    )
-
-    with h5py.File(file_path, "r") as h5_file:
-        assert "history" not in h5_file["checkpoint"]
-        checkpoint = SMCCheckpoint.load_hdf5(h5_file)
-
-    assert checkpoint.history is None
-    assert len(checkpoint.result()) == 1
-
-
-def test_hdf5_writer_replaces_history_when_reused_for_a_fresh_run(
+def test_hdf5_writer_replaces_states_when_reused_for_a_fresh_run(
     particle_state: ParticleState,
     tmp_path,
 ) -> None:
@@ -655,13 +739,13 @@ def test_run_rejects_initial_state_and_runtime_together(
 
 def test_malformed_checkpoint_payload_raises() -> None:
     with pytest.raises(ValueError, match="missing required keys"):
-        SMCCheckpoint.from_dict({"state": {}})
+        SMCCheckpoint.from_dict({"states": []})
 
     with pytest.raises(ValueError, match="Unsupported SMC checkpoint version"):
         SMCCheckpoint.from_dict(
             {
                 "version": 99,
-                "state": {},
+                "states": [],
                 "next_iteration": 1,
                 "next_observation_index": 0,
                 "metadata": {},
@@ -674,19 +758,20 @@ def test_malformed_checkpoint_payload_raises() -> None:
         SMCCheckpoint.from_dict(
             {
                 "version": 1,
-                "state": {
-                    "particles": np.zeros((2, 1)),
-                    "log_weights": np.zeros(2),
-                    "log_evidence": 0.0,
-                    "initial_ancestor_indices": np.arange(2),
-                    "metadata": {},
-                },
+                "states": [
+                    {
+                        "particles": np.zeros((2, 1)),
+                        "log_weights": np.zeros(2),
+                        "log_evidence": 0.0,
+                        "initial_ancestor_indices": np.arange(2),
+                        "metadata": {},
+                    }
+                ],
                 "next_iteration": 1,
                 "next_observation_index": 0,
                 "metadata": {},
                 "outputs": {},
                 "step_states": [],
                 "rng_state": "bad",
-                "history": None,
             }
         )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -17,7 +16,7 @@ from .checkpoint import (
 from .result import SMCResult
 from .state import ParticleState
 from .steps.base import StepContext
-from .utils import normalize_log_weights, resolve_rng
+from .utils import array_safe_copy, normalize_log_weights, resolve_rng
 
 if TYPE_CHECKING:
     import numpy as np
@@ -494,11 +493,12 @@ class SequentialMonteCarlo:
             ]
 
             if checkpoint_writers:
-                include_history = any(
-                    writer.include_history for writer in checkpoint_writers
-                )
                 save_rng = any(
                     writer.save_rng for writer in checkpoint_writers
+                )
+                detach_checkpoint = any(
+                    writer.requires_detached_checkpoint
+                    for writer in checkpoint_writers
                 )
                 checkpoint = SMCCheckpoint.from_runtime(
                     state=state,
@@ -506,7 +506,7 @@ class SequentialMonteCarlo:
                     result=result,
                     steps=self._steps,
                     rng=execution_state if save_rng else None,
-                    include_history=include_history,
+                    detach=detach_checkpoint,
                 )
                 for writer in checkpoint_writers:
                     writer.write(checkpoint)
@@ -666,13 +666,13 @@ class SequentialMonteCarlo:
         shared_context: Mapping[str, Any] | None,
         rng: Any,
     ) -> SMCRuntime:
-        state = checkpoint.state.copy()
-        history = checkpoint.history or (checkpoint.state,)
-        restored_metadata = copy.deepcopy(checkpoint.metadata)
+        states = [item.copy() for item in checkpoint.states]
+        state = states[-1]
+        restored_metadata = array_safe_copy(checkpoint.metadata)
 
         return SMCRuntime(
             state=state,
-            produced_states=[item.copy() for item in history],
+            produced_states=states,
             initial_state=(
                 None
                 if checkpoint.initial_state is None
@@ -684,6 +684,6 @@ class SequentialMonteCarlo:
                 shared_context if shared_context is not None else {}
             ),
             metadata=restored_metadata,
-            outputs=list(copy.deepcopy(checkpoint.outputs)),
+            outputs=list(array_safe_copy(checkpoint.outputs)),
             rng=rng,
         )

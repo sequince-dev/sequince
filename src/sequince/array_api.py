@@ -115,7 +115,7 @@ def _cross_backend_array(array: Any, xp: Any) -> Any:
             return from_dlpack(array)
         except (BufferError, RuntimeError, TypeError):
             pass
-    return xp.asarray(to_numpy(array))
+    return xp.asarray(array)
 
 
 def asarray(
@@ -130,7 +130,9 @@ def asarray(
         xp = (
             namespace(like) if like is not None else _namespace_or_numpy(array)
         )
+
     resolved_dtype = resolve_dtype(dtype, xp)
+
     try:
         source_namespace = namespace(array)
     except (TypeError, ValueError):
@@ -139,28 +141,21 @@ def asarray(
     if source_namespace is not None and not _same_namespace(
         source_namespace, xp
     ):
-        converted = _cross_backend_array(array, xp)
-        result = xp.asarray(converted, dtype=resolved_dtype)
-    else:
-        result = xp.asarray(array, dtype=resolved_dtype)
-    if like is None:
-        return result
-    return to_device(result, get_device(like))
+        array = _cross_backend_array(array, xp)
+
+    result = xp.asarray(array, dtype=resolved_dtype)
+
+    if like is not None:
+        result = to_device(result, get_device(like))
+
+    return result
 
 
 def copy(array: Any, *, xp: Any | None = None):
     """Copy an array without changing its namespace or device."""
     if xp is None:
         xp = _namespace_or_numpy(array)
-    arr = asarray(array, xp=xp)
-    if hasattr(xp, "copy"):
-        try:
-            return xp.copy(arr)  # type: ignore[attr-defined]
-        except AttributeError:  # pragma: no cover - namespace lacks copy
-            pass
-    if hasattr(arr, "clone"):
-        return arr.clone()
-    return xp.asarray(arr)
+    return xp.asarray(array, copy=True)
 
 
 def _numpy_result(

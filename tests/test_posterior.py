@@ -309,6 +309,34 @@ def test_flow_proposal_delegates_sampling_and_density(
     )
 
 
+def test_flow_proposal_passes_configured_fit_kwargs(
+    context_factory, shift_flow_factory, rng
+) -> None:
+    flow = shift_flow_factory(n_dim=2, shift=0.75)
+    proposal = FlowProposal(flow, fit_kwargs={"marker": "configured"})
+
+    proposal.fit(np.ones((3, 2)), context=context_factory(), rng=rng)
+
+    assert getattr(proposal.flow, "fit_kwargs") == {"marker": "configured"}
+    assert getattr(proposal.flow, "fit_rng") is rng
+
+
+def test_flow_proposal_converts_joint_sample_output_to_requested_namespace(
+    context_factory, shift_flow_factory
+) -> None:
+    torch = pytest.importorskip("torch")
+    proposal = FlowProposal(shift_flow_factory(n_dim=2, shift=0.75))
+
+    particles, log_prob = proposal.sample_and_log_prob(
+        3,
+        context=context_factory(),
+        xp=torch,
+    )
+
+    assert isinstance(particles, torch.Tensor)
+    assert isinstance(log_prob, torch.Tensor)
+
+
 def test_draw_additional_samples_respects_terminal_weights(
     context_factory,
     rng,

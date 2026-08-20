@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
@@ -16,7 +15,7 @@ from .array_api import namespace
 from .result import SMCResult
 from .state import ParticleState
 from .steps.context import StepContext
-from .utils import resolve_rng
+from .utils import array_safe_copy, resolve_rng
 
 CHECKPOINT_VERSION = 1
 _HDF_KIND = "_sequince_kind"
@@ -170,18 +169,19 @@ def _read_hdf_value(node: Any) -> Any:
 class CheckpointWriter(ABC):
     """Base class for persisting committed SMC checkpoints."""
 
+    requires_detached_checkpoint = True
+    """Whether the writer may retain the checkpoint after ``write`` returns."""
+
     def __init__(
         self,
         *,
         every: int = 1,
         save_rng: bool = True,
-        include_history: bool = True,
     ) -> None:
         if every <= 0:
             raise ValueError("every must be positive.")
         self.every = int(every)
         self.save_rng = save_rng
-        self.include_history = include_history
 
     def is_due(self, next_iteration: int) -> bool:
         """Return whether a checkpoint is due after this iteration."""
@@ -192,7 +192,6 @@ class CheckpointWriter(ABC):
         prepared = replace(
             checkpoint,
             rng_state=checkpoint.rng_state if self.save_rng else None,
-            history=checkpoint.history if self.include_history else None,
         )
         self._write(prepared)
 
@@ -224,7 +223,7 @@ class StepState:
             index=index,
             module=step_type.__module__,
             qualname=step_type.__qualname__,
-            state=copy.deepcopy(dict(state)),
+            state=array_safe_copy(dict(state)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -232,7 +231,7 @@ class StepState:
             "index": self.index,
             "module": self.module,
             "qualname": self.qualname,
-            "state": copy.deepcopy(self.state),
+            "state": array_safe_copy(self.state),
         }
 
     @classmethod
@@ -258,7 +257,7 @@ class StepState:
             index=int(payload["index"]),
             module=module,
             qualname=qualname,
-            state=copy.deepcopy(dict(state)),
+            state=array_safe_copy(dict(state)),
         )
 
 
@@ -295,24 +294,32 @@ def restore_steps(steps: Sequence[Any], states: Sequence[StepState]) -> None:
     for step, saved in zip(steps, states, strict=True):
         load_fn = getattr(step, "load_state_dict", None)
         if load_fn is not None:
-            load_fn(copy.deepcopy(saved.state))
+            load_fn(array_safe_copy(saved.state))
 
 
 @dataclass(frozen=True)
 class SMCCheckpoint:
     """Detached end-of-iteration state for resuming an SMC run."""
 
-    state: ParticleState
+    states: tuple[ParticleState, ...]
     next_iteration: int
     next_observation_index: int
     metadata: dict[str, Any]
     outputs: tuple[tuple[Any, ...], ...]
     step_states: tuple[StepState, ...]
     rng_state: dict[str, Any] | None = None
-    history: tuple[ParticleState, ...] | None = None
     observation: Any = None
     initial_state: ParticleState | None = None
     version: int = CHECKPOINT_VERSION
+
+    def __post_init__(self) -> None:
+        if not self.states:
+            raise ValueError("SMCCheckpoint requires at least one state.")
+
+    @property
+    def state(self) -> ParticleState:
+        """Return the current state represented by this checkpoint."""
+        return self.states[-1]
 
     @classmethod
     def from_runtime(
@@ -323,53 +330,63 @@ class SMCCheckpoint:
         steps: Sequence[Any],
         rng: Any | None = None,
         *,
-        include_history: bool = True,
+        detach: bool = True,
     ) -> "SMCCheckpoint":
         """Capture a checkpoint after a completed SMC iteration."""
-        state_copy = state.copy()
-        history = None
-        if include_history:
-            history = tuple(item.copy() for item in result.states)
+        states = tuple(result.states)
+        if not states:
+            raise ValueError(
+                "Checkpoint result must contain at least one state."
+            )
+        if states[-1] is not state:
+            raise ValueError(
+                "Checkpoint state must be the final state in the result."
+            )
+        states = tuple(item.copy() if detach else item for item in states)
+        metadata = {
+            key: value
+            for key, value in context.metadata.items()
+            if key != "particle_transform"
+        }
         return cls(
-            state=state_copy,
+            states=states,
             next_iteration=context.t + 1,
             next_observation_index=context.next_observation_index,
-            metadata=copy.deepcopy(
-                {
-                    key: value
-                    for key, value in context.metadata.items()
-                    if key != "particle_transform"
-                }
+            metadata=(array_safe_copy(metadata) if detach else dict(metadata)),
+            outputs=(
+                array_safe_copy(tuple(result.outputs))
+                if detach
+                else tuple(result.outputs)
             ),
-            outputs=copy.deepcopy(tuple(result.outputs)),
             step_states=capture_step_states(steps),
             rng_state=None if rng is None else _rng_state_dict(rng),
-            history=history,
-            observation=copy.deepcopy(context.observation),
+            observation=(
+                array_safe_copy(context.observation)
+                if detach
+                else context.observation
+            ),
             initial_state=(
                 None
                 if result.initial_state is None
-                else result.initial_state.copy()
+                else (
+                    result.initial_state.copy()
+                    if detach
+                    else result.initial_state
+                )
             ),
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a detached plain-Python checkpoint representation."""
+    def _runtime_dict(self) -> dict[str, Any]:
+        """Return detached runtime fields without materializing states."""
         return {
             "version": self.version,
-            "state": self.state.to_dict(),
             "next_iteration": self.next_iteration,
             "next_observation_index": self.next_observation_index,
-            "metadata": copy.deepcopy(self.metadata),
-            "outputs": copy.deepcopy(self.outputs),
+            "metadata": array_safe_copy(self.metadata),
+            "outputs": array_safe_copy(self.outputs),
             "step_states": [item.to_dict() for item in self.step_states],
-            "rng_state": copy.deepcopy(self.rng_state),
-            "history": (
-                None
-                if self.history is None
-                else [item.to_dict() for item in self.history]
-            ),
-            "observation": copy.deepcopy(self.observation),
+            "rng_state": array_safe_copy(self.rng_state),
+            "observation": array_safe_copy(self.observation),
             "initial_state": (
                 None
                 if self.initial_state is None
@@ -377,14 +394,25 @@ class SMCCheckpoint:
             ),
         }
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a detached plain-Python checkpoint representation."""
+        payload = self._runtime_dict()
+        payload["states"] = [item.to_dict() for item in self.states]
+        return payload
+
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "SMCCheckpoint":
+    def from_dict(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        copy_values: bool = True,
+    ) -> "SMCCheckpoint":
         """Reconstruct a checkpoint from :meth:`to_dict` output."""
         if not isinstance(payload, Mapping):
             raise TypeError("SMCCheckpoint payload must be a mapping.")
         required = {
             "version",
-            "state",
+            "states",
             "next_iteration",
             "next_observation_index",
             "metadata",
@@ -419,13 +447,14 @@ class SMCCheckpoint:
             step_payload, (str, bytes)
         ):
             raise TypeError("SMCCheckpoint 'step_states' must be a sequence.")
-        history_payload = payload.get("history")
-        if history_payload is not None and (
-            not isinstance(history_payload, Sequence)
-            or isinstance(history_payload, (str, bytes))
+        states_payload = payload["states"]
+        if (
+            not isinstance(states_payload, Sequence)
+            or isinstance(states_payload, (str, bytes))
+            or not states_payload
         ):
             raise TypeError(
-                "SMCCheckpoint 'history' must be a sequence or None."
+                "SMCCheckpoint 'states' must be a non-empty sequence."
             )
         initial_state_payload = payload.get("initial_state")
         if initial_state_payload is not None and not isinstance(
@@ -441,11 +470,17 @@ class SMCCheckpoint:
                 "Checkpoint iteration and observation indices must be "
                 "non-negative."
             )
+
+        def owned(value):
+            return array_safe_copy(value) if copy_values else value
+
         return cls(
-            state=ParticleState.from_dict(copy.deepcopy(payload["state"])),
+            states=tuple(
+                ParticleState.from_dict(owned(item)) for item in states_payload
+            ),
             next_iteration=next_iteration,
             next_observation_index=next_observation_index,
-            metadata=copy.deepcopy(dict(payload["metadata"])),
+            metadata=array_safe_copy(dict(payload["metadata"])),
             outputs=tuple(
                 tuple(iteration) for iteration in payload["outputs"]
             ),
@@ -453,23 +488,13 @@ class SMCCheckpoint:
                 StepState.from_dict(item) for item in step_payload
             ),
             rng_state=(
-                None if rng_state is None else copy.deepcopy(dict(rng_state))
+                None if rng_state is None else array_safe_copy(dict(rng_state))
             ),
-            history=(
-                None
-                if history_payload is None
-                else tuple(
-                    ParticleState.from_dict(copy.deepcopy(item))
-                    for item in history_payload
-                )
-            ),
-            observation=copy.deepcopy(payload.get("observation")),
+            observation=array_safe_copy(payload.get("observation")),
             initial_state=(
                 None
                 if initial_state_payload is None
-                else ParticleState.from_dict(
-                    copy.deepcopy(initial_state_payload)
-                )
+                else ParticleState.from_dict(owned(initial_state_payload))
             ),
             version=version,
         )
@@ -483,20 +508,19 @@ class SMCCheckpoint:
     def result(
         self, shared_context: Mapping[str, Any] | None = None
     ) -> SMCResult:
-        """Return the result history represented by this checkpoint."""
-        states = list(self.history or (self.state,))
+        """Return the result states represented by this checkpoint."""
         context = StepContext(
             t=self.next_iteration - 1,
             next_observation_index=self.next_observation_index,
-            observation=copy.deepcopy(self.observation),
+            observation=array_safe_copy(self.observation),
             shared=dict(shared_context or {}),
-            metadata=copy.deepcopy(self.metadata),
+            metadata=array_safe_copy(self.metadata),
         )
         return SMCResult(
-            states=states,
+            states=list(self.states),
             context=context,
             initial_state=self.initial_state,
-            outputs=copy.deepcopy(self.outputs),
+            outputs=array_safe_copy(self.outputs),
         )
 
     def save_pickle(
@@ -516,7 +540,7 @@ class SMCCheckpoint:
         """Load a trusted checkpoint from a pickle file."""
         with Path(file_path).open("rb") as checkpoint_file:
             payload = pickle.load(checkpoint_file)
-        return cls.from_dict(payload)
+        return cls.from_dict(payload, copy_values=False)
 
     def save_hdf5(
         self,
@@ -525,36 +549,31 @@ class SMCCheckpoint:
         dsetname: str = "runtime",
         protocol: int | None = None,
         *,
-        replace_history: bool = False,
+        replace_states: bool = False,
     ) -> None:
-        """Save runtime state and append result history in HDF5."""
+        """Save runtime state and append result states in HDF5."""
         protocol = (
             pickle.HIGHEST_PROTOCOL if protocol is None else int(protocol)
         )
         group = h5_file.require_group(path)
-        runtime_payload = self.to_dict()
-        runtime_payload.pop("history")
+        runtime_payload = self._runtime_dict()
 
-        if self.history is None:
-            if "history" in group:
-                del group["history"]
-        else:
-            history_group = group.require_group("history")
-            if replace_history:
-                del group["history"]
-                history_group = group.require_group("history")
-            existing = len(history_group)
-            if existing > len(self.history):
-                del group["history"]
-                history_group = group.require_group("history")
-                existing = 0
-            for index in range(existing, len(self.history)):
-                _write_hdf_value(
-                    history_group,
-                    f"{index:08d}",
-                    self.history[index].to_dict(),
-                    protocol,
-                )
+        states_group = group.require_group("states")
+        if replace_states:
+            del group["states"]
+            states_group = group.require_group("states")
+        existing = len(states_group)
+        if existing > len(self.states):
+            del group["states"]
+            states_group = group.require_group("states")
+            existing = 0
+        for index in range(existing, len(self.states)):
+            _write_hdf_value(
+                states_group,
+                f"{index:08d}",
+                self.states[index].to_dict(),
+                protocol,
+            )
 
         temporary_name = f"{dsetname}.tmp"
         _write_hdf_value(group, temporary_name, runtime_payload, protocol)
@@ -574,18 +593,18 @@ class SMCCheckpoint:
         checkpoint_payload = _read_hdf_value(group[dsetname])
         if not isinstance(checkpoint_payload, dict):
             raise TypeError("HDF5 checkpoint runtime must be a mapping.")
-        checkpoint_payload["history"] = None
-        if "history" in group:
-            history_group = group["history"]
-            checkpoint_payload["history"] = [
-                _read_hdf_value(history_group[name])
-                for name in sorted(history_group)
-            ]
-        return cls.from_dict(checkpoint_payload)
+        states_group = group["states"]
+        checkpoint_payload["states"] = [
+            _read_hdf_value(states_group[name])
+            for name in sorted(states_group)
+        ]
+        return cls.from_dict(checkpoint_payload, copy_values=False)
 
 
 class HDF5CheckpointWriter(CheckpointWriter):
     """Persist committed SMC checkpoints to HDF5 at a fixed cadence."""
+
+    requires_detached_checkpoint = False
 
     def __init__(
         self,
@@ -595,12 +614,10 @@ class HDF5CheckpointWriter(CheckpointWriter):
         path: str = "checkpoint",
         dsetname: str = "runtime",
         save_rng: bool = True,
-        include_history: bool = True,
     ) -> None:
         super().__init__(
             every=every,
             save_rng=save_rng,
-            include_history=include_history,
         )
         file_path = Path(file_path)
         if not file_path.name.lower().endswith((".h5", ".hdf5")):
@@ -617,7 +634,7 @@ class HDF5CheckpointWriter(CheckpointWriter):
         """Write a committed checkpoint to the configured HDF5 location."""
         import h5py
 
-        replace_history = (
+        replace_states = (
             self._last_iteration is None
             or checkpoint.next_iteration <= self._last_iteration
         )
@@ -626,7 +643,7 @@ class HDF5CheckpointWriter(CheckpointWriter):
                 h5_file,
                 path=self.path,
                 dsetname=self.dsetname,
-                replace_history=replace_history,
+                replace_states=replace_states,
             )
         self._last_iteration = checkpoint.next_iteration
 
@@ -634,19 +651,19 @@ class HDF5CheckpointWriter(CheckpointWriter):
 class PickleCheckpointWriter(CheckpointWriter):
     """Atomically persist committed SMC checkpoints as pickle files."""
 
+    requires_detached_checkpoint = False
+
     def __init__(
         self,
         file_path: str | Path,
         *,
         every: int = 1,
         save_rng: bool = True,
-        include_history: bool = True,
         protocol: int | None = None,
     ) -> None:
         super().__init__(
             every=every,
             save_rng=save_rng,
-            include_history=include_history,
         )
         file_path = Path(file_path)
         if file_path.suffix.lower() not in (".pkl", ".pickle"):
