@@ -287,6 +287,8 @@ def make_persistent_bayesian_smc(
     ``n_particles`` draws from the initial target. The first persistence step
     archives that state at temperature zero, and the adaptive weighting step
     requests a normal runner stop once its terminal ESS condition is met.
+
+    For more details see https://arxiv.org/abs/2407.20722.
     """
     if isinstance(n_particles, bool) or not isinstance(n_particles, Integral):
         raise TypeError("n_particles must be a positive integer.")

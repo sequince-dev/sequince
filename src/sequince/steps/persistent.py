@@ -1,4 +1,7 @@
-"""Persistent particle archival and tempered importance weighting."""
+"""Persistent particle archival and tempered importance weighting.
+
+See: https://arxiv.org/abs/2407.20722
+"""
 
 from __future__ import annotations
 
