@@ -11,7 +11,7 @@ import numpy as np
 from numpy.random import Generator as NumPyGenerator
 
 from ._typing import Array
-from .array_api import asarray, namespace, to_numpy
+from .array_api import asarray, get_device, namespace, to_numpy
 from .state import ParticleState
 from .steps.context import StepContext
 from .steps.meta import META_SMC_OUTPUT_KEY
@@ -485,32 +485,150 @@ class SMCResult:
 
     def posterior_samples(
         self,
-        n_samples: int | None = None,
         *,
+        n_samples: int | None = None,
         rng: "RandomGenerator" | NumPyGenerator | int | None = None,
-        with_replacement: bool = True,
-    ) -> Array:
-        """Draw samples from the weighted posterior represented by the final state."""
+        method: Literal["multinomial", "rejection", "weights"] = "weights",
+    ) -> tuple[Array, Array]:
+        """Return samples from the weighted posterior represented by the final state.
+
+        Parameters
+        ----------
+        n_samples
+            Number of samples to return. For ``"weights"``, this uniformly
+            down-selects the weighted particle population without replacement.
+            For ``"rejection"``, this is an upper limit on the number of accepted
+            particles. For ``"multinomial"``, exactly this many samples are drawn
+            with replacement. If ``None``, all weighted or rejection-thinned
+            particles are returned, while multinomial sampling draws the same
+            number of samples as there are particles.
+        rng
+            Random number generator or seed.
+        method
+            Method used to construct the returned posterior representation:
+
+            - ``"weights"``: return weighted particles, optionally uniformly
+            down-selected without replacement.
+            - ``"rejection"``: independently retain each particle with probability
+            proportional to its weight, returning equal-weight unique samples.
+            - ``"multinomial"``: draw equal-weight samples with replacement
+            according to the particle weights.
+
+        Returns
+        -------
+        samples
+            Posterior samples.
+        sample_weights
+            Normalized weights associated with ``samples``.
+        """
         final_state = self.final_state
         xp = namespace(final_state.particles, final_state.weights)
+
         particles = xp.atleast_2d(final_state.particles)
-        if n_samples is None:
-            n_samples = particles.shape[0]
-        if n_samples <= 0:
-            raise ValueError("n_samples must be positive.")
-        rng_obj: RandomGenerator = resolve_rng(rng)
         weights = asarray(final_state.weights, xp=xp)
-        indices = asarray(
-            rng_obj.choice(
-                particles.shape[0],
-                size=n_samples,
-                replace=with_replacement,
-                p=weights,
-            ),
-            xp=xp,
-            like=particles,
-        )
-        return particles[indices]
+        weights = weights / xp.sum(weights)
+
+        n_particles = particles.shape[0]
+
+        if n_samples is not None and n_samples <= 0:
+            raise ValueError("n_samples must be positive.")
+
+        if (
+            method in {"weights", "rejection"}
+            and n_samples is not None
+            and n_samples > n_particles
+        ):
+            raise ValueError(
+                f"n_samples cannot exceed the particle count for method={method!r}."
+            )
+
+        rng_obj: RandomGenerator = resolve_rng(rng)
+
+        if method == "weights":
+            if n_samples is None or n_samples == n_particles:
+                samples = particles
+                sample_weights = weights
+            else:
+                indices = asarray(
+                    rng_obj.choice(
+                        n_particles,
+                        size=n_samples,
+                        replace=False,
+                    ),
+                    xp=xp,
+                    like=particles,
+                )
+                samples = particles[indices]
+                sample_weights = weights[indices]
+                sample_weights = sample_weights / xp.sum(sample_weights)
+
+        elif method == "rejection":
+            u = asarray(
+                rng_obj.uniform(size=n_particles),
+                xp=xp,
+                like=weights,
+            )
+            acceptance_probabilities = weights / xp.max(weights)
+            accept = u < acceptance_probabilities
+            samples = particles[accept]
+
+            if n_samples is not None:
+                if samples.shape[0] < n_samples:
+                    warnings.warn(
+                        f"Rejection sampling returned {samples.shape[0]} samples, "
+                        f"fewer than the requested {n_samples}. Consider using "
+                        "method='multinomial' or method='weights' instead.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                elif samples.shape[0] > n_samples:
+                    indices = asarray(
+                        rng_obj.choice(
+                            samples.shape[0],
+                            size=n_samples,
+                            replace=False,
+                        ),
+                        xp=xp,
+                        like=particles,
+                    )
+                    samples = samples[indices]
+
+            sample_weights = xp.full(
+                (samples.shape[0],),
+                1.0 / samples.shape[0],
+                dtype=weights.dtype,
+                device=get_device(weights),
+            )
+
+        elif method == "multinomial":
+            if n_samples is None:
+                n_samples = n_particles
+
+            indices = asarray(
+                rng_obj.choice(
+                    n_particles,
+                    size=n_samples,
+                    replace=True,
+                    p=weights,
+                ),
+                xp=xp,
+                like=particles,
+            )
+            samples = particles[indices]
+            sample_weights = xp.full(
+                (n_samples,),
+                1.0 / n_samples,
+                dtype=weights.dtype,
+                device=get_device(weights),
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown posterior sampling method: {method!r}. "
+                "Valid options are 'multinomial', 'rejection' or 'weights'."
+            )
+
+        return samples, sample_weights
 
     def weighted_mean(
         self,
