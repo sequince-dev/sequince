@@ -358,13 +358,19 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
     temperature is bisected over the interval from the current temperature to
     one. If the requested ESS cannot be attained while advancing, the current
     temperature is repeated so that another batch can be added to the archive.
+    Once temperature one is selected, the weighting requests a normal runner
+    stop. When ``target_total_ess`` is configured, temperature-one batches are
+    instead accumulated until the complete archive reaches that ESS.
 
     Parameters
     ----------
     target:
         Tempered target defining the persistent importance weights.
     target_ess:
-        Desired effective sample size of the complete persistent archive.
+        Desired effective sample size while selecting temperatures below one.
+    target_total_ess:
+        Optional effective sample size required before stopping at temperature
+        one. If omitted, stop when temperature one is first selected.
     temperature_tolerance:
         Stop bisection once the temperature bracket is no wider than this.
     max_bisection_iter:
@@ -378,6 +384,7 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         target: TemperedTarget,
         *,
         target_ess: float = 512,
+        target_total_ess: float | None = None,
         temperature_tolerance: float = 1e-6,
         max_bisection_iter: int = 30,
         refresh_components: Collection[str] = (),
@@ -385,11 +392,14 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         super().__init__(target, refresh_components=refresh_components)
         if not target_ess > 0.0:
             raise ValueError("target_ess must be positive.")
+        if target_total_ess is not None and not target_total_ess > 0.0:
+            raise ValueError("target_total_ess must be positive.")
         if not temperature_tolerance > 0.0:
             raise ValueError("temperature_tolerance must be positive.")
         if max_bisection_iter <= 0:
             raise ValueError("max_bisection_iter must be positive.")
         self._target_ess = target_ess
+        self._target_total_ess = target_total_ess
         self._temperature_tolerance = temperature_tolerance
         self._max_bisection_iter = max_bisection_iter
 
@@ -423,47 +433,52 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
             )
             return ess_from_log_weights(candidate_log_weights)
 
-        current = asarray(
-            current_temperature,
-            xp=xp,
-            dtype=log_increment.dtype,
-            like=log_increment,
-        )
-        terminal = asarray(
-            1.0,
-            xp=xp,
-            dtype=log_increment.dtype,
-            like=log_increment,
-        )
-        target = asarray(
-            self._target_ess,
-            xp=xp,
-            dtype=log_increment.dtype,
-            like=log_increment,
-        )
-        terminal_ess = float(effective_sample_size(terminal))
-        if terminal_ess >= self._target_ess:
+        selected_terminal = current_temperature == 1.0
+        if selected_terminal:
             temperature = 1.0
         else:
-            current_ess = float(effective_sample_size(current))
-            if current_ess < self._target_ess:
-                temperature = current_temperature
+            current = asarray(
+                current_temperature,
+                xp=xp,
+                dtype=log_increment.dtype,
+                like=log_increment,
+            )
+            terminal = asarray(
+                1.0,
+                xp=xp,
+                dtype=log_increment.dtype,
+                like=log_increment,
+            )
+            target = asarray(
+                self._target_ess,
+                xp=xp,
+                dtype=log_increment.dtype,
+                like=log_increment,
+            )
+            terminal_ess = float(effective_sample_size(terminal))
+            if terminal_ess >= self._target_ess:
+                temperature = 1.0
+                selected_terminal = True
             else:
-                tolerance = asarray(
-                    self._temperature_tolerance,
-                    xp=xp,
-                    dtype=log_increment.dtype,
-                    like=log_increment,
-                )
-                low, _ = bisect_monotone_decreasing(
-                    effective_sample_size,
-                    current,
-                    terminal,
-                    target,
-                    tolerance=tolerance,
-                    max_iterations=self._max_bisection_iter,
-                )
-                temperature = float(low)
+                current_ess = float(effective_sample_size(current))
+                if current_ess < self._target_ess:
+                    temperature = current_temperature
+                else:
+                    tolerance = asarray(
+                        self._temperature_tolerance,
+                        xp=xp,
+                        dtype=log_increment.dtype,
+                        like=log_increment,
+                    )
+                    low, _ = bisect_monotone_decreasing(
+                        effective_sample_size,
+                        current,
+                        terminal,
+                        target,
+                        tolerance=tolerance,
+                        max_iterations=self._max_bisection_iter,
+                    )
+                    temperature = float(low)
 
         weighted, context, output = self._weight(
             state,
@@ -484,6 +499,24 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         weighted = weighted.with_updates(metadata=metadata)
         context = context.with_metadata(target_ess=target_ess)
         output["target_ess"] = target_ess
+        if self._target_total_ess is not None:
+            target_total_ess = asarray(
+                self._target_total_ess,
+                xp=xp,
+                dtype=weighted.log_weights.dtype,
+                like=weighted.log_weights,
+            )
+            metadata = dict(weighted.metadata)
+            metadata["target_total_ess"] = target_total_ess
+            weighted = weighted.with_updates(metadata=metadata)
+            context = context.with_metadata(target_total_ess=target_total_ess)
+            output["target_total_ess"] = target_total_ess
+
+        if selected_terminal and (
+            self._target_total_ess is None
+            or float(output["effective_sample_size"]) >= self._target_total_ess
+        ):
+            context = context.request_stop()
         return weighted, context, output
 
     def apply_functional(
