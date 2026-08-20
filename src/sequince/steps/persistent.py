@@ -1,4 +1,4 @@
-"""Persistent particle archival and fixed-temperature importance weighting."""
+"""Persistent particle archival and tempered importance weighting."""
 
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 from .._typing import Array, ArrayLike
 from ..array_api import asarray, logsumexp, namespace
 from ..state import ParticleState, PersistentParticleState
+from ..stats import ess_from_log_weights
 from ..target import TemperedTarget
-from ..utils import _validate_log_normalizer
+from ..utils import _validate_log_normalizer, bisect_monotone_decreasing
 from .base import SMCStep
 from .context import StepContext
 
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "PersistParticles",
+    "PersistentAdaptiveTemperedWeighting",
     "PersistentTemperedWeighting",
     "persistent_log_mixture_denominator",
     "persistent_log_weights",
@@ -181,37 +183,37 @@ class PersistParticles(SMCStep):
         self.persistent_state = PersistentParticleState.from_dict(payload)
 
 
-class PersistentTemperedWeighting(SMCStep):
-    """Weight a persistent particle pool directly toward a fixed temperature."""
+class BasePersistentTemperedWeighting(SMCStep):
+    """Shared target evaluation and weighting for persistent tempering."""
 
     def __init__(
         self,
         target: TemperedTarget,
         *,
-        temperature: ArrayLike,
         refresh_components: Collection[str] = (),
     ) -> None:
         if not isinstance(target, TemperedTarget):
             raise TypeError(
-                "PersistentTemperedWeighting requires a TemperedTarget."
+                f"{type(self).__name__} requires a TemperedTarget."
             )
         self._target = target
-        self._temperature = temperature
         self._refresh_components = frozenset(refresh_components)
 
-    def apply(
-        self,
-        state: ParticleState,
-        context: StepContext,
-        rng: "RandomGenerator",
-    ) -> tuple[PersistentParticleState, StepContext, dict[str, Any]]:
-        del rng
+    def _require_persistent_state(
+        self, state: ParticleState
+    ) -> PersistentParticleState:
         if not isinstance(state, PersistentParticleState):
             raise TypeError(
-                "PersistentTemperedWeighting requires a "
-                "PersistentParticleState."
+                f"{type(self).__name__} requires a PersistentParticleState."
             )
+        return state
 
+    def _prepare_log_increment(
+        self,
+        state: PersistentParticleState,
+        context: StepContext,
+    ) -> tuple[Any, Array]:
+        """Prepare one cached target evaluation and its log increment."""
         evaluation = self._target.prepare_evaluation(
             state.particles,
             context,
@@ -233,14 +235,42 @@ class PersistentTemperedWeighting(SMCStep):
             raise ValueError(
                 "Target log increment must return one value per particle."
             )
+        return evaluation, log_increment
 
-        unnormalized = persistent_log_weights(
-            log_increment,
-            state.temperatures,
-            state.log_evidences,
-            self._temperature,
+    def _weight(
+        self,
+        state: PersistentParticleState,
+        evaluation: Any,
+        log_increment: Array,
+        temperature: ArrayLike,
+        context: StepContext,
+        *,
+        log_denominator: Array | None = None,
+    ) -> tuple[PersistentParticleState, StepContext, dict[str, Any]]:
+        """Weight the persistent archive at a chosen temperature.
+
+        Normalize the resulting importance weights, calculate the direct
+        persistent evidence estimate, and update the state and context
+        temperature metadata. A precomputed mixture denominator may be supplied
+        by adaptive temperature selection.
+        """
+        xp = namespace(state.log_weights)
+        temperature = asarray(
+            temperature,
             xp=xp,
+            dtype=log_increment.dtype,
+            like=log_increment,
         )
+        if temperature.ndim != 0:
+            raise ValueError("temperature must be scalar.")
+        if log_denominator is None:
+            log_denominator = persistent_log_mixture_denominator(
+                log_increment,
+                state.temperatures,
+                state.log_evidences,
+                xp=xp,
+            )
+        unnormalized = temperature * log_increment - log_denominator
         log_norm = logsumexp(unnormalized, xp=xp)
         _validate_log_normalizer(log_norm, xp=xp)
         particle_count = asarray(
@@ -251,18 +281,11 @@ class PersistentTemperedWeighting(SMCStep):
         )
         log_evidence = log_norm - xp.log(particle_count)
         normalized = unnormalized - log_norm
+        effective_sample_size = ess_from_log_weights(unnormalized)
 
         current_temperature = context.metadata.get(
             "temperature", state.metadata.get("temperature", 0.0)
         )
-        temperature = asarray(
-            self._temperature,
-            xp=xp,
-            dtype=unnormalized.dtype,
-            like=unnormalized,
-        )
-        if temperature.ndim != 0:
-            raise ValueError("temperature must be scalar.")
         temperature_delta = temperature - asarray(
             current_temperature,
             xp=xp,
@@ -277,6 +300,7 @@ class PersistentTemperedWeighting(SMCStep):
         metadata.update(
             temperature=temperature,
             temperature_delta=temperature_delta,
+            effective_sample_size=effective_sample_size,
         )
         weighted = state.with_updates(
             log_weights=normalized,
@@ -291,5 +315,185 @@ class PersistentTemperedWeighting(SMCStep):
                 "temperature": temperature,
                 "temperature_delta": temperature_delta,
                 "persistent_log_weights": unnormalized,
+                "effective_sample_size": effective_sample_size,
             },
+        )
+
+
+class PersistentTemperedWeighting(BasePersistentTemperedWeighting):
+    """Weight a persistent particle pool directly toward a fixed temperature."""
+
+    def __init__(
+        self,
+        target: TemperedTarget,
+        *,
+        temperature: ArrayLike,
+        refresh_components: Collection[str] = (),
+    ) -> None:
+        super().__init__(target, refresh_components=refresh_components)
+        self._temperature = temperature
+
+    def apply(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+    ) -> tuple[PersistentParticleState, StepContext, dict[str, Any]]:
+        del rng
+        state = self._require_persistent_state(state)
+        evaluation, log_increment = self._prepare_log_increment(state, context)
+        return self._weight(
+            state,
+            evaluation,
+            log_increment,
+            self._temperature,
+            context,
+        )
+
+
+class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
+    """Choose a persistent target temperature using absolute archive ESS.
+
+    The historical deterministic-mixture density is evaluated once, then the
+    temperature is bisected over the interval from the current temperature to
+    one. If the requested ESS cannot be attained while advancing, the current
+    temperature is repeated so that another batch can be added to the archive.
+
+    Parameters
+    ----------
+    target:
+        Tempered target defining the persistent importance weights.
+    target_ess:
+        Desired effective sample size of the complete persistent archive.
+    temperature_tolerance:
+        Stop bisection once the temperature bracket is no wider than this.
+    max_bisection_iter:
+        Maximum number of bisection iterations.
+    refresh_components:
+        Cached target-evaluation components to refresh before weighting.
+    """
+
+    def __init__(
+        self,
+        target: TemperedTarget,
+        *,
+        target_ess: float = 512,
+        temperature_tolerance: float = 1e-6,
+        max_bisection_iter: int = 30,
+        refresh_components: Collection[str] = (),
+    ) -> None:
+        super().__init__(target, refresh_components=refresh_components)
+        if not target_ess > 0.0:
+            raise ValueError("target_ess must be positive.")
+        if not temperature_tolerance > 0.0:
+            raise ValueError("temperature_tolerance must be positive.")
+        if max_bisection_iter <= 0:
+            raise ValueError("max_bisection_iter must be positive.")
+        self._target_ess = target_ess
+        self._temperature_tolerance = temperature_tolerance
+        self._max_bisection_iter = max_bisection_iter
+
+    def apply(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+    ) -> tuple[PersistentParticleState, StepContext, dict[str, Any]]:
+        del rng
+        state = self._require_persistent_state(state)
+        evaluation, log_increment = self._prepare_log_increment(state, context)
+        xp = namespace(state.log_weights)
+        log_denominator = persistent_log_mixture_denominator(
+            log_increment,
+            state.temperatures,
+            state.log_evidences,
+            xp=xp,
+        )
+        current_temperature = float(
+            context.metadata.get(
+                "temperature", state.metadata.get("temperature", 0.0)
+            )
+        )
+        if not 0.0 <= current_temperature <= 1.0:
+            raise ValueError("current temperature must be in [0, 1].")
+
+        def effective_sample_size(temperature: Array) -> Array:
+            candidate_log_weights = (
+                temperature * log_increment - log_denominator
+            )
+            return ess_from_log_weights(candidate_log_weights)
+
+        current = asarray(
+            current_temperature,
+            xp=xp,
+            dtype=log_increment.dtype,
+            like=log_increment,
+        )
+        terminal = asarray(
+            1.0,
+            xp=xp,
+            dtype=log_increment.dtype,
+            like=log_increment,
+        )
+        target = asarray(
+            self._target_ess,
+            xp=xp,
+            dtype=log_increment.dtype,
+            like=log_increment,
+        )
+        terminal_ess = float(effective_sample_size(terminal))
+        if terminal_ess >= self._target_ess:
+            temperature = 1.0
+        else:
+            current_ess = float(effective_sample_size(current))
+            if current_ess < self._target_ess:
+                temperature = current_temperature
+            else:
+                tolerance = asarray(
+                    self._temperature_tolerance,
+                    xp=xp,
+                    dtype=log_increment.dtype,
+                    like=log_increment,
+                )
+                low, _ = bisect_monotone_decreasing(
+                    effective_sample_size,
+                    current,
+                    terminal,
+                    target,
+                    tolerance=tolerance,
+                    max_iterations=self._max_bisection_iter,
+                )
+                temperature = float(low)
+
+        weighted, context, output = self._weight(
+            state,
+            evaluation,
+            log_increment,
+            temperature,
+            context,
+            log_denominator=log_denominator,
+        )
+        target_ess = asarray(
+            self._target_ess,
+            xp=xp,
+            dtype=weighted.log_weights.dtype,
+            like=weighted.log_weights,
+        )
+        metadata = dict(weighted.metadata)
+        metadata["target_ess"] = target_ess
+        weighted = weighted.with_updates(metadata=metadata)
+        context = context.with_metadata(target_ess=target_ess)
+        output["target_ess"] = target_ess
+        return weighted, context, output
+
+    def apply_functional(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+    ) -> tuple[ParticleState, StepContext, Any, dict[str, Any]]:
+        """Reject functional execution because the archive grows dynamically."""
+        del state, context, random_state
+        raise NotImplementedError(
+            "Persistent adaptive tempering supports eager execution only."
         )
