@@ -246,21 +246,22 @@ class ParticleState:
         "particles",
         "log_weights",
         "initial_ancestor_indices",
+        "log_evidence",
         "evaluation",
         "metadata",
         "temperatures",
         "log_evidences",
     ),
     meta_fields=("batch_size",),
-    drop_fields=("log_evidence",),
 )
 @dataclass(init=False, kw_only=True)
 class PersistentParticleState(ParticleState):
     """Equal-sized particle batches retained from historical targets.
 
-    ``log_evidence`` follows the ordinary :class:`ParticleState` interface and
-    is always the evidence of the most recent batch. ``log_evidences`` retains
-    the full history required by persistent importance weighting.
+    ``log_evidences`` contains evidence estimates for targets which generated
+    archived batches.  The scalar ``log_evidence`` follows the ordinary
+    :class:`ParticleState` interface and may instead describe a new target toward
+    which the archive has just been weighted.
     """
 
     temperatures: Array
@@ -275,6 +276,7 @@ class PersistentParticleState(ParticleState):
         batch_size: int,
         *,
         log_weights: Array | None = None,
+        log_evidence: Any | None = None,
         initial_ancestor_indices: Array | None = None,
         evaluation: TargetEvaluation | None = None,
         metadata: MutableMapping[str, Any] | None = None,
@@ -318,9 +320,12 @@ class PersistentParticleState(ParticleState):
                 raise ValueError(
                     "Log weights must match the persistent particle population."
                 )
+        if log_evidence is None:
+            log_evidence = log_evidences[-1]
         super().__init__(
             particles=particles,
             log_weights=log_weights,
+            log_evidence=log_evidence,
             initial_ancestor_indices=initial_ancestor_indices,
             evaluation=evaluation,
             metadata=metadata,
@@ -328,20 +333,6 @@ class PersistentParticleState(ParticleState):
         self.temperatures = temperatures
         self.log_evidences = log_evidences
         self.batch_size = batch_size
-
-    def __getattribute__(self, name: str) -> Any:
-        if name == "log_evidence":
-            attributes = object.__getattribute__(self, "__dict__")
-            if "log_evidences" in attributes:
-                return attributes["log_evidences"][-1]
-        return super().__getattribute__(name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "log_evidence" and "log_evidences" in self.__dict__:
-            raise AttributeError(
-                "log_evidence is derived from the latest log_evidences entry."
-            )
-        super().__setattr__(name, value)
 
     def __len__(self) -> int:
         """Return the total number of retained particles."""
@@ -417,6 +408,7 @@ class PersistentParticleState(ParticleState):
             log_evidences=array_copy(self.log_evidences, xp=xp),
             batch_size=self.batch_size,
             log_weights=array_copy(self.log_weights, xp=xp),
+            log_evidence=self.log_evidence,
             initial_ancestor_indices=array_copy(
                 self.initial_ancestor_indices,
                 xp=xp,
@@ -435,7 +427,7 @@ class PersistentParticleState(ParticleState):
         :meth:`append`. Persistent weighting steps may update ``log_weights``;
         callers may also replace compatible evaluations or metadata.
         """
-        allowed = {"log_weights", "evaluation", "metadata"}
+        allowed = {"log_weights", "log_evidence", "evaluation", "metadata"}
         protected = sorted(set(kwargs).difference(allowed))
         if protected:
             raise ValueError(
@@ -529,7 +521,47 @@ class PersistentParticleState(ParticleState):
             temperatures=temperatures,
             log_evidences=log_evidences,
             batch_size=self.batch_size,
+            log_evidence=log_evidence,
             initial_ancestor_indices=initial_ancestor_indices,
             evaluation=evaluation,
-            metadata=array_safe_copy(self.metadata),
+            metadata=array_safe_copy(state.metadata),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a detached dictionary including persistent history."""
+        payload = super().to_dict()
+        copied = self.copy()
+        payload.update(
+            temperatures=copied.temperatures,
+            log_evidences=copied.log_evidences,
+            batch_size=copied.batch_size,
+        )
+        return payload
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> "PersistentParticleState":
+        """Reconstruct a persistent state from :meth:`to_dict` output."""
+        missing = {
+            key
+            for key in ("temperatures", "log_evidences", "batch_size")
+            if key not in payload
+        }
+        if missing:
+            raise ValueError(
+                "PersistentParticleState payload is missing required keys: "
+                + ", ".join(sorted(missing))
+            )
+        base = ParticleState.from_dict(payload)
+        return cls(
+            particles=base.particles,
+            temperatures=payload["temperatures"],
+            log_evidences=payload["log_evidences"],
+            batch_size=int(payload["batch_size"]),
+            log_weights=base.log_weights,
+            log_evidence=base.log_evidence,
+            initial_ancestor_indices=base.initial_ancestor_indices,
+            evaluation=base.evaluation,
+            metadata=base.metadata,
         )

@@ -21,6 +21,8 @@ from .mutation import (
     ProposalRejuvenation,
 )
 from .persistent import (
+    PersistentTemperedWeighting,
+    PersistParticles,
     persistent_log_mixture_denominator,
     persistent_log_weights,
 )
@@ -65,6 +67,8 @@ __all__ = [
     "MiniPCNMutation",
     "MutateIfResampled",
     "ProposalRejuvenation",
+    "PersistParticles",
+    "PersistentTemperedWeighting",
     "persistent_log_mixture_denominator",
     "persistent_log_weights",
     "MetaSMCStep",
