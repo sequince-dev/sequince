@@ -148,7 +148,8 @@ class SequentialMonteCarlo:
 
         if self._auto_normalize:
             pre_log_evidence = state.log_evidence
-            state, _ = state.normalize()
+            state, log_norm = state.normalize()
+            state.log_evidence += log_norm
             logger.debug(
                 "Iteration %d: normalized weights "
                 "(log_evidence=%.6f -> %.6f).",

@@ -97,7 +97,6 @@ class ParticleState:
             xp=xp,
         )
         _validate_log_normalizer(log_norm, xp=xp)
-        state.log_evidence += log_norm
         return state, log_norm
 
     @property
