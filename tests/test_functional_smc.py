@@ -15,9 +15,27 @@ from sequince.steps import (
     FixedTemperedWeighting,
     StepContext,
 )
+from sequince.utils import bisect_monotone_decreasing
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
+
+
+def test_monotone_bisection_uses_jittable_control_flow() -> None:
+    def solve():
+        return bisect_monotone_decreasing(
+            lambda value: 1.0 - value,
+            jnp.asarray(0.0),
+            jnp.asarray(1.0),
+            jnp.asarray(0.3),
+            tolerance=jnp.asarray(1e-6),
+            max_iterations=40,
+        )
+
+    low, high = jax.jit(solve)()
+
+    assert float(low) <= 0.7 <= float(high)
+    assert float(high - low) <= 1e-6
 
 
 class CheckpointRecorder(CheckpointWriter):
