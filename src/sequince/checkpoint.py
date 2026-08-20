@@ -339,7 +339,9 @@ class SMCCheckpoint:
                 "Checkpoint result must contain at least one state."
             )
         if states[-1] is not state:
-            states = (*states[:-1], state)
+            raise ValueError(
+                "Checkpoint state must be the final state in the result."
+            )
         states = tuple(item.copy() if detach else item for item in states)
         metadata = {
             key: value
