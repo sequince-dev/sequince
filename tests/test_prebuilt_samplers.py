@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sequince import ParticleState, TemperedPosterior
+from sequince import ParticleState, PersistentParticleState, TemperedPosterior
 from sequince.prebuilt_samplers import (
     make_persistent_bayesian_smc,
     make_standard_bayesian_smc,
@@ -192,7 +192,9 @@ def test_make_persistent_bayesian_smc_builds_fixed_size_pipeline() -> None:
     assert steps[2]._always_resample  # noqa: SLF001
 
 
-def test_make_persistent_bayesian_smc_returns_active_population(rng) -> None:
+def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
+    rng,
+) -> None:
     n_particles = 5
     target = TemperedPosterior(
         log_prior=_quadratic_log_prior,
@@ -213,11 +215,16 @@ def test_make_persistent_bayesian_smc_returns_active_population(rng) -> None:
 
     result = smc.run(initial_state, rng=rng)
 
-    assert result.final_state.particles.shape == (n_particles, 1)
+    assert isinstance(result.final_state, PersistentParticleState)
+    assert result.final_state.particles.shape == (2 * n_particles, 1)
+    assert result.final_state.metadata["temperature"] == pytest.approx(1.0)
+    np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
     persist = smc._steps[0]  # noqa: SLF001
     assert isinstance(persist, PersistParticles)
     assert persist.persistent_state is not None
-    assert persist.persistent_state.n_particles > n_particles
+    assert (
+        result.final_state.n_particles == persist.persistent_state.n_particles
+    )
 
 
 @pytest.mark.parametrize(

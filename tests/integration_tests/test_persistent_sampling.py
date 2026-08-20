@@ -9,6 +9,7 @@ import pytest
 
 from sequince import (
     ParticleState,
+    PersistentParticleState,
     TemperedPosterior,
     make_persistent_bayesian_smc,
 )
@@ -60,7 +61,9 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
     assert temperature_deltas[:2] == pytest.approx([0.0, 0.0])
     assert temperatures[-1] == pytest.approx(1.0)
     assert result.context.stop_requested
-    assert not result.context.stop_immediately
+    assert result.context.stop_immediately
+    assert isinstance(result.final_state, PersistentParticleState)
+    np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
 
     persist = smc._steps[0]  # noqa: SLF001
     assert isinstance(persist, PersistParticles)
@@ -69,8 +72,14 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
     assert persist.persistent_state.n_particles == len(result) * n_particles
 
     final_particles = np.asarray(result.final_state.particles)[:, 0]
-    assert np.mean(final_particles) == pytest.approx(1.2, abs=0.35)
-    assert np.var(final_particles) == pytest.approx(0.8, abs=0.35)
+    final_weights = np.asarray(result.final_state.weights)
+    final_mean = np.average(final_particles, weights=final_weights)
+    final_variance = np.average(
+        (final_particles - final_mean) ** 2,
+        weights=final_weights,
+    )
+    assert final_mean == pytest.approx(1.2, abs=0.35)
+    assert final_variance == pytest.approx(0.8, abs=0.35)
     analytic_log_evidence = -0.5 * (np.log(2.0 * np.pi * 5.0) + 1.5**2 / 5.0)
     assert float(result.final_state.log_evidence) == pytest.approx(
         analytic_log_evidence,
@@ -141,11 +150,14 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
     assert temperatures.count(1.0) >= 2
     assert persistent_ess[-1] >= target_total_ess
     assert result.context.stop_requested
-    assert not result.context.stop_immediately
-    assert len(result.outputs[-1]) == 4
-    assert result.outputs[-1][2]["resampled"]
-    assert result.outputs[-1][3] is not None
+    assert result.context.stop_immediately
+    assert len(result.outputs[-1]) == 2
+    assert isinstance(result.final_state, PersistentParticleState)
+    np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
     assert persist.persistent_state is not None
     assert persist.persistent_state.n_batches == len(result)
     assert persist.persistent_state.n_particles == len(result) * n_particles
     assert persist.persistent_state.temperatures[-1] == pytest.approx(1.0)
+    assert (
+        result.final_state.n_particles == persist.persistent_state.n_particles
+    )

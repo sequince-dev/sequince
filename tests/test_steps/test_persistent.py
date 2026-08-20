@@ -10,6 +10,7 @@ from scipy.special import logsumexp
 
 from sequince.array_api import asarray, namespace, to_numpy
 from sequince.posterior import TemperedPosterior
+from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState, PersistentParticleState
 from sequince.steps.context import StepContext
 from sequince.steps.persistent import (
@@ -424,7 +425,7 @@ def test_adaptive_persistent_weighting_jumps_to_one_and_matches_fixed(
     assert float(output["effective_sample_size"]) >= 3.0
     assert float(output["target_ess"]) == pytest.approx(3.0)
     assert adaptive_context.stop_requested
-    assert not adaptive_context.stop_immediately
+    assert adaptive_context.stop_immediately
     np.testing.assert_allclose(adaptive.log_weights, fixed.log_weights)
     np.testing.assert_allclose(adaptive.log_evidence, fixed.log_evidence)
     np.testing.assert_allclose(
@@ -543,7 +544,102 @@ def test_adaptive_persistent_weighting_accumulates_terminal_batches(
     assert float(second_output["temperature_delta"]) == pytest.approx(0.0)
     assert float(second_output["effective_sample_size"]) == pytest.approx(8.0)
     assert second_context.stop_requested
-    assert not second_context.stop_immediately
+    assert second_context.stop_immediately
+
+
+def test_persistent_terminal_weighting_stops_runner_before_later_steps(
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    active, _ = _evaluated_state(
+        target, np.array([[-0.1], [0.0], [0.1], [0.2]])
+    )
+    calls = {"resampling": 0, "mutation": 0}
+
+    def record_resampling(state, context, rng):
+        del state, context, rng
+        calls["resampling"] += 1
+        raise AssertionError(
+            "resampling must not run after terminal weighting"
+        )
+
+    def record_mutation(state, context, rng):
+        del state, context, rng
+        calls["mutation"] += 1
+        raise AssertionError("mutation must not run after terminal weighting")
+
+    smc = SequentialMonteCarlo(
+        steps=[
+            PersistParticles(),
+            PersistentAdaptiveTemperedWeighting(target, target_ess=3.0),
+            record_resampling,
+            record_mutation,
+        ]
+    )
+
+    result = smc.run(
+        active,
+        num_steps=None,
+        rng=rng,
+        metadata={"temperature": 0.0},
+    )
+
+    assert isinstance(result.final_state, PersistentParticleState)
+    assert result.final_state.metadata["temperature"] == pytest.approx(1.0)
+    np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
+    assert calls == {"resampling": 0, "mutation": 0}
+
+
+def test_persistent_runner_accumulates_terminal_batches_until_target_ess(
+    rng,
+) -> None:
+    target, _ = _linear_target()
+    active, _ = _evaluated_state(
+        target,
+        np.zeros((4, 1)),
+        temperature=1.0,
+    )
+    calls = {"resampling": 0, "mutation": 0}
+
+    def record_resampling(state, context, rng):
+        del rng
+        calls["resampling"] += 1
+        indices = np.arange(state.batch_size)
+        return state.resample(indices), context, None
+
+    def record_mutation(state, context, rng):
+        del rng
+        calls["mutation"] += 1
+        return state, context, None
+
+    smc = SequentialMonteCarlo(
+        steps=[
+            PersistParticles(),
+            PersistentAdaptiveTemperedWeighting(
+                target,
+                target_ess=3.0,
+                target_total_ess=6.0,
+            ),
+            record_resampling,
+            record_mutation,
+        ]
+    )
+
+    result = smc.run(
+        active,
+        num_steps=None,
+        rng=rng,
+        metadata={"temperature": 1.0},
+    )
+
+    assert len(result) == 2
+    assert calls == {"resampling": 1, "mutation": 1}
+    assert isinstance(result.final_state, PersistentParticleState)
+    assert result.final_state.n_batches == 2
+    assert result.final_state.n_particles == 8
+    np.testing.assert_allclose(result.final_state.temperatures, [1.0, 1.0])
+    np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
+    assert result.final_state.effective_sample_size() == pytest.approx(8.0)
 
 
 def test_adaptive_persistent_weighting_advances_after_repeated_zero_batch(
