@@ -20,6 +20,13 @@ from .mutation import (
     MutateIfResampled,
     ProposalRejuvenation,
 )
+from .persistent import (
+    PersistentAdaptiveTemperedWeighting,
+    PersistentTemperedWeighting,
+    PersistParticles,
+    persistent_log_mixture_denominator,
+    persistent_log_weights,
+)
 from .proposal import AdaptGaussianProposal
 from .resampling import (
     MultinomialResampling,
@@ -61,6 +68,11 @@ __all__ = [
     "MiniPCNMutation",
     "MutateIfResampled",
     "ProposalRejuvenation",
+    "PersistParticles",
+    "PersistentAdaptiveTemperedWeighting",
+    "PersistentTemperedWeighting",
+    "persistent_log_mixture_denominator",
+    "persistent_log_weights",
     "MetaSMCStep",
     "AdaptGaussianProposal",
     "MultinomialResampling",

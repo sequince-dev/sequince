@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import math
+from collections.abc import Mapping
+from numbers import Integral
 from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
 from ._typing import MetaData, MutationStrategy
@@ -14,18 +17,25 @@ from .steps import (
     FixedTemperedWeighting,
     LoggingStep,
     MultinomialResampling,
+    PersistentAdaptiveTemperedWeighting,
+    PersistParticles,
     StratifiedResampling,
     SystematicResampling,
 )
 from .steps.base import SMCStep, StepContext
 from .steps.mutation import get_mutation_step
+from .steps.resampling import ResamplingStep
 from .steps.weighting import TargetESSRatio
+from .target import TemperedTarget
 from .transforms import ParticleTransform, get_prebuilt_transform
 
 if TYPE_CHECKING:
     from .state import ParticleState
 
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
+logger = logging.getLogger(__name__)
+
+__all__ = ["make_persistent_bayesian_smc", "make_standard_bayesian_smc"]
 
 
 def make_standard_bayesian_smc(
@@ -246,3 +256,195 @@ def make_standard_bayesian_smc(
     )
 
     return sampler, posterior, meta_data
+
+
+def make_persistent_bayesian_smc(
+    target: TemperedTarget,
+    *,
+    n_particles: int = 256,
+    target_ess: float = 512,
+    target_total_ess: float | None = None,
+    weighting_kwargs: Dict[str, Any] | None = None,
+    resampling: ResamplingStrategy | ResamplingStep = "systematic",
+    resampling_kwargs: Dict[str, Any] | None = None,
+    mutation: MutationStrategy | SMCStep = "minipcn",
+    mutation_n_steps: int = 5,
+    mutation_kwargs: Dict[str, Any] | None = None,
+    particle_transform: ParticleTransform | str | None = "affine",
+    particle_transform_kwargs: Dict[str, Any] | None = None,
+    auto_normalize: bool = True,
+    logging_frequency: int = 1,
+    callbacks: Sequence[
+        Callable[[ParticleState, StepContext, SMCResult], None]
+    ]
+    | None = None,
+    checkpoint_writers: Sequence[CheckpointWriter] | None = None,
+) -> SequentialMonteCarlo:
+    """Return an SMC runner configured for persistent sampling.
+
+    ``n_particles`` is the active population size drawn from the complete
+    persistent archive on every iteration. ``target_ess`` and
+    ``target_total_ess`` are absolute effective sample sizes of that archive;
+    they are not fractions of the active population size.
+
+    The caller should initialize an ordinary :class:`ParticleState` containing
+    ``n_particles`` draws from the initial target. The first persistence step
+    archives that state at temperature zero, and the adaptive weighting step
+    requests an immediate runner stop once its terminal ESS condition is met.
+    Progress is logged every ``logging_frequency`` iterations and once more for
+    the terminal weighted state. Set ``logging_frequency=0`` to disable it.
+
+    For more details see https://arxiv.org/abs/2407.20722.
+    """
+    if isinstance(n_particles, bool) or not isinstance(n_particles, Integral):
+        raise TypeError("n_particles must be a positive integer.")
+    if n_particles <= 0:
+        raise ValueError("n_particles must be a positive integer.")
+    n_particles = int(n_particles)
+
+    persist_step = PersistParticles()
+    weighting_step = PersistentAdaptiveTemperedWeighting(
+        target,
+        target_ess=target_ess,
+        target_total_ess=target_total_ess,
+        **weighting_kwargs or {},
+    )
+
+    if isinstance(resampling, ResamplingStep):
+        if resampling_kwargs:
+            raise ValueError(
+                "resampling_kwargs cannot be used with a resampling step."
+            )
+        if not resampling._always_resample:  # noqa: SLF001
+            raise ValueError(
+                "Persistent sampling requires always_resample=True."
+            )
+        if resampling._n_samples != n_particles:  # noqa: SLF001
+            raise ValueError(
+                "Persistent sampling requires the resampling step to use "
+                f"n_samples={n_particles}."
+            )
+        resampling_step = resampling
+    else:
+        resampling_map = {
+            "systematic": SystematicResampling,
+            "stratified": StratifiedResampling,
+            "multinomial": MultinomialResampling,
+        }
+        try:
+            resampling_cls = resampling_map[resampling]
+        except KeyError as exc:
+            valid = ", ".join(sorted(resampling_map))
+            raise ValueError(
+                f"Unknown resampling strategy '{resampling}'. "
+                f"Valid options are: {valid}."
+            ) from exc
+
+        configured_resampling = dict(resampling_kwargs or {})
+        configured_n_samples = configured_resampling.pop(
+            "n_samples", n_particles
+        )
+        if configured_n_samples != n_particles:
+            raise ValueError(
+                "Persistent sampling requires resampling n_samples to equal "
+                f"n_particles ({n_particles})."
+            )
+        configured_always = configured_resampling.pop("always_resample", True)
+        if configured_always is not True:
+            raise ValueError(
+                "Persistent sampling requires always_resample=True."
+            )
+        resampling_step = resampling_cls(
+            always_resample=True,
+            n_samples=n_particles,
+            **configured_resampling,
+        )
+
+    if isinstance(particle_transform, str):
+        particle_transform = get_prebuilt_transform(
+            particle_transform,
+            **particle_transform_kwargs or {},
+        )
+    elif not (
+        isinstance(particle_transform, ParticleTransform)
+        or particle_transform is None
+    ):
+        raise ValueError(
+            "particle_transform must be a string identifier, "
+            "a ParticleTransform instance, or None."
+        )
+
+    mutation_step = get_mutation_step(
+        mutation,
+        target=target,
+        transform=particle_transform,
+        mutation_n_steps=mutation_n_steps,
+        mutation_kwargs=mutation_kwargs,
+    )
+
+    steps: list[SMCStep] = [
+        persist_step,
+        weighting_step,
+        resampling_step,
+    ]
+    if mutation_step is not None:
+        steps.append(mutation_step)
+
+    configured_callbacks = list(callbacks or ())
+    if logging_frequency > 0:
+
+        def logging_callback(
+            state: ParticleState,
+            context: StepContext,
+            result: SMCResult,
+        ) -> None:
+            if (
+                context.t % logging_frequency != 0
+                and not context.stop_requested
+            ):
+                return
+            archive = persist_step.persistent_state
+            # PersistParticles always runs before iteration callbacks.
+            if archive is None:  # pragma: no cover
+                n_batches = 0
+                archive_size = 0
+            else:
+                n_batches = archive.n_batches
+                archive_size = archive.n_particles
+            temperature = float(context.metadata.get("temperature", 0.0))
+            temperature_delta = float(
+                context.metadata.get("temperature_delta", 0.0)
+            )
+            outputs = result.outputs[-1]
+            weighting_output = outputs[1]
+            persistent_ess = float(weighting_output["effective_sample_size"])
+            required_ess = (
+                target_total_ess
+                if temperature >= 1.0 and target_total_ess is not None
+                else target_ess
+            )
+            mutation = outputs[3] if len(outputs) > 3 else None
+            acceptance = (
+                f", Acceptance={float(mutation['acceptance']):.3f}"
+                if isinstance(mutation, Mapping) and "acceptance" in mutation
+                else ""
+            )
+            logger.info(
+                f"Persistent SMC iteration {context.t}: "
+                f"Temperature={temperature:.6g} "
+                f"(delta={temperature_delta:.3g}), "
+                f"Batches={n_batches}, "
+                f"Archive size={archive_size}, "
+                f"Persistent ESS={persistent_ess:.1f}/{required_ess:.1f}, "
+                f"Log evidence={float(state.log_evidence):+.6g}"
+                f"{acceptance}"
+            )
+
+        configured_callbacks.append(logging_callback)
+
+    return SequentialMonteCarlo(
+        steps=steps,
+        callbacks=configured_callbacks,
+        checkpoint_writers=checkpoint_writers,
+        auto_normalize=auto_normalize,
+    )

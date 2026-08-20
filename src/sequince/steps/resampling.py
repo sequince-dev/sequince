@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from numbers import Integral
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import array_api_extra as xpx
@@ -63,6 +64,9 @@ class ResamplingStep(SMCStep):
     always_resample:
         When ``True`` always resample regardless of ESS (overrides
         ``ess_threshold``).
+    n_samples:
+        Number of particles to draw when resampling. If ``None``, draw the same
+        number as are present in the input state.
     """
 
     resampling_scheme: ClassVar[str] = "unknown"
@@ -72,7 +76,20 @@ class ResamplingStep(SMCStep):
         *,
         ess_threshold: float | None = 0.5,
         always_resample: bool = False,
+        n_samples: int | None = None,
     ):
+        if n_samples is None:
+            self._n_samples = None
+        else:
+            if isinstance(n_samples, bool) or not isinstance(
+                n_samples, Integral
+            ):
+                raise TypeError(
+                    "n_samples must be a positive integer or None."
+                )
+            if n_samples <= 0:
+                raise ValueError("n_samples must be a positive integer.")
+            self._n_samples = int(n_samples)
         self._ess_threshold = ess_threshold
         self._always_resample = always_resample
 
@@ -113,7 +130,8 @@ class ResamplingStep(SMCStep):
             ess_ratio,
         )
         weights = state.weights
-        indices = self._choose_ancestors(weights, rng)
+        n_samples = self._n_samples if self._n_samples is not None else n
+        indices = self._choose_ancestors(weights, n_samples, rng)
         context = context.with_metadata(ess=ess, resampled=True)
         return (
             state.resample(indices),
@@ -127,7 +145,7 @@ class ResamplingStep(SMCStep):
         )
 
     def _choose_ancestors(
-        self, weights: Array, rng: "RandomGenerator"
+        self, weights: Array, n_samples: int, rng: "RandomGenerator"
     ) -> Array:
         raise NotImplementedError
 
@@ -180,7 +198,11 @@ class ResamplingStep(SMCStep):
         weights = xp.exp(normalized)
         ess = 1.0 / xp.sum(xp.square(weights))
         rng = RandomGenerator.from_xp(xp, generator=random_state)
-        indices = self._choose_ancestors(weights, rng)
+        n_particles = state.log_weights.shape[0]
+        n_samples = (
+            self._n_samples if self._n_samples is not None else n_particles
+        )
+        indices = self._choose_ancestors(weights, n_samples, rng)
         updated = state.resample(indices)
         context = context.with_metadata(ess=ess, resampled=xp.asarray(True))
         output = ResamplingOutput(
@@ -207,12 +229,12 @@ class MultinomialResampling(ResamplingStep):
     resampling_scheme = "multinomial"
 
     def _choose_ancestors(
-        self, weights: Array, rng: "RandomGenerator"
+        self, weights: Array, n_samples: int, rng: "RandomGenerator"
     ) -> Array:
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
-        n = probs.shape[0]
-        return rng.choice(n, size=n, p=probs)
+        n_particles = probs.shape[0]
+        return rng.choice(n_particles, size=n_samples, p=probs)
 
 
 class StratifiedResampling(ResamplingStep):
@@ -221,14 +243,15 @@ class StratifiedResampling(ResamplingStep):
     resampling_scheme = "stratified"
 
     def _choose_ancestors(
-        self, weights: Array, rng: "RandomGenerator"
+        self, weights: Array, n_samples: int, rng: "RandomGenerator"
     ) -> Array:
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
-        n = probs.shape[0]
-        offsets = xp.arange(n, dtype=probs.dtype, device=get_device(probs))
-        jitter = rng.random((n,))
-        positions = (offsets + jitter) / n
+        offsets = xp.arange(
+            n_samples, dtype=probs.dtype, device=get_device(probs)
+        )
+        jitter = rng.random((n_samples,))
+        positions = (offsets + jitter) / n_samples
         cumulative = xp.cumulative_sum(probs)
         return xpx.searchsorted(cumulative, positions, side="right", xp=xp)
 
@@ -239,13 +262,14 @@ class SystematicResampling(ResamplingStep):
     resampling_scheme = "systematic"
 
     def _choose_ancestors(
-        self, weights: Array, rng: "RandomGenerator"
+        self, weights: Array, n_samples: int, rng: "RandomGenerator"
     ) -> Array:
         xp = namespace(weights)
         probs = asarray(weights, xp=xp)
-        n = probs.shape[0]
         start = rng.random()
-        offsets = xp.arange(n, dtype=probs.dtype, device=get_device(probs))
-        positions = (start + offsets) / n
+        offsets = xp.arange(
+            n_samples, dtype=probs.dtype, device=get_device(probs)
+        )
+        positions = (start + offsets) / n_samples
         cumulative = xp.cumulative_sum(probs)
         return xpx.searchsorted(cumulative, positions, side="right", xp=xp)

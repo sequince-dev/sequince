@@ -11,7 +11,10 @@ enable_scipy_array_api()
 from .exceptions import DegenerateWeightsError
 from .mcmc import MarkovChainMonteCarlo, MCMCResult, make_mcmc
 from .posterior import TemperedPosterior
-from .prebuilt_samplers import make_standard_bayesian_smc
+from .prebuilt_samplers import (
+    make_persistent_bayesian_smc,
+    make_standard_bayesian_smc,
+)
 from .proposals import (
     ProposalDistribution,
     TrainableProposal,
@@ -20,7 +23,7 @@ from .proposals import (
 )
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
-from .state import ParticleState
+from .state import ParticleState, PersistentParticleState
 from .target import SequentialTarget, TargetEvaluation, TemperedTarget
 
 try:
@@ -33,6 +36,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DegenerateWeightsError",
     "ParticleState",
+    "PersistentParticleState",
     "ProposalDistribution",
     "MCMCResult",
     "MarkovChainMonteCarlo",
@@ -44,6 +48,7 @@ __all__ = [
     "TemperedPosterior",
     "TargetEvaluation",
     "TrainableProposal",
+    "make_persistent_bayesian_smc",
     "make_standard_bayesian_smc",
     "make_mcmc",
     "draw_initial_state",

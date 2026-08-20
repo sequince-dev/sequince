@@ -192,10 +192,15 @@ def to_numpy(
     return _numpy_result(array, dtype=dtype, copy=copy)
 
 
-def logsumexp(array: Any, *, xp: Any | None = None):
+def logsumexp(
+    array: Any,
+    *,
+    axis: int | tuple[int, ...] | None = None,
+    xp: Any | None = None,
+):
     from scipy.special import logsumexp as scipy_logsumexp
 
     if xp is None:
         xp = _namespace_or_numpy(array)
     arr = asarray(array, xp=xp)
-    return scipy_logsumexp(arr)
+    return scipy_logsumexp(arr, axis=axis)

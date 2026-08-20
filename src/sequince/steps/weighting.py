@@ -16,6 +16,7 @@ from ..stats import (
 from ..target import SequentialTarget, TemperedTarget
 from ..utils import (
     _validate_log_normalizer,
+    bisect_monotone_decreasing,
     call_with_optional_context,
     normalize_log_weights,
 )
@@ -972,14 +973,14 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         base_ratio = ratio_fn(base_log_weights, increments, low)
         high_ratio = ratio_fn(base_log_weights, increments, high)
-        for _ in range(self._max_bisection_iter):
-            mid = 0.5 * (low + high)
-            ratio = ratio_fn(base_log_weights, increments, mid)
-            active = high - low > min_delta
-            move_low = xp.logical_and(active, ratio >= target_ess_ratio)
-            move_high = xp.logical_and(active, ratio < target_ess_ratio)
-            low = xp.where(move_low, mid, low)
-            high = xp.where(move_high, mid, high)
+        low, high = bisect_monotone_decreasing(
+            lambda delta: ratio_fn(base_log_weights, increments, delta),
+            low,
+            high,
+            target_ess_ratio,
+            tolerance=min_delta,
+            max_iterations=self._max_bisection_iter,
+        )
 
         minimum_delta = xp.minimum(max_delta, min_delta)
         bisected_delta = xp.minimum(
