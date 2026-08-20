@@ -192,6 +192,43 @@ def test_make_persistent_bayesian_smc_builds_fixed_size_pipeline() -> None:
     assert steps[2]._always_resample  # noqa: SLF001
 
 
+def test_make_persistent_bayesian_smc_logs_archive_progress(
+    rng,
+    caplog,
+) -> None:
+    n_particles = 5
+    target = TemperedPosterior(
+        log_prior=_quadratic_log_prior,
+        log_likelihood=_zero_log_likelihood,
+    )
+    smc = make_persistent_bayesian_smc(
+        target,
+        n_particles=n_particles,
+        target_ess=2 * n_particles,
+        mutation="none",
+    )
+    particles = np.linspace(-1.0, 1.0, n_particles)[:, None]
+    context = StepContext(t=0, metadata={"temperature": 0.0})
+    initial_state = ParticleState(
+        particles,
+        evaluation=target.prepare_evaluation(particles, context),
+    )
+
+    with caplog.at_level("INFO", logger="sequince.prebuilt_samplers"):
+        smc.run(initial_state, rng=rng)
+
+    assert "Persistent SMC iteration 0" in caplog.messages[0]
+    terminal_message = caplog.messages[-1]
+    assert "Persistent SMC iteration 1" in terminal_message
+    assert "Temperature=1" in terminal_message
+    assert "Batches=2" in terminal_message
+    assert f"Archive size={2 * n_particles}" in terminal_message
+    assert (
+        f"Persistent ESS={2 * n_particles:.1f}/{2 * n_particles:.1f}"
+        in terminal_message
+    )
+
+
 def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
     rng,
 ) -> None:
