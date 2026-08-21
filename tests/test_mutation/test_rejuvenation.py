@@ -81,7 +81,7 @@ def test_rejuvenates_with_minimal_generative_proposal(
     state = ParticleState(
         particles,
         log_weights=np.linspace(-2.0, 0.0, len(particles)),
-        log_evidence=1.25,
+        log_normalizing_constant=1.25,
     )
     proposal = EmpiricalGaussianProposal()
     transform = RecordingTransform()

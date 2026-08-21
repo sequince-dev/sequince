@@ -147,15 +147,15 @@ class SequentialMonteCarlo:
                 break
 
         if self._auto_normalize:
-            pre_log_evidence = state.log_evidence
+            pre_log_normalizing_constant = state.log_normalizing_constant
             state, log_norm = state.normalize()
-            state.log_evidence += log_norm
+            state.log_normalizing_constant += log_norm
             logger.debug(
                 "Iteration %d: normalized weights "
-                "(log_evidence=%.6f -> %.6f).",
+                "(log_normalizing_constant=%.6f -> %.6f).",
                 context.t,
-                pre_log_evidence,
-                state.log_evidence,
+                pre_log_normalizing_constant,
+                state.log_normalizing_constant,
             )
 
         return state, context, rng, tuple(outputs)
@@ -200,7 +200,9 @@ class SequentialMonteCarlo:
             )
             state = state.with_updates(
                 log_weights=normalized,
-                log_evidence=state.log_evidence + log_norm,
+                log_normalizing_constant=(
+                    state.log_normalizing_constant + log_norm
+                ),
             )
 
         return state, context, random_state, tuple(outputs)

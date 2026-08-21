@@ -48,7 +48,7 @@ def _tempering_diagnostics(
     normalized_base_log_weights = base_log_weights - base_log_norm
     updated_log_weights = base_log_weights + delta * log_increments
 
-    log_evidence_increment = float(
+    log_normalizing_constant_increment = float(
         logsumexp(updated_log_weights, xp=xp) - base_log_norm
     )
     ess = ess_from_log_weights(updated_log_weights)
@@ -63,10 +63,10 @@ def _tempering_diagnostics(
     mean_ratio = xp.sum(base_weights * scaled_ratios)
     mean_ratio_scalar = float(to_numpy(mean_ratio))
     if mean_ratio_scalar == 0.0 or not math.isfinite(mean_ratio_scalar):
-        log_evidence_increment_variance = math.nan
+        log_normalizing_constant_increment_variance = math.nan
     else:
         centered = scaled_ratios - mean_ratio
-        log_evidence_increment_variance = float(
+        log_normalizing_constant_increment_variance = float(
             to_numpy(
                 xp.sum(xp.square(base_weights) * xp.square(centered))
                 / xp.square(mean_ratio)
@@ -74,8 +74,12 @@ def _tempering_diagnostics(
         )
 
     return {
-        "log_evidence_increment": log_evidence_increment,
-        "log_evidence_increment_variance": (log_evidence_increment_variance),
+        "log_normalizing_constant_increment": (
+            log_normalizing_constant_increment
+        ),
+        "log_normalizing_constant_increment_variance": (
+            log_normalizing_constant_increment_variance
+        ),
         "ess_before_resampling": ess,
         "ess_at_max_temperature": terminal_ess,
     }
@@ -177,7 +181,9 @@ def _apply_log_weight_increment(
         updated_state = updated_state.with_updates(log_weights=normalized)
     return (
         updated_state.with_updates(
-            log_evidence=updated_state.log_evidence + log_norm
+            log_normalizing_constant=(
+                updated_state.log_normalizing_constant + log_norm
+            )
         ),
         log_norm,
     )

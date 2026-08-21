@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
 
-EvidenceVarianceMethod = Literal[
+NormalizingConstantVarianceMethod = Literal[
     "incremental",
     "lee-whiteley",
     "fixed-lag-lee-whiteley",
@@ -30,7 +30,7 @@ EvidenceVarianceMethod = Literal[
 
 @dataclass(frozen=True)
 class FixedLagLeeWhiteleyDiagnostics:
-    """Diagnostics for a fixed-lag Lee--Whiteley evidence estimate.
+    """Diagnostics for a fixed-lag Lee--Whiteley normalizing-constant estimate.
 
     ``family_ess`` is the inverse concentration of the final normalized
     particle weight carried by each selected-lag ancestor. It lies between one
@@ -150,30 +150,35 @@ class SMCResult:
         """Return the last state produced by the run."""
         return self.states[-1]
 
-    def log_evidence(self) -> Array:
-        """Return the log evidence of the final state."""
-        return self.final_state.log_evidence
+    def log_normalizing_constant(self) -> Array:
+        """Return the log normalizing constant of the final state."""
+        return self.final_state.log_normalizing_constant
 
-    def log_evidence_variance(
+    def log_evidence(self) -> Array:
+        """Alias for :meth:`log_normalizing_constant`."""
+        return self.log_normalizing_constant()
+
+    def log_normalizing_constant_variance(
         self,
-        method: EvidenceVarianceMethod = "incremental",
+        method: NormalizingConstantVarianceMethod = "incremental",
         *,
         lag: int | None = None,
     ) -> Array:
-        """Estimate the variance of the final log-evidence estimate.
+        """Estimate variance of the final log normalizing-constant estimate.
 
         ``"incremental"`` sums the per-iteration variance diagnostics. The
         result ignores dependence between SMC iterations.
 
         ``"lee-whiteley"`` uses the particle genealogy to estimate relative
-        evidence variance, which is also a delta-method estimate of log-evidence
-        variance. This estimator requires constant particle count and
-        multinomial resampling at every iteration. The resampling scheme is not
-        currently retained by :class:`SMCResult`, so callers are responsible for
-        ensuring that multinomial resampling was used.
+        normalizing-constant variance, which is also a delta-method estimate of
+        log normalizing-constant variance. This estimator requires constant
+        particle count and multinomial resampling at every iteration. The
+        resampling scheme is not currently retained by :class:`SMCResult`, so
+        callers are responsible for ensuring that multinomial resampling was
+        used.
 
         ``"fixed-lag-lee-whiteley"`` This estimator truncates the Lee-Whiteley
-        genealogical normalising-constant variance estimate to the most recent
+        genealogical normalizing-constant variance estimate to the most recent
         ``lag`` resampling events. Particle families are therefore defined by
         their ancestors ``lag`` resampling events before the final population
         rather than by their time-zero ancestors.
@@ -183,29 +188,42 @@ class SMCResult:
                 "lag is only valid for method='fixed-lag-lee-whiteley'."
             )
         if method == "incremental":
-            return self._log_evidence_variance_incremental()
+            return self._log_normalizing_constant_variance_incremental()
         if method == "lee-whiteley":
-            return self._log_evidence_variance_lee_whiteley()
+            return self._log_normalizing_constant_variance_lee_whiteley()
         if method == "fixed-lag-lee-whiteley":
             if lag is None:
                 raise ValueError(
                     "method='fixed-lag-lee-whiteley' requires a non-negative lag."
                 )
-            variance, _ = self._log_evidence_variance_fixed_lag_lee_whiteley(
-                lag
+            variance, _ = (
+                self._log_normalizing_constant_variance_fixed_lag_lee_whiteley(
+                    lag
+                )
             )
             return variance
-        raise ValueError(f"Unknown log-evidence variance method: {method!r}")
-
-    def _log_evidence_variance_incremental(self) -> Array:
-        xp = namespace(self.final_state.log_weights)
-        log_evidence_increments_variance = self.metadata_history(
-            "log_evidence_increment_variance",
+        raise ValueError(
+            f"Unknown log normalizing-constant variance method: {method!r}"
         )
-        return xp.sum(log_evidence_increments_variance)
 
-    def _log_evidence_variance_lee_whiteley(self) -> Array:
-        """Return the Lee--Whiteley evidence variance estimate."""
+    def log_evidence_variance(
+        self,
+        method: NormalizingConstantVarianceMethod = "incremental",
+        *,
+        lag: int | None = None,
+    ) -> Array:
+        """Alias for :meth:`log_normalizing_constant_variance`."""
+        return self.log_normalizing_constant_variance(method=method, lag=lag)
+
+    def _log_normalizing_constant_variance_incremental(self) -> Array:
+        xp = namespace(self.final_state.log_weights)
+        log_normalizing_constant_increments_variance = self.metadata_history(
+            "log_normalizing_constant_increment_variance",
+        )
+        return xp.sum(log_normalizing_constant_increments_variance)
+
+    def _log_normalizing_constant_variance_lee_whiteley(self) -> Array:
+        """Return the Lee--Whiteley normalizing-constant variance estimate."""
         if len(self.outputs) != len(self.states):
             raise ValueError(
                 "Lee-Whiteley variance estimation requires one output record "
@@ -354,7 +372,7 @@ class SMCResult:
         )
         return history
 
-    def _log_evidence_variance_fixed_lag_lee_whiteley(
+    def _log_normalizing_constant_variance_fixed_lag_lee_whiteley(
         self,
         lag: int,
     ) -> tuple[Array, FixedLagLeeWhiteleyDiagnostics]:
@@ -405,33 +423,50 @@ class SMCResult:
         lag: int,
     ) -> FixedLagLeeWhiteleyDiagnostics:
         """Return diagnostics for a fixed-lag Lee--Whiteley estimate."""
-        _, diagnostics = self._log_evidence_variance_fixed_lag_lee_whiteley(
-            lag
+        _, diagnostics = (
+            self._log_normalizing_constant_variance_fixed_lag_lee_whiteley(lag)
         )
         return diagnostics
 
-    def log_evidence_error(
+    def log_normalizing_constant_error(
         self,
-        method: EvidenceVarianceMethod = "incremental",
+        method: NormalizingConstantVarianceMethod = "incremental",
         *,
         lag: int | None = None,
     ) -> Array:
-        """Return the standard error associated with an evidence variance."""
-        variance = self.log_evidence_variance(method=method, lag=lag)
+        """Return the standard error of the log normalizing constant."""
+        variance = self.log_normalizing_constant_variance(
+            method=method, lag=lag
+        )
         if float(to_numpy(variance)) < 0.0:
             raise ValueError(
-                "The estimated log-evidence variance is negative; a real "
-                "standard error cannot be computed."
+                "The estimated log normalizing-constant variance is negative; "
+                "a real standard error cannot be computed."
             )
         xp = namespace(variance)
         return xp.sqrt(variance)
 
-    def log_evidence_history(self) -> Array:
-        """Return the log evidence trajectory."""
+    def log_evidence_error(
+        self,
+        method: NormalizingConstantVarianceMethod = "incremental",
+        *,
+        lag: int | None = None,
+    ) -> Array:
+        """Alias for :meth:`log_normalizing_constant_error`."""
+        return self.log_normalizing_constant_error(method=method, lag=lag)
+
+    def log_normalizing_constant_history(self) -> Array:
+        """Return the log normalizing-constant trajectory."""
         reference = self.final_state.log_weights if self.states else None
         xp = namespace(reference)
-        values = [float(state.log_evidence) for state in self.states]
+        values = [
+            float(state.log_normalizing_constant) for state in self.states
+        ]
         return asarray(values, xp=xp, like=reference)
+
+    def log_evidence_history(self) -> Array:
+        """Alias for :meth:`log_normalizing_constant_history`."""
+        return self.log_normalizing_constant_history()
 
     def effective_sample_sizes(self) -> Array:
         """Return the effective sample size (ESS) for every iteration."""
@@ -467,12 +502,14 @@ class SMCResult:
         """Return a concise dictionary of high-level diagnostics."""
         ess = self.effective_sample_sizes()
         ess_ratio = self.effective_sample_size_ratios()
-        log_evidence = self.log_evidence_history()
+        log_normalizing_constant = self.log_normalizing_constant_history()
         summary_dict: dict[str, Any] = {
             "iterations": len(self),
             "final_ess": float(to_numpy(ess)[-1]),
             "final_ess_ratio": float(to_numpy(ess_ratio)[-1]),
-            "final_log_evidence": float(to_numpy(log_evidence)[-1]),
+            "final_log_normalizing_constant": float(
+                to_numpy(log_normalizing_constant)[-1]
+            ),
         }
 
         temperature_history = self.metadata_history(
@@ -687,19 +724,27 @@ class SMCResult:
         expanded_weights = xp.reshape(weights, reshape_dims)
         return xp.sum(expanded_weights * values, axis=0)
 
-    def plot_log_evidence(
+    def plot_log_normalizing_constant(
         self, *, ax: Any = None, label_axes: bool = True, **plot_kwargs: Any
     ) -> Any:
-        """Plot the log evidence trajectory."""
+        """Plot the log normalizing-constant trajectory."""
         x = to_numpy(range(len(self)))
-        y = to_numpy(self.log_evidence_history())
+        y = to_numpy(self.log_normalizing_constant_history())
         axis = _prepare_axis(ax)
         axis.plot(x, y, **plot_kwargs)
         if label_axes:
             axis.set_xlabel("Iteration")
-            axis.set_ylabel("Log evidence")
-            axis.set_title("Log evidence trajectory")
+            axis.set_ylabel("Log normalizing constant")
+            axis.set_title("Log normalizing-constant trajectory")
         return axis
+
+    def plot_log_evidence(
+        self, *, ax: Any = None, label_axes: bool = True, **plot_kwargs: Any
+    ) -> Any:
+        """Alias for :meth:`plot_log_normalizing_constant`."""
+        return self.plot_log_normalizing_constant(
+            ax=ax, label_axes=label_axes, **plot_kwargs
+        )
 
     def plot_effective_sample_size(
         self,
@@ -935,12 +980,45 @@ class MetaSMCResult:
         """Flatten particle states across all meta steps in execution order."""
         return [state for result in self.results for state in result.states]
 
-    def log_evidence_history(self) -> Array:
-        """Return the log evidence trajectory across all meta steps."""
+    def log_normalizing_constant_history(self) -> Array:
+        """Return the log normalizing-constant trajectory across meta steps."""
         reference = self.final_state.log_weights
         xp = namespace(reference)
-        values = [float(state.log_evidence) for state in self.all_states]
+        values = [
+            float(state.log_normalizing_constant) for state in self.all_states
+        ]
         return asarray(values, xp=xp, like=reference)
+
+    def log_evidence_history(self) -> Array:
+        """Alias for :meth:`log_normalizing_constant_history`."""
+        return self.log_normalizing_constant_history()
+
+    def plot_log_normalizing_constant(
+        self,
+        *,
+        ax: Any = None,
+        label_axes: bool = True,
+        cmap: str = "viridis",
+        **plot_kwargs: Any,
+    ) -> Any:
+        """Plot the log normalizing-constant trajectory across meta steps."""
+        import matplotlib.pyplot as plt
+
+        axis = _prepare_axis(ax)
+        x0 = 0.0
+        colors = plt.get_cmap(cmap)(np.linspace(0, 1, len(self.results)))
+        for result, color in zip(self.results, colors):
+            x = np.arange(x0, x0 + len(result))
+            y = to_numpy(result.log_normalizing_constant_history())
+            axis.plot(x, y, color=color, **plot_kwargs)
+            x0 += len(result)
+        if label_axes:
+            axis.set_xlabel("Iteration")
+            axis.set_ylabel("Log normalizing constant")
+            axis.set_title(
+                "Log normalizing-constant trajectory across meta steps"
+            )
+        return axis
 
     def plot_log_evidence(
         self,
@@ -950,22 +1028,13 @@ class MetaSMCResult:
         cmap: str = "viridis",
         **plot_kwargs: Any,
     ) -> Any:
-        """Plot the log evidence trajectory across all meta steps."""
-        import matplotlib.pyplot as plt
-
-        axis = _prepare_axis(ax)
-        x0 = 0.0
-        colors = plt.get_cmap(cmap)(np.linspace(0, 1, len(self.results)))
-        for result, color in zip(self.results, colors):
-            x = np.arange(x0, x0 + len(result))
-            y = to_numpy(result.log_evidence_history())
-            axis.plot(x, y, color=color, **plot_kwargs)
-            x0 += len(result)
-        if label_axes:
-            axis.set_xlabel("Iteration")
-            axis.set_ylabel("Log evidence")
-            axis.set_title("Log evidence trajectory across meta steps")
-        return axis
+        """Alias for :meth:`plot_log_normalizing_constant`."""
+        return self.plot_log_normalizing_constant(
+            ax=ax,
+            label_axes=label_axes,
+            cmap=cmap,
+            **plot_kwargs,
+        )
 
     def plot_metadata_history(
         self,
@@ -1000,7 +1069,9 @@ class MetaSMCResult:
         summary_dict: dict[str, Any] = {
             "meta_steps": len(self.results),
             "total_iterations": len(self.all_states),
-            "final_log_evidence": float(self.final_state.log_evidence),
+            "final_log_normalizing_constant": float(
+                self.final_state.log_normalizing_constant
+            ),
         }
         try:
             ess = float(self.final_state.effective_sample_size())

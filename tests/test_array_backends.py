@@ -24,7 +24,10 @@ def test_log_weight_increment_preserves_array_backend(
     assert case.matches_namespace(updated.log_weights)
     assert float(case.xp.sum(updated.weights)) == pytest.approx(1.0)
     assert log_norm is not None
-    assert float(updated.log_evidence) == pytest.approx(float(log_norm))
+    assert float(updated.log_normalizing_constant) == pytest.approx(
+        float(log_norm)
+    )
+    assert updated.log_evidence == updated.log_normalizing_constant
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])

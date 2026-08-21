@@ -49,7 +49,7 @@ class StochasticStep(SMCStep):
             ParticleState(
                 particles=particles + noise + observation_value,
                 log_weights=log_weights + weight_noise + observation_value,
-                log_evidence=state.log_evidence,
+                log_normalizing_constant=state.log_normalizing_constant,
                 metadata=metadata,
             ),
             context,
@@ -70,7 +70,7 @@ class DeterministicStep(SMCStep):
             ParticleState(
                 particles=np.asarray(state.particles) + 1.0,
                 log_weights=np.asarray(state.log_weights),
-                log_evidence=state.log_evidence,
+                log_normalizing_constant=state.log_normalizing_constant,
                 metadata=metadata,
             ),
             context,
@@ -267,7 +267,10 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
         steps=[],
         rng=rng,
     )
-    restored = SMCCheckpoint.from_dict(checkpoint.to_dict())
+    payload = checkpoint.to_dict()
+    assert "log_normalizing_constant" in payload["states"][-1]
+    assert "log_evidence" not in payload["states"][-1]
+    restored = SMCCheckpoint.from_dict(payload)
 
     _assert_states_equal(checkpoint.state, restored.state)
     _assert_results_equal(checkpoint.result(), restored.result())
@@ -762,7 +765,7 @@ def test_malformed_checkpoint_payload_raises() -> None:
                     {
                         "particles": np.zeros((2, 1)),
                         "log_weights": np.zeros(2),
-                        "log_evidence": 0.0,
+                        "log_normalizing_constant": 0.0,
                         "initial_ancestor_indices": np.arange(2),
                         "metadata": {},
                     }

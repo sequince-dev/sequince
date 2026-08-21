@@ -99,7 +99,8 @@ def test_importance_transition_increment_uses_old_and_new_particles(
         updated.log_weights,
         unnormalized - expected_log_norm,
     )
-    assert updated.log_evidence == pytest.approx(expected_log_norm)
+    assert updated.log_normalizing_constant == pytest.approx(expected_log_norm)
+    assert updated.log_evidence == updated.log_normalizing_constant
     np.testing.assert_allclose(
         output["log_weight_increment"],
         expected_increment,
