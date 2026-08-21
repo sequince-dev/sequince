@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import numpy as np
+import optree
 from acai import while_loop
 from array_api_compat import (
     is_array_api_obj,
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from .steps.base import StepContext
 
 RNGLike: TypeAlias = RandomGenerator | np.random.Generator | int | None
+OPTREE_NAMESPACE = "sequince"
 
 IS_NAMESPACE_FUNCTIONS = {
     "numpy": is_numpy_namespace,
@@ -125,19 +127,44 @@ def array_safe_copy(value: Any) -> Any:
 
 
 def pytree_dataclass(*, data_fields, meta_fields=(), drop_fields=()):
-    try:
-        import jax
-    except ModuleNotFoundError as exc:
-        if exc.name not in {"jax", "jaxlib"}:
-            raise
-        return lambda cls: cls
+    """Register a dataclass as an Optree and, when available, JAX pytree."""
+    data_fields = tuple(data_fields)
+    meta_fields = tuple(meta_fields)
+    drop_fields = tuple(drop_fields)
 
-    return lambda cls: jax.tree_util.register_dataclass(
-        cls,
-        data_fields=data_fields,
-        meta_fields=meta_fields,
-        drop_fields=drop_fields,
-    )
+    def register(cls):
+        def flatten(instance):
+            children = tuple(getattr(instance, name) for name in data_fields)
+            metadata = tuple(getattr(instance, name) for name in meta_fields)
+            return children, metadata
+
+        def unflatten(metadata, children):
+            values = dict(zip(data_fields, children, strict=True))
+            values.update(zip(meta_fields, metadata, strict=True))
+            return cls(**values)
+
+        optree.register_pytree_node(
+            cls,
+            flatten,
+            unflatten,
+            namespace=OPTREE_NAMESPACE,
+        )
+
+        try:
+            import jax
+        except ModuleNotFoundError as exc:
+            if exc.name not in {"jax", "jaxlib"}:
+                raise
+        else:
+            jax.tree_util.register_dataclass(
+                cls,
+                data_fields=data_fields,
+                meta_fields=meta_fields,
+                drop_fields=drop_fields,
+            )
+        return cls
+
+    return register
 
 
 def enable_scipy_array_api() -> None:

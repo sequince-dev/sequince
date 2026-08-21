@@ -90,9 +90,13 @@ class MiniPCNMutation(MutationStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, MiniPCNOutput]:
-        sampler, latent_particles, transform, context = self._prepare_sampler(
-            state, context, rng=rng
-        )
+        (
+            sampler,
+            latent_particles,
+            transform,
+            transform_auxiliary,
+            context,
+        ) = self._prepare_sampler(state, context, rng=rng)
 
         chain, history = sampler.sample(
             latent_particles,
@@ -111,6 +115,7 @@ class MiniPCNMutation(MutationStep):
             else None,
             latent_particles=latent_particles,
             transform=transform,
+            transform_auxiliary=transform_auxiliary,
             acceptance=acceptance,
         )
 
@@ -126,9 +131,13 @@ class MiniPCNMutation(MutationStep):
         transform_rng = RandomGenerator.from_xp(
             namespace(random_state), generator=random_state
         )
-        sampler, latent_particles, transform, context = self._prepare_sampler(
-            state, context, rng=transform_rng
-        )
+        (
+            sampler,
+            latent_particles,
+            transform,
+            transform_auxiliary,
+            context,
+        ) = self._prepare_sampler(state, context, rng=transform_rng)
         random_state = transform_rng.state()
         return_last_only = not self._store_chains
         chain, history, next_random_state = sampler.sample_functional(
@@ -150,6 +159,7 @@ class MiniPCNMutation(MutationStep):
             latent_chain=latent_chain,
             latent_particles=latent_particles,
             transform=transform,
+            transform_auxiliary=transform_auxiliary,
             acceptance=acceptance,
         )
         return updated_state, context, next_random_state, output
@@ -160,7 +170,7 @@ class MiniPCNMutation(MutationStep):
         context: StepContext,
         *,
         rng: Any = None,
-    ) -> tuple[Any, Array, ParticleTransform | None, StepContext]:
+    ) -> tuple[Any, Array, ParticleTransform | None, Any, StepContext]:
         """Prepare the latent particles and MiniPCN sampler."""
         from minipcn import Sampler
 
@@ -168,14 +178,17 @@ class MiniPCNMutation(MutationStep):
         transform, context = self._prepare_transform(
             state.particles, context, rng=rng
         )
-        latent_particles = self._forward_transform(
-            state.particles, transform, context
+        latent_particles, transform_auxiliary = self._forward_transform(
+            state.particles, transform, context, rng=rng
         )
 
         def log_prob_fn(position):
             backend_position = asarray(position, xp=xp, like=latent_particles)
             original, log_det = self._inverse_transform(
-                backend_position, transform, context
+                backend_position,
+                transform,
+                context,
+                auxiliary=transform_auxiliary,
             )
             result, _ = self._evaluate_target(original, context)
             return self._combine_with_log_det(result, log_det)
@@ -188,7 +201,13 @@ class MiniPCNMutation(MutationStep):
             xp=xp,
             **self._kwargs,
         )
-        return sampler, latent_particles, transform, context
+        return (
+            sampler,
+            latent_particles,
+            transform,
+            transform_auxiliary,
+            context,
+        )
 
     def _complete_mutation(
         self,
@@ -199,13 +218,17 @@ class MiniPCNMutation(MutationStep):
         latent_chain: Array | None,
         latent_particles: Array,
         transform: ParticleTransform | None,
+        transform_auxiliary: Any,
         acceptance: Any,
     ) -> tuple[ParticleState, StepContext, MiniPCNOutput]:
         """Map MiniPCN results back to particle space and build diagnostics."""
         xp = namespace(latent_particles)
         latent_last = asarray(latent_last, xp=xp, like=latent_particles)
         new_particles, _ = self._inverse_transform(
-            latent_last, transform, context
+            latent_last,
+            transform,
+            context,
+            auxiliary=transform_auxiliary,
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
@@ -215,6 +238,7 @@ class MiniPCNMutation(MutationStep):
                 latent_chain,
                 transform,
                 context,
+                auxiliary=transform_auxiliary,
                 like=latent_particles,
             )
 

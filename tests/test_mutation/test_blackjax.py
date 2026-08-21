@@ -9,10 +9,24 @@ from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps.context import StepContext
 from sequince.steps.mutation import BlackJAXMutation
+from sequince.transforms import ParticleTransform
 from sequince.utils import resolve_rng
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
+
+
+class ParticleAlignedShiftTransform(ParticleTransform):
+    def forward(self, particles, context=None, *, rng=None):
+        del context, rng
+        offsets = 10.0 * jnp.arange(particles.shape[0])[:, None]
+        return particles - offsets, jnp.zeros(particles.shape[0]), offsets
+
+    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
+        del context, rng
+        if auxiliary is None:
+            raise ValueError("particle-aligned offsets are required")
+        return values + auxiliary, jnp.zeros_like(values[..., 0])
 
 
 def _posterior() -> TemperedPosterior:
@@ -76,6 +90,76 @@ def test_blackjax_rejects_non_jax_particles() -> None:
 
     with pytest.raises(TypeError, match="JAX-backed"):
         mutation(state, StepContext(t=0), resolve_rng(42))
+
+
+def test_blackjax_selects_particle_aligned_auxiliary() -> None:
+    mutation = BlackJAXMutation(
+        _posterior(),
+        algorithm="random-walk",
+        algorithm_kwargs={"sigma": 0.01},
+        transform=ParticleAlignedShiftTransform(),
+    )
+
+    @jax.jit
+    def compiled_step(particles, random_state):
+        state = ParticleState(particles=particles)
+        context = StepContext(t=0, metadata={"temperature": jnp.asarray(0.5)})
+        result, _, next_state, _ = mutation.apply_functional(
+            state, context, random_state
+        )
+        return result.particles, next_state
+
+    particles, next_state = compiled_step(
+        _state().particles, jax.random.key(42)
+    )
+
+    assert particles.shape == _state().particles.shape
+    assert np.all(np.isfinite(np.asarray(particles)))
+    assert not np.array_equal(
+        jax.random.key_data(next_state),
+        jax.random.key_data(jax.random.key(42)),
+    )
+
+
+def test_blackjax_pairs_unique_auxiliary_with_particle_index() -> None:
+    observed_single_particles: list[float] = []
+
+    def record_original_position(position) -> None:
+        values = np.asarray(position)
+        if values.ndim == 1:
+            observed_single_particles.append(float(values[0]))
+
+    def log_prob(position):
+        jax.debug.callback(record_original_position, position)
+        return -0.5 * jnp.sum(position**2, axis=-1)
+
+    mutation = BlackJAXMutation(
+        log_prob,
+        algorithm="random-walk",
+        algorithm_kwargs={"sigma": 0.0},
+        n_steps=2,
+        transform=ParticleAlignedShiftTransform(),
+        store_chains=True,
+    )
+
+    @jax.jit
+    def compiled_step(particles, random_state):
+        state = ParticleState(particles=particles)
+        result, _, next_state, output = mutation.apply_functional(
+            state, StepContext(t=0), random_state
+        )
+        return result.particles, next_state, output.chain
+
+    result, _, chain = compiled_step(_state().particles, jax.random.key(42))
+    result.block_until_ready()
+
+    expected = set(np.asarray(_state().particles[:, 0]).tolist())
+    assert expected.issubset(set(observed_single_particles))
+    np.testing.assert_allclose(
+        chain,
+        jnp.stack([_state().particles, _state().particles]),
+        atol=1e-6,
+    )
 
 
 def test_blackjax_consumes_jax_rng_key() -> None:

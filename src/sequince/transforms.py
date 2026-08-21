@@ -8,6 +8,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Protocol, Sequence, cast
 
 import array_api_extra as xpx
+import optree
+from array_api_compat import is_array_api_obj
 from scipy.special import ndtr, ndtri
 
 from .array_api import asarray, namespace, to_numpy
@@ -18,7 +20,7 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
-from .utils import RNGLike, pytree_dataclass
+from .utils import OPTREE_NAMESPACE, RNGLike, pytree_dataclass, resolve_rng
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,76 @@ Bounds = (
     Mapping[int, tuple[float, float]]
     | tuple[tuple[int, tuple[float, float]], ...]
 )
+
+
+def _map_auxiliary_pytree(value: Any, fn):
+    """Map array leaves in an Optree pytree."""
+    return optree.tree_map(
+        lambda leaf: fn(leaf) if is_array_api_obj(leaf) else leaf,
+        value,
+        namespace=OPTREE_NAMESPACE,
+    )
+
+
+def select_transform_auxiliary(
+    auxiliary: Any,
+    selection: Any,
+    *,
+    n_particles: int,
+) -> Any:
+    """Apply a particle selection to particle-aligned auxiliary array leaves.
+
+    Every array leaf satisfying ``leaf.ndim > 0`` and
+    ``leaf.shape[0] == n_particles`` is particle-aligned and receives
+    ``selection``. Other leaves are returned unchanged; this shape convention
+    assigns no additional semantics to them.
+    """
+
+    def select_leaf(leaf):
+        if leaf.ndim > 0 and leaf.shape[0] == n_particles:
+            return leaf[selection]
+        return leaf
+
+    return _map_auxiliary_pytree(auxiliary, select_leaf)
+
+
+def _repeat_transform_auxiliary(
+    auxiliary: Any,
+    repeats: int,
+    *,
+    n_particles: int,
+) -> Any:
+    """Repeat particle-aligned leaves for a flattened chain batch."""
+
+    def repeat_leaf(leaf):
+        if leaf.ndim == 0 or leaf.shape[0] != n_particles:
+            return leaf
+        xp = namespace(leaf)
+        expanded = xp.broadcast_to(leaf, (repeats, *leaf.shape))
+        return xp.reshape(
+            expanded,
+            (repeats * n_particles, *leaf.shape[1:]),
+        )
+
+    return _map_auxiliary_pytree(auxiliary, repeat_leaf)
+
+
+def has_particle_aligned_auxiliary(
+    auxiliary: Any,
+    *,
+    n_particles: int,
+) -> bool:
+    """Return whether an auxiliary pytree contains particle-aligned arrays."""
+    leaves = optree.tree_leaves(
+        auxiliary,
+        namespace=OPTREE_NAMESPACE,
+    )
+    return any(
+        is_array_api_obj(leaf)
+        and leaf.ndim > 0
+        and leaf.shape[0] == n_particles
+        for leaf in leaves
+    )
 
 
 class UnitIntervalMapping(Protocol):
@@ -263,15 +335,15 @@ def _log_det_entries(value, arr, xp):
 
 
 class ParticleTransform:
-    """Minimal interface for coordinate transforms applied to particle states.
+    """Coordinate transform interface for particle mutation.
 
     Methods
     -------
     fit(particles, context=None, *, rng=None)
         Optionally adapt internal statistics using the provided particle cloud.
-    forward(particles, context=None)
-        Map particles into a transformed space and return log-Jacobian values.
-    inverse(values, context=None)
+    forward(particles, context=None, *, rng=None)
+        Return transformed particles, log-Jacobian values, and auxiliary data.
+    inverse(values, context=None, *, auxiliary=None, rng=None)
         Undo the transform applied by :meth:`forward`.
     """
 
@@ -288,15 +360,24 @@ class ParticleTransform:
         del rng
         return self
 
-    def forward(self, particles, context=None):
-        """Return the identity mapping plus zero log-determinants."""
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
+        """Return the identity mapping, zero log-determinants, and no auxiliary."""
+        del rng
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         zeros = xp.zeros_like(arr[..., 0])
-        return arr, zeros
+        return arr, zeros, None
 
-    def inverse(self, values, context=None):
+    def inverse(
+        self,
+        values,
+        context=None,
+        *,
+        auxiliary=None,
+        rng: RNGLike = None,
+    ):
         """Return the identity mapping plus zero log-determinants."""
+        del auxiliary, rng
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         zeros = xp.zeros_like(arr[..., 0])
@@ -365,15 +446,20 @@ class FlowTransform(ParticleTransform):
             pass
         return asarray(to_numpy(values), xp=xp, like=like)
 
-    def forward(self, particles, context=None):
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
+        del rng
         backend_particles = flow_asarray(self.flow, particles)
         values, log_det = self.flow.forward(backend_particles, context=context)
         return (
             self._restore_namespace(values, particles),
             self._restore_namespace(log_det, particles),
+            None,
         )
 
-    def inverse(self, values, context=None):
+    def inverse(
+        self, values, context=None, *, auxiliary=None, rng: RNGLike = None
+    ):
+        del auxiliary, rng
         backend_values = flow_asarray(self.flow, values)
         particles, log_det = self.flow.inverse(backend_values, context=context)
         return (
@@ -418,7 +504,8 @@ class AffineTransform(ParticleTransform):
         scale = xp.sqrt(var + self.eps)
         return replace(self, _mean=mean, _scale=scale)
 
-    def forward(self, particles, context=None):
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
+        del rng
         xp = namespace(particles, self._mean, self._scale)
         arr = asarray(particles, xp=xp)
         if self.columns is None:
@@ -426,16 +513,19 @@ class AffineTransform(ParticleTransform):
             scaled = centered / self._scale
             log_det = -xp.sum(xp.log(self._scale))
             log_det_vec = _log_det_entries(log_det, arr, xp)
-            return scaled, log_det_vec
+            return scaled, log_det_vec, None
         subset = arr[..., self.columns]
         centered = subset - self._mean
         scaled_subset = centered / self._scale
         scaled = _replace_columns(arr, self.columns, scaled_subset)
         log_det = -xp.sum(xp.log(self._scale))
         log_det_vec = _log_det_entries(log_det, arr, xp)
-        return scaled, log_det_vec
+        return scaled, log_det_vec, None
 
-    def inverse(self, values, context=None):
+    def inverse(
+        self, values, context=None, *, auxiliary=None, rng: RNGLike = None
+    ):
+        del auxiliary, rng
         xp = namespace(values, self._mean, self._scale)
         arr = asarray(values, xp=xp)
         if self.columns is None:
@@ -505,21 +595,25 @@ class BoundedToUnitHypercubeTransform(ParticleTransform):
         width = upper - lower
         return idx, lower, upper, width
 
-    def forward(self, particles, context=None):
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
+        del rng
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         idx, lower, _, width = self._bounds_arrays(xp, arr.dtype)
         if not idx or lower is None or width is None:
             zeros = xp.zeros(arr.shape[0], dtype=arr.dtype)
-            return arr, zeros
+            return arr, zeros, None
         subset = arr[..., idx]
         scaled_subset = (subset - lower) / width
         updated = _replace_columns(arr, idx, scaled_subset)
         log_det = -xp.sum(xp.log(width))
         log_det_vec = _log_det_entries(log_det, arr, xp)
-        return updated, log_det_vec
+        return updated, log_det_vec, None
 
-    def inverse(self, values, context=None):
+    def inverse(
+        self, values, context=None, *, auxiliary=None, rng: RNGLike = None
+    ):
+        del auxiliary, rng
         xp = namespace(values)
         arr = asarray(values, xp=xp)
         idx, lower, _, width = self._bounds_arrays(xp, arr.dtype)
@@ -558,28 +652,38 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
             self, "mapping", get_unit_interval_mapping(self.mapping)
         )
 
-    def forward(self, particles, context=None):
-        scaled, base_log_det = super().forward(particles, context=context)
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
+        scaled, base_log_det, _ = super().forward(
+            particles, context=context, rng=rng
+        )
         idx = list(self._indices)
         if not idx:
-            return scaled, base_log_det
+            return scaled, base_log_det, None
         xp = namespace(scaled, base_log_det)
         arr = asarray(scaled, xp=xp)
-        transformed_subset, jac = self.mapping.forward(arr[..., idx])
+        mapping = cast(UnitIntervalMapping, self.mapping)
+        transformed_subset, jac = mapping.forward(arr[..., idx])
         updated = _replace_columns(arr, idx, transformed_subset)
         base_log_det = xp.asarray(base_log_det, dtype=updated.dtype)
         log_abs_det = base_log_det + xp.sum(jac, axis=-1)
-        return updated, log_abs_det
+        return updated, log_abs_det, None
 
-    def inverse(self, values, context=None):
+    def inverse(
+        self, values, context=None, *, auxiliary=None, rng: RNGLike = None
+    ):
         idx = list(self._indices)
         if not idx:
-            return super().inverse(values, context=context)
+            return super().inverse(
+                values, context=context, auxiliary=auxiliary, rng=rng
+            )
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        u, jac = self.mapping.inverse(arr[..., idx])
+        mapping = cast(UnitIntervalMapping, self.mapping)
+        u, jac = mapping.inverse(arr[..., idx])
         cube_values = _replace_columns(arr, idx, u)
-        restored, base_log_det = super().inverse(cube_values, context=context)
+        restored, base_log_det = super().inverse(
+            cube_values, context=context, auxiliary=auxiliary, rng=rng
+        )
         xp = namespace(restored, base_log_det, u)
         base_log_det = xp.asarray(base_log_det, dtype=restored.dtype)
         log_abs_det = base_log_det + xp.sum(jac, axis=-1)
@@ -625,7 +729,8 @@ class PeriodicBoundaryTransform(ParticleTransform):
     def _indices(self) -> tuple[int, ...]:
         return tuple(self._bounds)
 
-    def forward(self, particles, context=None):
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
+        del rng
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         idx = list(self._indices)
@@ -644,16 +749,26 @@ class PeriodicBoundaryTransform(ParticleTransform):
             )
             arr = _replace_columns(arr, idx, wrapped_subset)
         zeros = xp.zeros_like(arr[..., 0])
-        return arr, zeros
+        return arr, zeros, None
 
-    def inverse(self, values, context=None):
-        return self.forward(values, context=context)
+    def inverse(
+        self, values, context=None, *, auxiliary=None, rng: RNGLike = None
+    ):
+        del auxiliary
+        restored, log_det, _ = self.forward(values, context=context, rng=rng)
+        return restored, log_det
 
 
 @pytree_dataclass(data_fields=("transforms",))
 @dataclass(frozen=True)
 class CompositeTransform(ParticleTransform):
     """Compose multiple transforms while tracking cumulative log-Jacobians.
+
+    Forward auxiliary data is a tuple with exactly one entry per component,
+    including ``None`` entries.  Inversion validates this shape and supplies
+    entries to their components in reverse transform order.  A supplied RNG is
+    resolved once and advanced sequentially across components, which avoids
+    reusing functional random keys.
 
     Parameters
     ----------
@@ -677,18 +792,30 @@ class CompositeTransform(ParticleTransform):
 
     def fit(self, particles, context=None, *, rng: RNGLike = None):
         data = particles
+        component_rng = (
+            None if rng is None else resolve_rng(rng, xp=namespace(particles))
+        )
         fitted_transforms = []
         for transform in self.transforms:
-            fitted = transform.fit(data, context=context, rng=rng)
+            fitted = transform.fit(data, context=context, rng=component_rng)
             fitted_transforms.append(fitted)
-            data, _ = fitted.forward(data, context=context)
+            data, _, _ = fitted.forward(
+                data, context=context, rng=component_rng
+            )
         return replace(self, transforms=tuple(fitted_transforms))
 
-    def forward(self, particles, context=None):
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
         data = particles
+        component_rng = (
+            None if rng is None else resolve_rng(rng, xp=namespace(particles))
+        )
         total_log_det = None
+        auxiliary = []
         for transform in self.transforms:
-            data, log_det = transform.forward(data, context=context)
+            data, log_det, transform_auxiliary = transform.forward(
+                data, context=context, rng=component_rng
+            )
+            auxiliary.append(transform_auxiliary)
             xp = namespace(data)
             if total_log_det is None:
                 total_log_det = xp.asarray(log_det, dtype=data.dtype)
@@ -699,13 +826,47 @@ class CompositeTransform(ParticleTransform):
             total_log_det = xp.zeros(
                 data.shape[0], dtype=asarray(data, xp=xp).dtype
             )
-        return data, total_log_det
+        return data, total_log_det, tuple(auxiliary)
 
-    def inverse(self, values, context=None):
+    def inverse(
+        self,
+        values,
+        context=None,
+        *,
+        auxiliary=None,
+        rng: RNGLike = None,
+    ):
+        component_rng = (
+            None if rng is None else resolve_rng(rng, xp=namespace(values))
+        )
+        component_auxiliary: Sequence[Any]
+        if auxiliary is None:
+            component_auxiliary = (None,) * len(self.transforms)
+        elif not isinstance(auxiliary, (tuple, list)):
+            raise TypeError(
+                "CompositeTransform auxiliary must be a tuple or list with "
+                "one entry per component transform."
+            )
+        elif len(auxiliary) != len(self.transforms):
+            raise ValueError(
+                "CompositeTransform auxiliary has "
+                f"{len(auxiliary)} entries; expected {len(self.transforms)}."
+            )
+        else:
+            component_auxiliary = auxiliary
         data = values
         total_log_det = None
-        for transform in reversed(self.transforms):
-            data, log_det = transform.inverse(data, context=context)
+        for transform, transform_auxiliary in zip(
+            reversed(self.transforms),
+            reversed(component_auxiliary),
+            strict=True,
+        ):
+            data, log_det = transform.inverse(
+                data,
+                context=context,
+                auxiliary=transform_auxiliary,
+                rng=component_rng,
+            )
             xp = namespace(data)
             if total_log_det is None:
                 total_log_det = xp.asarray(

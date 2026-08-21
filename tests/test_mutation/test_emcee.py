@@ -10,6 +10,27 @@ from sequince.steps.mutation import (
     get_emcee_move,
     resolve_emcee_moves,
 )
+from sequince.transforms import ParticleTransform
+
+
+class ParticleAlignedAuxiliaryTransform(ParticleTransform):
+    def forward(self, particles, context=None, *, rng=None):
+        del context, rng
+        values = np.asarray(particles)
+        return values, np.zeros(values.shape[0]), np.arange(values.shape[0])
+
+
+class SharedAuxiliaryTransform(ParticleTransform):
+    def forward(self, particles, context=None, *, rng=None):
+        del context, rng
+        values = np.asarray(particles)
+        shift = np.asarray(1.0)
+        return values - shift, np.zeros(values.shape[0]), {"shift": shift}
+
+    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
+        del context, rng
+        values = np.asarray(values)
+        return values + auxiliary["shift"], np.zeros_like(values[..., 0])
 
 
 def test_emcee_mutation_uses_supplied_rng(
@@ -40,6 +61,32 @@ def test_emcee_mutation_resolves_bilby_de_move() -> None:
     assert step._move[0][1] == 0.9  # noqa: SLF001
     assert step._move[1][0].gamma0 == 1.0  # noqa: SLF001
     assert step._move[1][1] == 0.1  # noqa: SLF001
+
+
+def test_emcee_rejects_particle_aligned_transform_auxiliary(
+    particle_state, context_factory, standard_normal_log_prob
+) -> None:
+    step = EmceeMutation(
+        standard_normal_log_prob,
+        transform=ParticleAlignedAuxiliaryTransform(),
+    )
+
+    with pytest.raises(NotImplementedError, match="walker subsets"):
+        step(particle_state, context_factory(), ArrayRNG(seed=2468))
+
+
+def test_emcee_accepts_non_particle_aligned_transform_auxiliary(
+    particle_state, context_factory, standard_normal_log_prob
+) -> None:
+    step = EmceeMutation(
+        standard_normal_log_prob,
+        transform=SharedAuxiliaryTransform(),
+    )
+
+    result, _, _ = step(particle_state, context_factory(), ArrayRNG(seed=2468))
+
+    assert result.particles.shape == particle_state.particles.shape
+    assert np.all(np.isfinite(result.particles))
 
 
 def test_get_emcee_move_constructs_named_move() -> None:

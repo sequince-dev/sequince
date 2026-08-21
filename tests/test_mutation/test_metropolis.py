@@ -8,6 +8,22 @@ from sequince.steps.mutation import (
     GaussianRandomWalk,
     MetropolisHastingsMutation,
 )
+from sequince.transforms import ParticleTransform
+
+
+class SignFoldingTransform(ParticleTransform):
+    def forward(self, particles, context=None, *, rng=None):
+        del context, rng
+        values = np.asarray(particles)
+        signs = np.where(values < 0, -1.0, 1.0)
+        return np.abs(values), np.zeros(values.shape[0]), signs
+
+    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
+        del context, rng
+        if auxiliary is None:
+            raise ValueError("auxiliary signs are required")
+        values = np.asarray(values)
+        return values * auxiliary, np.zeros(values.shape[0])
 
 
 def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
@@ -37,6 +53,30 @@ def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
     assert output["steps"] == 2
     assert "mutation_chains" not in updated.metadata
     assert output["chain"].shape == (2, 4, 2)
+
+
+def test_metropolis_keeps_forward_auxiliary_through_mutation(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    kernel = CallableMutationKernel(
+        lambda particles, inner_rng: particles + 0.5,
+        symmetric=True,
+    )
+    step = MetropolisHastingsMutation(
+        lambda particles, context: np.zeros(particles.shape[0]),
+        kernel,
+        transform=SignFoldingTransform(),
+        store_chains=True,
+    )
+
+    updated, _, output = step(particle_state, context_factory(), rng)
+
+    signs = np.where(particle_state.particles < 0, -1.0, 1.0)
+    expected = (np.abs(particle_state.particles) + 0.5) * signs
+    np.testing.assert_allclose(updated.particles, expected)
+    np.testing.assert_allclose(output["chain"][0], expected)
 
 
 def test_metropolis_hastings_mutation_applies_transition_ratio(

@@ -92,10 +92,12 @@ class MetropolisHastingsMutation(MutationStep):
         transform: ParticleTransform | None,
         context: StepContext,
         evaluation: "TargetEvaluation | None" = None,
+        *,
+        auxiliary: Any = None,
     ) -> tuple[Array, "TargetEvaluation | None"]:
         xp = namespace(latent_particles)
         original, log_det = self._inverse_transform(
-            latent_particles, transform, context
+            latent_particles, transform, context, auxiliary=auxiliary
         )
         result, evaluation = self._evaluate_target(
             original,
@@ -125,8 +127,11 @@ class MetropolisHastingsMutation(MutationStep):
         transform, context = self._prepare_transform(
             state.particles, context, rng=rng
         )
+        current, transform_auxiliary = self._forward_transform(
+            state.particles, transform, context, rng=rng
+        )
         current = asarray(
-            self._forward_transform(state.particles, transform, context),
+            current,
             xp=xp,
             like=state.particles,
         )
@@ -137,6 +142,7 @@ class MetropolisHastingsMutation(MutationStep):
             transform,
             context,
             state.evaluation,
+            auxiliary=transform_auxiliary,
         )
 
         accepted_total = 0
@@ -151,7 +157,10 @@ class MetropolisHastingsMutation(MutationStep):
                     "Mutation kernel must return the same shape as its input."
                 )
             proposed_log_prob, proposed_evaluation = self._evaluate_log_prob(
-                proposals, transform, context
+                proposals,
+                transform,
+                context,
+                auxiliary=transform_auxiliary,
             )
             transition_ratio = asarray(
                 evaluate_log_transition_ratio(kernel, current, proposals),
@@ -197,7 +206,12 @@ class MetropolisHastingsMutation(MutationStep):
             if self._store_chains:
                 chain.append(current)
 
-        new_particles, _ = self._inverse_transform(current, transform, context)
+        new_particles, _ = self._inverse_transform(
+            current,
+            transform,
+            context,
+            auxiliary=transform_auxiliary,
+        )
         acceptance = accepted_total / (n_particles * self._n_steps)
         stored_chain = None
         if self._store_chains:
@@ -205,6 +219,7 @@ class MetropolisHastingsMutation(MutationStep):
                 xp.stack(chain, axis=0),
                 transform,
                 context,
+                auxiliary=transform_auxiliary,
                 like=state.particles,
             )
 

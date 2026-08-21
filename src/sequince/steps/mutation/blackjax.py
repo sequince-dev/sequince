@@ -10,7 +10,11 @@ from array_api_compat import is_jax_namespace
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
-from ...transforms import ParticleTransform
+from ...transforms import (
+    ParticleTransform,
+    has_particle_aligned_auxiliary,
+    select_transform_auxiliary,
+)
 from ...utils import pytree_dataclass
 from ..context import StepContext
 from .base import MutationStep, TransformRefit
@@ -203,8 +207,8 @@ class BlackJAXMutation(MutationStep):
         transform, context = self._prepare_transform(
             state.particles, context, rng=rng
         )
-        latent_particles = self._forward_transform(
-            state.particles, transform, context
+        latent_particles, transform_auxiliary = self._forward_transform(
+            state.particles, transform, context, rng=rng
         )
         latent_particles = asarray(latent_particles, xp=xp)
         squeeze_last = latent_particles.ndim == 1
@@ -215,22 +219,70 @@ class BlackJAXMutation(MutationStep):
         )
         n_particles, dimensions = initial_positions.shape
 
-        def logdensity_fn(position: Array) -> Array:
+        def logdensity_fn(position: Array, particle_index: Array) -> Array:
+            particle_auxiliary = select_transform_auxiliary(
+                transform_auxiliary,
+                particle_index,
+                n_particles=n_particles,
+            )
             original, log_det = self._inverse_transform(
-                position, transform, context
+                position,
+                transform,
+                context,
+                auxiliary=particle_auxiliary,
             )
             result, _ = self._evaluate_target(original, context)
             result = self._combine_with_log_det(result, log_det)
             scalar = jnp.reshape(jnp.asarray(result), ())
             return jnp.where(jnp.isnan(scalar), -jnp.inf, scalar)
 
-        algorithm = self._build_algorithm(logdensity_fn, dimensions)
-        states = jax.vmap(algorithm.init)(initial_positions)
+        particle_aligned = has_particle_aligned_auxiliary(
+            transform_auxiliary, n_particles=n_particles
+        )
+        particle_indices = jnp.arange(n_particles)
+        shared_algorithm: Any = None
+        if particle_aligned:
+
+            def initialize_particle(position: Array, particle_index: Array):
+                algorithm = self._build_algorithm(
+                    lambda proposed: logdensity_fn(proposed, particle_index),
+                    dimensions,
+                )
+                return algorithm.init(position)
+
+            states = jax.vmap(initialize_particle)(
+                initial_positions, particle_indices
+            )
+        else:
+            shared_algorithm = self._build_algorithm(
+                lambda proposed: logdensity_fn(proposed, jnp.asarray(0)),
+                dimensions,
+            )
+            states = jax.vmap(shared_algorithm.init)(initial_positions)
         step_keys = jax.random.split(self._jax_key(rng), self._n_steps)
 
         def one_step(states: Any, key: Any) -> tuple[Any, tuple[Any, Any]]:
             chain_keys = jax.random.split(key, n_particles)
-            updated, info = jax.vmap(algorithm.step)(chain_keys, states)
+
+            def step_particle(
+                particle_key: Any,
+                particle_state: Any,
+                particle_index: Array,
+            ):
+                algorithm = self._build_algorithm(
+                    lambda proposed: logdensity_fn(proposed, particle_index),
+                    dimensions,
+                )
+                return algorithm.step(particle_key, particle_state)
+
+            if particle_aligned:
+                updated, info = jax.vmap(step_particle)(
+                    chain_keys, states, particle_indices
+                )
+            else:
+                updated, info = jax.vmap(shared_algorithm.step)(
+                    chain_keys, states
+                )
             return updated, (updated, info)
 
         final_states, (chain_states, infos) = jax.lax.scan(
@@ -240,7 +292,10 @@ class BlackJAXMutation(MutationStep):
         if squeeze_last:
             latent_result = latent_result[:, 0]
         new_particles, _ = self._inverse_transform(
-            latent_result, transform, context
+            latent_result,
+            transform,
+            context,
+            auxiliary=transform_auxiliary,
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
@@ -258,6 +313,7 @@ class BlackJAXMutation(MutationStep):
                 chain_states.position,
                 transform,
                 context,
+                auxiliary=transform_auxiliary,
                 like=initial_positions,
             )
 

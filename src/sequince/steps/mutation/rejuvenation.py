@@ -79,12 +79,15 @@ class ProposalRejuvenation(SMCStep):
         xp = namespace(state.particles)
         physical = asarray(state.particles, xp=xp, like=state.particles)
         fitted_transform = None
+        transform_auxiliary = None
         latent = physical
         if self._transform is not None:
             fitted_transform = self._transform.fit(
                 physical, context=context, rng=rng
             )
-            latent, _ = fitted_transform.forward(physical, context=context)
+            latent, _, transform_auxiliary = fitted_transform.forward(
+                physical, context=context, rng=rng
+            )
             latent = asarray(latent, xp=xp, like=physical)
 
         fitted_proposal = self._proposal.fit(
@@ -101,7 +104,10 @@ class ProposalRejuvenation(SMCStep):
             new_particles = new_latent
         else:
             new_particles, _ = fitted_transform.inverse(
-                new_latent, context=context
+                new_latent,
+                context=context,
+                auxiliary=transform_auxiliary,
+                rng=rng,
             )
         new_particles = asarray(new_particles, xp=xp, like=physical)
 
