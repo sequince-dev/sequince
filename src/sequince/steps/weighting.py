@@ -148,6 +148,41 @@ def _resolve_increment_fn(
     raise TypeError("log_increment_fn must be callable.")
 
 
+def _apply_log_weight_increment(
+    state: ParticleState,
+    log_increment: Array | float,
+    *,
+    normalize: bool = True,
+    validate_normalizer: bool = True,
+) -> tuple[ParticleState, Any | None]:
+    """Apply an incremental log importance weight to a particle state.
+
+    Functional callers can defer normalizer validation to an eager boundary so
+    that this operation remains compatible with traced array scalars.
+    """
+    updated_state = state.with_updates(
+        log_weights=state.log_weights + log_increment
+    )
+    if not normalize:
+        return updated_state, None
+
+    if validate_normalizer:
+        updated_state, log_norm = updated_state.normalize()
+    else:
+        xp = namespace(updated_state.log_weights)
+        normalized, log_norm = normalize_log_weights(
+            updated_state.log_weights,
+            xp=xp,
+        )
+        updated_state = updated_state.with_updates(log_weights=normalized)
+    return (
+        updated_state.with_updates(
+            log_evidence=updated_state.log_evidence + log_norm
+        ),
+        log_norm,
+    )
+
+
 class IncrementalWeighting(SMCStep):
     """Apply a complete sequential-target log-weight increment.
 
@@ -225,12 +260,11 @@ class IncrementalWeighting(SMCStep):
                 "Increment function must return one value per particle."
             )
 
-        updated_state = state.with_updates(
-            log_weights=state.log_weights + increments
+        updated_state, _ = _apply_log_weight_increment(
+            state,
+            increments,
+            normalize=self._normalize_after,
         )
-        if self._normalize_after:
-            updated_state, log_norm = updated_state.normalize()
-            updated_state.log_evidence += log_norm
         logger.debug(
             "IncrementalWeighting: mean increment %.6f (normalize_after=%s).",
             float(to_numpy(xp.sum(increments) / increments.shape[0])),
@@ -387,26 +421,13 @@ class BaseTemperedStep(SMCStep):
         self,
         state: ParticleState,
         increments: Array,
-        *,
-        xp: Any,
     ) -> tuple[ParticleState, Any | None]:
         """Apply increments and optionally normalize without leaving the backend."""
-        updated_state = state.with_updates(
-            log_weights=state.log_weights + increments
-        )
-        if not self._normalize_after:
-            return updated_state, None
-
-        normalized, log_norm = normalize_log_weights(
-            updated_state.log_weights,
-            xp=xp,
-        )
-        return (
-            updated_state.with_updates(
-                log_weights=normalized,
-                log_evidence=updated_state.log_evidence + log_norm,
-            ),
-            log_norm,
+        return _apply_log_weight_increment(
+            state,
+            increments,
+            normalize=self._normalize_after,
+            validate_normalizer=False,
         )
 
     def apply(self, state, context, rng):
@@ -483,13 +504,11 @@ class TemperedWeighting(BaseTemperedStep):
         )
         metadata = dict(state.metadata)
         metadata["temperature"] = target_temperature
-        updated_state = state.with_updates(
-            log_weights=state.log_weights + increments,
-            metadata=metadata,
+        updated_state, _ = _apply_log_weight_increment(
+            state.with_updates(metadata=metadata),
+            increments,
+            normalize=self._normalize_after,
         )
-        if self._normalize_after:
-            updated_state, log_norm = updated_state.normalize()
-            updated_state.log_evidence += log_norm
         context = context.with_metadata(
             temperature=target_temperature,
             temperature_delta=temperature_delta,
@@ -597,7 +616,6 @@ class FixedTemperedWeighting(BaseTemperedStep):
         updated_state, log_norm = self._update_log_weights(
             state,
             increments,
-            xp=xp,
         )
         context = context.with_metadata(
             temperature=target_temperature,
@@ -888,7 +906,6 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         updated_state, log_norm = self._update_log_weights(
             state,
             scaled_increments,
-            xp=xp,
         )
         context = context.with_metadata(
             temperature=new_temperature,

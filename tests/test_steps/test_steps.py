@@ -36,6 +36,7 @@ from sequince.steps.weighting import (
     IncrementalWeighting,
     LogLikelihoodWeighting,
     TemperedWeighting,
+    _apply_log_weight_increment,
     evolving_target_ess_ratio,
 )
 from sequince.target import SequentialTarget, Target, TargetEvaluation
@@ -95,9 +96,70 @@ def test_log_likelihood_weighting_updates_log_weights(
 
     increments = np.sum(particle_state.particles, axis=1)
     expected = particle_state.log_weights + increments
+    expected_log_norm = np.logaddexp.reduce(expected)
     expected -= np.log(np.sum(np.exp(expected)))
     assert np.allclose(updated.log_weights, expected)
+    assert updated.log_evidence == pytest.approx(
+        particle_state.log_evidence + expected_log_norm
+    )
     np.testing.assert_allclose(output["log_weight_increment"], increments)
+
+
+def test_apply_log_weight_increment_accepts_a_scalar() -> None:
+    state = ParticleState(
+        particles=np.arange(6.0).reshape(3, 2),
+        log_weights=np.log(np.array([0.2, 0.3, 0.5])),
+        log_evidence=1.25,
+    )
+
+    updated, log_norm = _apply_log_weight_increment(state, 0.7)
+
+    np.testing.assert_allclose(updated.log_weights, state.log_weights)
+    assert log_norm == pytest.approx(0.7)
+    assert updated.log_evidence == pytest.approx(1.95)
+
+
+def test_apply_log_weight_increment_normalizes_vector() -> None:
+    state = ParticleState(
+        particles=np.arange(6.0).reshape(3, 2),
+        log_weights=np.log(np.array([0.2, 0.3, 0.5])),
+        log_evidence=-0.4,
+    )
+    increment = np.array([-0.3, 0.2, 0.8])
+    unnormalized = state.log_weights + increment
+    expected_log_norm = np.logaddexp.reduce(unnormalized)
+
+    updated, log_norm = _apply_log_weight_increment(state, increment)
+
+    np.testing.assert_allclose(
+        updated.log_weights,
+        unnormalized - expected_log_norm,
+    )
+    assert np.sum(updated.weights) == pytest.approx(1.0)
+    assert log_norm == pytest.approx(expected_log_norm)
+    assert updated.log_evidence == pytest.approx(-0.4 + expected_log_norm)
+
+
+def test_apply_log_weight_increment_can_defer_normalization() -> None:
+    state = ParticleState(
+        particles=np.arange(6.0).reshape(3, 2),
+        log_weights=np.array([-0.1, -0.2, -0.3]),
+        log_evidence=0.6,
+    )
+    increment = np.array([0.4, -0.2, 0.1])
+
+    updated, log_norm = _apply_log_weight_increment(
+        state,
+        increment,
+        normalize=False,
+    )
+
+    np.testing.assert_allclose(
+        updated.log_weights,
+        state.log_weights + increment,
+    )
+    assert updated.log_evidence == pytest.approx(state.log_evidence)
+    assert log_norm is None
 
 
 def test_tempered_weighting_scales_log_likelihood(
@@ -270,6 +332,7 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
         updated.log_weights,
         initial_log_weights + particle_state.particles[:, 0],
     )
+    assert updated.log_evidence == pytest.approx(particle_state.log_evidence)
     assert updated.evaluation is not None
     assert updated.evaluation.components.keys() == {"base", "increment"}
 

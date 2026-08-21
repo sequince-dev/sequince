@@ -9,6 +9,22 @@ from sequince.posterior import TemperedPosterior
 from sequince.prebuilt_samplers import make_standard_bayesian_smc
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
+from sequince.steps.weighting import _apply_log_weight_increment
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
+def test_log_weight_increment_preserves_array_backend(
+    backend: str, backend_factory
+) -> None:
+    case = backend_factory(backend)
+    state = case.state()
+
+    updated, log_norm = _apply_log_weight_increment(state, 0.5)
+
+    assert case.matches_namespace(updated.log_weights)
+    assert float(case.xp.sum(updated.weights)) == pytest.approx(1.0)
+    assert log_norm is not None
+    assert float(updated.log_evidence) == pytest.approx(float(log_norm))
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
