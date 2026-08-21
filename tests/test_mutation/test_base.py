@@ -36,6 +36,28 @@ class ReplacingTransform(ParticleTransform):
         return ReplacingTransform(fitted=True)
 
 
+class SignFoldingTransform(ParticleTransform):
+    def __init__(self):
+        self.inverse_batch_sizes: list[int] = []
+
+    def forward(self, particles, context=None, *, rng=None):
+        del context, rng
+        values = np.asarray(particles)
+        signs = np.where(values < 0, -1.0, 1.0)
+        return np.abs(values), np.zeros(values.shape[0]), signs
+
+    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
+        del context, rng
+        values = np.asarray(values)
+        signs = np.asarray(auxiliary)
+        self.inverse_batch_sizes.append(values.shape[0])
+        if values.shape[0] != signs.shape[0]:
+            raise ValueError(
+                "auxiliary is not aligned with the particle batch"
+            )
+        return values * signs, np.zeros(values.shape[0])
+
+
 class PreparingMutation(MutationStep):
     def apply(self, state, context, rng):
         _, context = self._prepare_transform(state.particles, context, rng=rng)
@@ -230,3 +252,33 @@ def test_transform_refit_is_validated() -> None:
 def test_transform_refit_type_is_validated() -> None:
     with pytest.raises(TypeError, match="transform_refit"):
         _mutation(True, [])
+
+
+def test_inverse_chain_reuses_particle_auxiliary_for_each_step(
+    context_factory,
+) -> None:
+    transform = SignFoldingTransform()
+    mutation = PreparingMutation(
+        lambda particles, context: np.zeros(particles.shape[0]),
+        transform=transform,
+    )
+    folded, _, auxiliary = transform.forward(np.array([[-2.0], [3.0]]))
+    latent_chain = np.stack([folded + 1.0, folded + 2.0, folded + 3.0])
+
+    chain = mutation._inverse_chain(
+        latent_chain,
+        transform,
+        context_factory(),
+        auxiliary=auxiliary,
+        like=folded,
+    )
+
+    np.testing.assert_array_equal(
+        chain,
+        [
+            [[-3.0], [4.0]],
+            [[-4.0], [5.0]],
+            [[-5.0], [6.0]],
+        ],
+    )
+    assert transform.inverse_batch_sizes == [6]
