@@ -39,6 +39,7 @@ from .transformations import (
     SMCTransformation,
     TransformationStep,
 )
+from .transition import ImportanceTransition
 from .waste_free import WasteFreeResampleMove
 from .weighting import (
     AdaptiveTemperedWeighting,
@@ -79,6 +80,7 @@ __all__ = [
     "StratifiedResampling",
     "SystematicResampling",
     "LogLikelihoodWeighting",
+    "ImportanceTransition",
     "IncrementalWeighting",
     "TemperedWeighting",
     "AdaptiveTemperedWeighting",
