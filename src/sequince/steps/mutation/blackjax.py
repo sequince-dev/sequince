@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
     from ...state import ParticleState
-    from ...target import SequentialTarget
+    from ...target import Target
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class BlackJAXMutation(MutationStep):
     ----------
     log_prob_fn
         JAX-compatible scalar log-probability function or a
-        :class:`~sequince.target.SequentialTarget` whose component functions
+        :class:`~sequince.target.Target` whose component functions
         are JAX compatible.
     n_steps
         Number of BlackJAX transitions performed for every particle.
@@ -100,7 +100,7 @@ class BlackJAXMutation(MutationStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
+        log_prob_fn: Callable[..., Array | float] | "Target",
         *,
         n_steps: int = 1,
         algorithm: str | BlackJAXAlgorithmFactory = "nuts",

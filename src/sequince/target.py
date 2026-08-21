@@ -45,7 +45,7 @@ def _evaluate_component(
 )
 @dataclass(frozen=True)
 class TargetEvaluation:
-    """Named, particle-aligned values evaluated by an annealed target."""
+    """Named, particle-aligned values evaluated by a target."""
 
     components: Mapping[str, Array]
     target_id: str | None = None
@@ -97,7 +97,7 @@ class TargetEvaluation:
         target_id: str,
         evaluation_key: Hashable | None,
     ) -> TargetEvaluation:
-        """Return this evaluation associated with a sequential target state."""
+        """Return this evaluation associated with a target state."""
         if (
             self.target_id == target_id
             and self.evaluation_key == evaluation_key
@@ -223,12 +223,12 @@ class TargetEvaluation:
         )
 
 
-class SequentialTarget(ABC):
-    """Interface for a sequence of targets and their log-weight increments."""
+class Target(ABC):
+    """Interface for evaluating a target distribution."""
 
     _evaluation_id: str
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> SequentialTarget:
+    def __new__(cls, *args: Any, **kwargs: Any) -> Target:
         instance = super().__new__(cls)
         object.__setattr__(instance, "_evaluation_id", uuid4().hex)
         return instance
@@ -352,6 +352,10 @@ class SequentialTarget(ABC):
         evaluation: TargetEvaluation | None = None,
     ) -> Array | float:
         """Return the current target log density."""
+
+
+class SequentialTarget(Target):
+    """Target that also defines sequential importance-weight increments."""
 
     @abstractmethod
     def log_increment(

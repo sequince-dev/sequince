@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ...target import SequentialTarget
+from ...target import Target
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from .blackjax import BlackJAXMutation
@@ -15,7 +15,7 @@ from .minipcn import MiniPCNMutation
 
 def get_mutation_step(
     mutation: str | SMCStep | None,
-    target: "SequentialTarget | Callable[..., Any]",
+    target: "Target | Callable[..., Any]",
     transform: ParticleTransform | None = None,
     mutation_n_steps: int = 10,
     mutation_kwargs: dict[str, Any] | None = None,
