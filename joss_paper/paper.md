@@ -54,7 +54,8 @@ updates, and standard SMC workflows can operate on arrays from multiple Python
 array libraries where possible. In particular, `sequince` aims to align these
 core abstractions with the Python Array API standard [@python_array_api], while
 still allowing specialised components to target particular ecosystems when
-needed.
+needed. This allows for efficient integration with hardware-accelerated software
+libraries, which are increasingly common in scientific programming.
 
 # State of the field
 
@@ -85,15 +86,16 @@ application-specific downstream packages.
 
 The core object in `sequince` is a runner that executes an ordered sequence of
 steps on a particle state. Each step receives the current particles, a runtime
-context, and a random number generator, then returns an updated state. This
-keeps the interface between SMC components small and explicit, which makes it
+context, and a random number generator, then returns an updated state, updated
+context and any additional diagnostic outputs. This keeps the interface between
+SMC components small and explicit, which makes it
 straightforward to implement custom weighting, resampling, mutation, proposal,
 control, or transformation steps.
 
-The runtime context carries the current iteration, optional observations,
-shared user-provided configuration, mutable metadata for communication between
-steps, and recorded outputs for later inspection. This design supports both
-static posterior inference and sequential settings in which new data
+The runtime context carries the current iteration,
+shared user-provided configuration and metadata for communication between
+steps. The context can also optionally contain a series of observations.
+This design supports both static posterior inference and sequential settings in which new data
 arrive over time. It also allows algorithm-specific state, such as temperatures
 or diagnostic summaries, to be passed through the SMC pipeline without
 hard-coding that logic into the runner itself.
@@ -132,16 +134,19 @@ preconditioning similar `pocomc` or ASPIRE-style analyses [@Williams:2025aar].
 # AI usage disclosure
 
 Generative AI tools were used to assist with code implementation and refactoring
-from targeted prompts. OpenAI Codex, via ChatGPT 5.3 and 5.4, and GitHub
+from targeted prompts. OpenAI Codex, via ChatGPT 5.3, 5.4 and 5.6, and GitHub
 Copilot were used during software development. The authors reviewed, edited,
-and validated all AI-assisted outputs and retained responsibility for the
+and validated all AI-assisted outputs and retain responsibility for the
 design and implementation decisions.
 
 # Acknowledgements
 
 M.J.W. acknowledges support from ST/X002225/1, ST/Y004876/1, and the
-University of Portsmouth. Numerical computations were carried out on the SCIAMA
+University of Portsmouth. C.E.A.C-B. is supported by UKSA Space Agency grant UKRI971.
+Numerical computations were carried out on the SCIAMA
 high-performance computing cluster, which is supported by the Institute of
 Cosmology and Gravitation and the University of Portsmouth.
+Additional computations were performed using the University of Birmingham's
+BlueBEAR High Performance Computing facility.
 
 # References
