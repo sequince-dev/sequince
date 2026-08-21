@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from sequince.array_api import namespace
+from sequince.filtering import ImportanceKernel
 from sequince.state import ParticleState
 from sequince.steps import ImportanceTransition
 from sequince.target import TargetEvaluation
@@ -17,20 +18,20 @@ def test_importance_transition_represents_bootstrap_filter(
     state = ParticleState(particles)
     context = context_factory(observation=1.25)
 
-    def transition(previous, context, rng):
-        del context
-        return previous + np.asarray(rng.normal(size=previous.shape)), None
-
     def log_observation_prob(current, observation):
         return -0.5 * np.square(current[:, 0] - observation)
 
-    def log_increment(previous, current, auxiliary, context):
-        del previous, auxiliary
-        return log_observation_prob(current, context.observation)
+    class BootstrapKernel:
+        def sample(self, previous, context, rng):
+            del context
+            return previous + np.asarray(rng.normal(size=previous.shape))
+
+        def log_increment(self, previous, current, context):
+            del previous
+            return log_observation_prob(current, context.observation)
 
     updated, returned_context, output = ImportanceTransition(
-        transition=transition,
-        log_increment=log_increment,
+        BootstrapKernel(),
         normalize_after=False,
     )(state, context, rng)
 
@@ -46,11 +47,19 @@ def test_importance_transition_represents_bootstrap_filter(
         output["log_weight_increment"],
         expected_increment,
     )
-    assert output["auxiliary"] is None
+    assert set(output) == {"log_weight_increment"}
     assert returned_context is context
 
 
-def test_importance_transition_increment_uses_old_new_and_auxiliary(
+def test_importance_transition_requires_kernel_interface() -> None:
+    with pytest.raises(
+        TypeError,
+        match=r"must implement sample\(\) and log_increment\(\)",
+    ):
+        ImportanceTransition(object())  # type: ignore[arg-type]
+
+
+def test_importance_transition_increment_uses_old_and_new_particles(
     context_factory,
     rng,
 ) -> None:
@@ -59,29 +68,29 @@ def test_importance_transition_increment_uses_old_new_and_auxiliary(
     state = ParticleState(particles, log_weights=log_weights)
     context = context_factory(metadata={"scale": 0.25})
 
-    def transition(previous, context, rng):
-        del rng
-        proposed = previous + context.metadata["scale"]
-        log_proposal = -np.square(proposed[:, 0] - previous[:, 0])
-        return proposed, log_proposal
+    class DeterministicKernel:
+        def sample(self, previous, context, rng):
+            del rng
+            return previous + context.metadata["scale"]
 
-    def log_increment(previous, current, log_proposal, context):
-        return (
-            previous[:, 0]
-            + 2.0 * current[:, 0]
-            - log_proposal
-            + context.metadata["scale"]
-        )
+        def log_increment(self, previous, current, context):
+            log_proposal = -np.square(current[:, 0] - previous[:, 0])
+            return (
+                previous[:, 0]
+                + 2.0 * current[:, 0]
+                - log_proposal
+                + context.metadata["scale"]
+            )
+
+    kernel = DeterministicKernel()
 
     updated, returned_context, output = ImportanceTransition(
-        transition=transition,
-        log_increment=log_increment,
+        kernel,
     )(state, context, rng)
 
-    expected_increment = log_increment(
+    expected_increment = kernel.log_increment(
         particles,
         particles + 0.25,
-        output["auxiliary"],
         context,
     )
     unnormalized = log_weights + expected_increment
@@ -111,12 +120,19 @@ def test_importance_transition_invalidates_evaluation_and_preserves_ancestry(
     )
     context = context_factory()
 
-    updated, returned_context, _ = ImportanceTransition(
-        transition=lambda previous, context, rng: (previous + 1.0, None),
-        log_increment=lambda previous, current, auxiliary, context: np.zeros(
-            previous.shape[0]
-        ),
-    )(state, context, rng)
+    class DeterministicKernel:
+        def sample(self, previous, context, rng):
+            del context, rng
+            return previous + 1.0
+
+        def log_increment(self, previous, current, context):
+            del current, context
+            return np.zeros(previous.shape[0])
+
+    kernel: ImportanceKernel = DeterministicKernel()
+    step = ImportanceTransition(kernel)
+    assert step.kernel is kernel
+    updated, returned_context, _ = step(state, context, rng)
 
     assert updated.evaluation is None
     np.testing.assert_array_equal(
@@ -132,10 +148,17 @@ def test_importance_transition_supports_scalar_increment_for_one_particle(
 ) -> None:
     state = ParticleState(np.array([[2.0]]), log_weights=np.array([0.0]))
 
+    class ScalarKernel:
+        def sample(self, previous, context, rng):
+            del context, rng
+            return previous + 1.0
+
+        def log_increment(self, previous, current, context):
+            del previous, current, context
+            return 0.75
+
     updated, _, output = ImportanceTransition(
-        transition=lambda previous, context, rng: (previous + 1.0, None),
-        log_increment=lambda previous, current, auxiliary, context: 0.75,
-        normalize_after=False,
+        ScalarKernel(), normalize_after=False
     )(state, context_factory(), rng)
 
     np.testing.assert_allclose(updated.log_weights, np.array([0.75]))
@@ -149,21 +172,29 @@ def test_importance_transition_validates_population_and_increment_shapes(
     state = ParticleState(np.zeros((3, 1)))
     context = context_factory()
 
-    wrong_population = ImportanceTransition(
-        transition=lambda previous, context, rng: (previous[:2], None),
-        log_increment=lambda previous, current, auxiliary, context: np.zeros(
-            2
-        ),
-    )
+    class WrongPopulationKernel:
+        def sample(self, previous, context, rng):
+            del context, rng
+            return previous[:2]
+
+        def log_increment(self, previous, current, context):
+            del previous, context
+            return np.zeros(current.shape[0])
+
+    wrong_population = ImportanceTransition(WrongPopulationKernel())
     with pytest.raises(ValueError, match="one particle per input particle"):
         wrong_population(state, context, rng)
 
-    wrong_increment = ImportanceTransition(
-        transition=lambda previous, context, rng: (previous + 1.0, None),
-        log_increment=lambda previous, current, auxiliary, context: np.zeros(
-            2
-        ),
-    )
+    class WrongIncrementKernel:
+        def sample(self, previous, context, rng):
+            del context, rng
+            return previous + 1.0
+
+        def log_increment(self, previous, current, context):
+            del previous, current, context
+            return np.zeros(2)
+
+    wrong_increment = ImportanceTransition(WrongIncrementKernel())
     with pytest.raises(ValueError, match="one value per particle"):
         wrong_increment(state, context, rng)
 
@@ -177,17 +208,17 @@ def test_importance_transition_preserves_array_backend(
     case = backend_factory(backend)
     xp = case.xp
 
-    def transition(previous, context, rng):
-        del context
-        return previous + rng.normal(size=previous.shape), None
+    class BackendKernel:
+        def sample(self, previous, context, rng):
+            del context
+            return previous + rng.normal(size=previous.shape)
 
-    def log_increment(previous, current, auxiliary, context):
-        del previous, auxiliary, context
-        return xp.sum(current, axis=1)
+        def log_increment(self, previous, current, context):
+            del previous, context
+            return xp.sum(current, axis=1)
 
     updated, _, output = ImportanceTransition(
-        transition=transition,
-        log_increment=log_increment,
+        BackendKernel(),
     )(case.state(), context_factory(), case.rng(1234))
 
     assert namespace(updated.particles) is case.xp

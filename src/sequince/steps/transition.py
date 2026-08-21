@@ -1,28 +1,23 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from orng import RandomGenerator
 
-from .._typing import Array
 from ..array_api import namespace
+from ..filtering import ImportanceKernel
 from ..state import ParticleState
 from .base import SMCStep
 from .context import StepContext
 from .weighting import _apply_log_weight_increment, _weights_as_1d_array
 
-TransitionFn = Callable[..., tuple[Array, Any]]
-TransitionIncrementFn = Callable[..., Array | float]
-
 
 class ImportanceTransition(SMCStep):
     """Propagate particles and apply a joint importance-weight correction.
 
-    ``transition`` is called as ``transition(previous_particles, context, rng)``
-    and must return ``(new_particles, auxiliary)``. ``log_increment`` is then
-    called as ``log_increment(previous_particles, new_particles, auxiliary,
-    context)``. Use ``None`` as the auxiliary value when no transition
-    diagnostics are needed.
+    The supplied :class:`~sequince.filtering.ImportanceKernel` samples one
+    child per parent and computes the associated importance log-weight
+    increment from the parent and child populations.
 
     The transition is one-to-one: it must preserve the particle population
     size. Moving particles invalidates any cached target evaluation while
@@ -31,18 +26,23 @@ class ImportanceTransition(SMCStep):
 
     def __init__(
         self,
-        transition: TransitionFn,
-        log_increment: TransitionIncrementFn,
+        kernel: ImportanceKernel,
         *,
         normalize_after: bool = True,
     ) -> None:
-        if not callable(transition):
-            raise TypeError("transition must be callable.")
-        if not callable(log_increment):
-            raise TypeError("log_increment must be callable.")
-        self._transition = transition
-        self._log_increment = log_increment
+        if not callable(getattr(kernel, "sample", None)) or not callable(
+            getattr(kernel, "log_increment", None)
+        ):
+            raise TypeError(
+                "kernel must implement sample() and log_increment()."
+            )
+        self._kernel = kernel
         self._normalize_after = normalize_after
+
+    @property
+    def kernel(self) -> ImportanceKernel:
+        """The transition kernel applied by this step."""
+        return self._kernel
 
     def apply(
         self,
@@ -51,7 +51,7 @@ class ImportanceTransition(SMCStep):
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         previous_particles = state.particles
-        new_particles, auxiliary = self._transition(
+        new_particles = self._kernel.sample(
             previous_particles,
             context,
             rng,
@@ -61,10 +61,9 @@ class ImportanceTransition(SMCStep):
                 "Transition must return one particle per input particle."
             )
 
-        increment = self._log_increment(
+        increment = self._kernel.log_increment(
             previous_particles,
             new_particles,
-            auxiliary,
             context,
         )
         xp = namespace(state.log_weights)
@@ -89,6 +88,5 @@ class ImportanceTransition(SMCStep):
             context,
             {
                 "log_weight_increment": increments,
-                "auxiliary": auxiliary,
             },
         )
