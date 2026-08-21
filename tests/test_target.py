@@ -7,10 +7,47 @@ import numpy as np
 from sequince.posterior import TemperedPosterior
 from sequince.target import (
     SequentialTarget,
+    Target,
     TargetEvaluation,
     TemperedTarget,
     _evaluate_component,
 )
+
+
+class DiscreteTarget(Target):
+    """Small stage-dependent target without sequential reweighting."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def evaluation_key(self, context) -> int:
+        return int(context.metadata["stage"])
+
+    def evaluate(
+        self,
+        particles,
+        context,
+        *,
+        components: Collection[str] | None = None,
+        evaluation: TargetEvaluation | None = None,
+    ) -> TargetEvaluation:
+        del components, evaluation
+        self.calls += 1
+        return self.bind_evaluation(
+            TargetEvaluation(
+                components={
+                    "log_prob": np.full(
+                        particles.shape[0], -self.evaluation_key(context)
+                    )
+                }
+            ),
+            context,
+        )
+
+    def log_prob(self, particles, context, *, evaluation=None):
+        evaluation = evaluation or self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
+        return evaluation["log_prob"]
 
 
 class DiscreteSequentialTarget(SequentialTarget):
@@ -94,6 +131,36 @@ def test_evaluate_component_normalizes_particle_values(
 
 def test_annealed_target_is_a_sequential_target() -> None:
     assert issubclass(TemperedTarget, SequentialTarget)
+
+
+def test_sequential_target_is_a_target() -> None:
+    assert issubclass(SequentialTarget, Target)
+
+
+def test_target_instances_have_unique_evaluation_ids() -> None:
+    assert DiscreteTarget().evaluation_id != DiscreteTarget().evaluation_id
+
+
+def test_target_owns_and_reuses_cached_evaluations(context_factory) -> None:
+    particles = np.zeros((3, 1))
+    context = context_factory(metadata={"stage": 2})
+    target = DiscreteTarget()
+    other_target = DiscreteTarget()
+
+    evaluation = target.prepare_evaluation(particles, context)
+    reused = target.prepare_evaluation(
+        particles, context, evaluation=evaluation
+    )
+    replaced = other_target.prepare_evaluation(
+        particles, context, evaluation=evaluation
+    )
+
+    assert reused is evaluation
+    assert target.calls == 1
+    assert target.accepts_evaluation(evaluation, context)
+    assert not other_target.accepts_evaluation(evaluation, context)
+    assert other_target.calls == 1
+    assert replaced.target_id == other_target.evaluation_id
 
 
 def test_sequential_target_does_not_assume_beta(context_factory) -> None:

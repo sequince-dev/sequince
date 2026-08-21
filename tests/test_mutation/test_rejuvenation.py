@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from orng import RandomGenerator
 
-from sequince import ParticleState
+from sequince import ParticleState, Target, TargetEvaluation
 from sequince.steps import ProposalRejuvenation
 from sequince.steps.base import StepContext
 from sequince.steps.mutation import GenerativeProposal
@@ -46,6 +46,31 @@ class EmpiricalGaussianProposal:
         return self.mean + self.scale * np.asarray(
             rng.normal(size=(n_samples, self.mean.shape[0]))
         )
+
+
+class GaussianTarget(Target):
+    """Evaluatable target intentionally lacking ``log_increment``."""
+
+    def evaluate(
+        self,
+        particles,
+        context,
+        *,
+        components=None,
+        evaluation=None,
+    ):
+        del components, evaluation
+        return self.bind_evaluation(
+            TargetEvaluation(
+                components={"log_prob": -np.sum(particles**2, axis=1)}
+            ),
+            context,
+        )
+
+    def log_prob(self, particles, context, *, evaluation=None):
+        evaluation = evaluation or self.evaluate(particles, context)
+        self.validate_evaluation(evaluation, particles, context)
+        return evaluation["log_prob"]
 
 
 def test_rejuvenates_with_minimal_generative_proposal(
@@ -88,3 +113,16 @@ def test_requires_fit_and_sample(standard_normal_posterior) -> None:
             standard_normal_posterior,
             cast(GenerativeProposal, object()),
         )
+
+
+def test_accepts_target_without_log_increment() -> None:
+    particles = np.linspace(-1.0, 1.0, 20)[:, None]
+    state = ParticleState(particles)
+    context = StepContext(t=0)
+
+    updated, _, _ = ProposalRejuvenation(
+        GaussianTarget(), EmpiricalGaussianProposal()
+    ).apply(state, context, RandomGenerator(seed=11))
+
+    assert updated.evaluation is not None
+    assert updated.evaluation.components.keys() == {"log_prob"}

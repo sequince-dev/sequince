@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .posterior import TemperedPosterior
     from .state import ParticleState
     from .steps.context import StepContext
-    from .target import SequentialTarget
+    from .target import Target
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ def draw_initial_state(
 def draw_mcmc_initial_state(
     proposal: ProposalDistribution,
     n_particles: int,
-    log_prob_fn: Callable[..., Array | float] | SequentialTarget,
+    log_prob_fn: Callable[..., Array | float] | Target,
     *,
     context: StepContext | None = None,
     max_batches: int = 100,
@@ -321,7 +321,7 @@ def draw_mcmc_initial_state(
     """
     from .state import ParticleState
     from .steps.context import StepContext
-    from .target import SequentialTarget, TargetEvaluation
+    from .target import Target, TargetEvaluation
 
     if n_particles < 1:
         raise ValueError("n_particles must be positive.")
@@ -343,7 +343,7 @@ def draw_mcmc_initial_state(
         )
         xp = namespace(particles)
         evaluation = None
-        if isinstance(log_prob_fn, SequentialTarget):
+        if isinstance(log_prob_fn, Target):
             evaluation = log_prob_fn.prepare_evaluation(
                 particles,
                 evaluation_context,

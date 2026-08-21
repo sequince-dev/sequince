@@ -10,7 +10,7 @@ from array_api_compat import device as get_device
 
 from .._typing import Array
 from ..array_api import asarray, namespace
-from ..target import SequentialTarget
+from ..target import Target
 from ..utils import call_with_optional_context
 from .base import SMCStep, StepContext
 from .mutation import (
@@ -56,7 +56,7 @@ class WasteFreeResampleMove(SMCStep):
     ----------
     log_prob_fn:
         Callable returning log probabilities of the tempered target, or an
-        object exposing a ``log_prob`` method (e.g. ``SequentialTarget``).
+        object exposing a ``log_prob`` method (e.g. ``Target``).
     kernel:
         Mutation kernel supplying forward and backward log densities.
     resample_ancestors:
@@ -71,14 +71,14 @@ class WasteFreeResampleMove(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Any] | SequentialTarget,
+        log_prob_fn: Callable[..., Any] | Target,
         kernel: MutationKernel | MutationKernelFactory,
         *,
         resample_ancestors: bool = True,
         proposals_per_particle: int = 1,
     ):
-        if isinstance(log_prob_fn, SequentialTarget):
-            self._target: SequentialTarget | None = log_prob_fn
+        if isinstance(log_prob_fn, Target):
+            self._target: Target | None = log_prob_fn
             self._log_prob_fn: Callable[..., Any] | None = None
         else:
             self._target = None

@@ -38,7 +38,7 @@ from sequince.steps.weighting import (
     TemperedWeighting,
     evolving_target_ess_ratio,
 )
-from sequince.target import SequentialTarget, TargetEvaluation
+from sequince.target import SequentialTarget, Target, TargetEvaluation
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -272,6 +272,31 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
     )
     assert updated.evaluation is not None
     assert updated.evaluation.components.keys() == {"base", "increment"}
+
+
+def test_incremental_weighting_rejects_nonsequential_target() -> None:
+    class DensityTarget(Target):
+        def evaluate(
+            self,
+            particles,
+            context,
+            *,
+            components=None,
+            evaluation=None,
+        ):
+            del components, evaluation
+            return self.bind_evaluation(
+                TargetEvaluation({"log_prob": -np.sum(particles**2, axis=1)}),
+                context,
+            )
+
+        def log_prob(self, particles, context, *, evaluation=None):
+            evaluation = evaluation or self.evaluate(particles, context)
+            return evaluation["log_prob"]
+
+    nonsequential_target: Any = DensityTarget()
+    with pytest.raises(TypeError, match="log_increment_fn must be callable"):
+        IncrementalWeighting(nonsequential_target)
 
 
 def test_tempered_weighting_can_refresh_only_likelihood(

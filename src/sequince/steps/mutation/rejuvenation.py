@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from array_api_compat import device as get_device
 
 from ...array_api import asarray, namespace
-from ...target import SequentialTarget
+from ...target import Target
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from ..context import StepContext
@@ -47,15 +47,13 @@ class ProposalRejuvenation(SMCStep):
 
     def __init__(
         self,
-        target: SequentialTarget,
+        target: Target,
         proposal: GenerativeProposal,
         *,
         transform: ParticleTransform | None = None,
     ) -> None:
-        if not isinstance(target, SequentialTarget):
-            raise TypeError(
-                "ProposalRejuvenation requires a SequentialTarget."
-            )
+        if not isinstance(target, Target):
+            raise TypeError("ProposalRejuvenation requires a Target.")
         for method in ("fit", "sample"):
             if not callable(getattr(proposal, method, None)):
                 raise TypeError(

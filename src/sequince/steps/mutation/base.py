@@ -6,7 +6,7 @@ import numpy as np
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
-from ...target import SequentialTarget
+from ...target import Target
 from ...transforms import ParticleTransform, _repeat_transform_auxiliary
 from ..base import SMCStep
 from ..context import StepContext
@@ -64,16 +64,14 @@ class MutationStep(SMCStep):
 
     def __init__(
         self,
-        log_prob_fn: Callable[..., Array | float] | "SequentialTarget",
+        log_prob_fn: Callable[..., Array | float] | "Target",
         *,
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
     ):
         super().__init__()
-        self._target = (
-            log_prob_fn if isinstance(log_prob_fn, SequentialTarget) else None
-        )
+        self._target = log_prob_fn if isinstance(log_prob_fn, Target) else None
         self._log_prob_fn = (
             None if self._target is not None else cast(LogProbFn, log_prob_fn)
         )
