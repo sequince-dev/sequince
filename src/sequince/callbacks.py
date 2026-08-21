@@ -372,9 +372,9 @@ class PlotParticleTransform(PlotCallback):
             logger.debug(f"Plotting particle transform to {self.full_path}")
 
             particles = state.particles
-            transformed_particles = transform.forward(
+            transformed_particles, _, _ = transform.forward(
                 particles, context=context
-            )[0]
+            )
 
             from .plot import plot_corner
 
