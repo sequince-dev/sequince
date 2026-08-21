@@ -10,7 +10,10 @@ import numpy as np
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
-from ...transforms import ParticleTransform
+from ...transforms import (
+    ParticleTransform,
+    has_particle_aligned_auxiliary,
+)
 from ..context import StepContext
 from .base import (
     MutationStep,
@@ -113,6 +116,12 @@ def _resolve_emcee_move_spec(spec: Any) -> Any:
 class EmceeMutation(MutationStep):
     """Run emcee ensemble MCMC moves to rejuvenate particles.
 
+    Transforms requiring walker-specific auxiliary data are currently
+    unsupported. emcee evaluates internally selected walker subsets, but its
+    standard log-probability callback does not expose the original walker
+    selection or context. Such auxiliary is rejected because Sequince cannot
+    guarantee that the correct entry would be supplied to each walker.
+
     Parameters
     ----------
     log_prob_fn
@@ -176,9 +185,21 @@ class EmceeMutation(MutationStep):
         transform, context = self._prepare_transform(
             state.particles, context, rng=rng
         )
-        latent_particles = self._forward_transform(
-            state.particles, transform, context
+        latent_particles, transform_auxiliary = self._forward_transform(
+            state.particles, transform, context, rng=rng
         )
+        if has_particle_aligned_auxiliary(
+            transform_auxiliary,
+            n_particles=state.particles.shape[0],
+        ):
+            raise NotImplementedError(
+                "The transform requires walker-specific auxiliary data, but "
+                "emcee evaluates internally selected walker subsets and its "
+                "standard log-probability callback does not expose the "
+                "original walker selection or context. Sequince therefore "
+                "cannot guarantee that the correct auxiliary entry is "
+                "supplied. Use a batch-preserving mutation implementation."
+            )
         particles = to_numpy(latent_particles)
         if particles.ndim == 1:
             initial_positions = particles[:, np.newaxis]
@@ -204,7 +225,10 @@ class EmceeMutation(MutationStep):
                     positions, xp=xp, like=latent_particles
                 )
                 original, log_det = self._inverse_transform(
-                    backend_positions, transform, context
+                    backend_positions,
+                    transform,
+                    context,
+                    auxiliary=transform_auxiliary,
                 )
                 result, _ = self._evaluate_target(original, context)
                 result = self._combine_with_log_det(result, log_det)
@@ -221,7 +245,10 @@ class EmceeMutation(MutationStep):
                     position, xp=xp, like=latent_particles
                 )
                 original, log_det = self._inverse_transform(
-                    backend_position, transform, context
+                    backend_position,
+                    transform,
+                    context,
+                    auxiliary=transform_auxiliary,
                 )
                 result, _ = self._evaluate_target(original, context)
                 result = self._combine_with_log_det(result, log_det)
@@ -255,7 +282,10 @@ class EmceeMutation(MutationStep):
 
         latent_result = asarray(result_np, xp=xp, like=latent_particles)
         new_particles, _ = self._inverse_transform(
-            latent_result, transform, context
+            latent_result,
+            transform,
+            context,
+            auxiliary=transform_auxiliary,
         )
         _, final_evaluation = self._evaluate_target(new_particles, context)
 
@@ -267,6 +297,7 @@ class EmceeMutation(MutationStep):
                 chains,
                 transform,
                 context,
+                auxiliary=transform_auxiliary,
                 like=latent_particles,
             )
 

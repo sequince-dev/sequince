@@ -7,7 +7,7 @@ import numpy as np
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import SequentialTarget
-from ...transforms import ParticleTransform
+from ...transforms import ParticleTransform, _repeat_transform_auxiliary
 from ..base import SMCStep
 from ..context import StepContext
 
@@ -246,25 +246,32 @@ class MutationStep(SMCStep):
         values: Array,
         transform: ParticleTransform | None,
         context: StepContext,
+        *,
+        rng: Any = None,
     ):
         if transform is None:
-            return values
+            return values, None
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        latent, _ = transform.forward(arr, context=context)
-        return asarray(latent, xp=xp)
+        latent, _, auxiliary = transform.forward(arr, context=context, rng=rng)
+        return asarray(latent, xp=xp), auxiliary
 
     @staticmethod
     def _inverse_transform(
         values: Array,
         transform: ParticleTransform | None,
         context: StepContext,
+        *,
+        auxiliary: Any = None,
+        rng: Any = None,
     ):
         if transform is None:
             return values, None
         xp = namespace(values)
         arr = asarray(values, xp=xp)
-        output, log_det = transform.inverse(arr, context=context)
+        output, log_det = transform.inverse(
+            arr, context=context, auxiliary=auxiliary, rng=rng
+        )
         return asarray(output, xp=xp), asarray(log_det, xp=xp)
 
     def _inverse_chain(
@@ -273,17 +280,40 @@ class MutationStep(SMCStep):
         transform: ParticleTransform | None,
         context: StepContext,
         *,
+        auxiliary: Any = None,
         like: Array,
     ) -> Array:
-        """Map a stored mutation chain back into particle coordinates."""
+        """Map a stored mutation chain back into particle coordinates.
+
+        The leading chain axis represents mutation steps, not particles. Flatten
+        the step and particle axes into one batch and repeat particle-aligned
+        auxiliary leaves for each step before performing one batched inverse.
+        """
         xp = namespace(like)
         latent_chain = asarray(chain, xp=xp, like=like)
         if transform is None:
             return latent_chain
-        original_shape = latent_chain.shape
-        flattened = xp.reshape(latent_chain, (-1, original_shape[-1]))
-        particles, _ = self._inverse_transform(flattened, transform, context)
-        return xp.reshape(particles, original_shape)
+        n_steps, n_particles = latent_chain.shape[:2]
+        flat_chain = xp.reshape(
+            latent_chain,
+            (n_steps * n_particles, *latent_chain.shape[2:]),
+        )
+        flat_auxiliary = _repeat_transform_auxiliary(
+            auxiliary,
+            n_steps,
+            n_particles=n_particles,
+        )
+        flat_particles, _ = self._inverse_transform(
+            flat_chain,
+            transform,
+            context,
+            auxiliary=flat_auxiliary,
+        )
+        particle_chain = xp.reshape(
+            flat_particles,
+            (n_steps, n_particles, *flat_particles.shape[1:]),
+        )
+        return asarray(particle_chain, xp=xp, like=like)
 
     @staticmethod
     def _combine_with_log_det(result: Any, log_det: Array | None):

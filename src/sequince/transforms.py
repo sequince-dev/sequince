@@ -61,6 +61,27 @@ def select_transform_auxiliary(
     return _map_auxiliary_pytree(auxiliary, select_leaf)
 
 
+def _repeat_transform_auxiliary(
+    auxiliary: Any,
+    repeats: int,
+    *,
+    n_particles: int,
+) -> Any:
+    """Repeat particle-aligned leaves for a flattened chain batch."""
+
+    def repeat_leaf(leaf):
+        if leaf.ndim == 0 or leaf.shape[0] != n_particles:
+            return leaf
+        xp = namespace(leaf)
+        expanded = xp.broadcast_to(leaf, (repeats, *leaf.shape))
+        return xp.reshape(
+            expanded,
+            (repeats * n_particles, *leaf.shape[1:]),
+        )
+
+    return _map_auxiliary_pytree(auxiliary, repeat_leaf)
+
+
 def has_particle_aligned_auxiliary(
     auxiliary: Any,
     *,
