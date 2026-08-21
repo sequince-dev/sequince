@@ -1,0 +1,70 @@
+Configuring an SMC runner
+=========================
+
+The :class:`~sequince.smc.SequentialMonteCarlo` runner applies a sequence of
+steps and optional callbacks at every iteration. The quickest way to build a
+Bayesian inference pipeline is the pre-built helper:
+
+.. code-block:: python
+
+    from sequince import make_standard_bayesian_smc
+    from sequince.callbacks import TracePlot
+
+    smc, posterior, metadata = make_standard_bayesian_smc(
+        log_prior,
+        log_likelihood,
+        mutation="emcee",
+        resampling="systematic",
+        callbacks=[TracePlot()],
+    )
+
+``make_standard_bayesian_smc`` wires together
+:class:`~sequince.steps.weighting.AdaptiveTemperedWeighting`,
+a configurable resampling step, and a configurable mutation step. See
+:doc:`resampling_options` and :doc:`mutation_options` for the available
+sampling strategies, and :doc:`jax_support` for JAX-backed execution.
+For a mutation kernel without SMC weighting and resampling, see
+:doc:`mcmc_sampler`.
+
+Pass the returned metadata when starting the run:
+
+.. code-block:: python
+
+    result = smc.run(
+        initial_state,
+        rng=rng,
+        shared_context=shared_context,
+        metadata=metadata,
+    )
+
+See :doc:`step_context` for the distinction between static ``shared_context``
+data and evolving metadata.
+
+Building a pipeline manually
+----------------------------
+
+For full control, instantiate the runner with steps in execution order:
+
+.. code-block:: python
+
+    from sequince import SequentialMonteCarlo
+    from sequince.callbacks import TracePlot
+    from sequince.steps import (
+        AdaptiveTemperedWeighting,
+        EmceeMutation,
+        SystematicResampling,
+    )
+
+    smc = SequentialMonteCarlo(
+        steps=[
+            AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
+            SystematicResampling(always_resample=True),
+            EmceeMutation(posterior, n_steps=10),
+        ],
+        callbacks=[TracePlot()],
+    )
+
+Each entry in ``steps`` must follow the
+:class:`~sequince.steps.base.SMCStep` interface. Each callback must follow the
+:class:`~sequince.callbacks.SMCCallback` interface. See
+:doc:`custom_steps_callbacks` when implementing either interface yourself.

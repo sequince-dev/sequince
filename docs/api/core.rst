@@ -22,6 +22,14 @@ use the checkpoint APIs to restore runtime state.
    :undoc-members:
    :show-inheritance:
 
+Markov chain Monte Carlo driver
+-------------------------------
+
+.. automodule:: sequince.mcmc
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Particle state and results
 --------------------------
 
@@ -31,6 +39,14 @@ Particle state and results
    :show-inheritance:
 
 .. automodule:: sequince.result
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Particle transforms
+-------------------
+
+.. automodule:: sequince.transforms
    :members:
    :undoc-members:
    :show-inheritance:
