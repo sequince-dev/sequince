@@ -67,6 +67,11 @@ class ResamplingStep(SMCStep):
     n_samples:
         Number of particles to draw when resampling. If ``None``, draw the same
         number as are present in the input state.
+    resample_at_end:
+        If ``True`` (default) will always resample when the inverse
+        temperature reaches 1.0, regardless of ESS.  If ``False``, the final
+        resampling may be skipped if ``always_resample`` is ``False`` and the
+        ESS ratio is above ``ess_threshold``.
     """
 
     resampling_scheme: ClassVar[str] = "unknown"
@@ -77,6 +82,7 @@ class ResamplingStep(SMCStep):
         ess_threshold: float | None = 0.5,
         always_resample: bool = False,
         n_samples: int | None = None,
+        resample_at_end: bool = True,
     ):
         if n_samples is None:
             self._n_samples = None
@@ -92,6 +98,7 @@ class ResamplingStep(SMCStep):
             self._n_samples = int(n_samples)
         self._ess_threshold = ess_threshold
         self._always_resample = always_resample
+        self._resample_at_end = resample_at_end
 
     def apply(
         self,
@@ -107,9 +114,10 @@ class ResamplingStep(SMCStep):
             n,
             device=get_device(state.log_weights),
         )
-        if not self._should_resample(state):
+        if not self._should_resample(state, context):
             logger.debug(
-                "%s skipped resampling (ESS ratio=%.4f).",
+                "Iteration %d: %s skipped resampling (ESS ratio=%.4f).",
+                context.t,
                 self.__class__.__name__,
                 ess_ratio,
             )
@@ -125,7 +133,8 @@ class ResamplingStep(SMCStep):
                 ),
             )
         logger.debug(
-            "%s performing resampling (ESS ratio=%.4f).",
+            "Iteration %d: %s performing resampling (ESS ratio=%.4f).",
+            context.t,
             self.__class__.__name__,
             ess_ratio,
         )
@@ -213,8 +222,18 @@ class ResamplingStep(SMCStep):
         )
         return updated, context, rng.state(), output
 
-    def _should_resample(self, state: ParticleState) -> bool:
+    def _should_resample(
+        self, state: ParticleState, context: StepContext
+    ) -> bool:
         if self._always_resample:
+            return True
+        if self._resample_at_end and context.stop_requested:
+            logger.debug(
+                "Iteration %d: %s resampling at end of run (ESS ratio=%.4f).",
+                context.t,
+                self.__class__.__name__,
+                state.effective_sample_size() / state.log_weights.shape[0],
+            )
             return True
         if self._ess_threshold is None:
             return False
