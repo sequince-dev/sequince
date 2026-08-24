@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 import pytest
 
@@ -13,11 +15,12 @@ from sequince.steps import (
     FixedTemperedWeighting,
     LoggingStep,
     MiniPCNMutation,
+    MutateIfResampled,
     PersistentAdaptiveTemperedWeighting,
     PersistParticles,
     SystematicResampling,
 )
-from sequince.steps.base import StepContext
+from sequince.steps.base import SMCStep, StepContext
 
 
 def _quadratic_log_prior(particles: np.ndarray, context=None) -> np.ndarray:
@@ -145,6 +148,76 @@ def test_make_standard_bayesian_smc_validates_resampling_name() -> None:
             _quadratic_log_prior,
             _zero_log_likelihood,
             resampling="invalid",  # type: ignore[arg-type]
+        )
+
+
+def test_make_standard_bayesian_smc_forwards_resample_at_end() -> None:
+    smc, _, _ = make_standard_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        resample_at_end=False,
+        logging_frequency=0,
+    )
+
+    resampling = smc._steps[1]  # noqa: SLF001
+    assert isinstance(resampling, SystematicResampling)
+    assert not resampling._resample_at_end  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("weighting_criterion", "always_mutate", "expected_type"),
+    [
+        ("ess", None, MiniPCNMutation),
+        ("cess", None, MutateIfResampled),
+        ("cess", True, MiniPCNMutation),
+    ],
+)
+def test_make_standard_bayesian_smc_configures_conditional_mutation(
+    weighting_criterion: Literal["ess", "cess"],
+    always_mutate: bool | None,
+    expected_type: type[SMCStep],
+) -> None:
+    smc, _, _ = make_standard_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        weighting_criterion=weighting_criterion,
+        always_mutate=always_mutate,
+        logging_frequency=0,
+    )
+
+    mutation = smc._steps[2]  # noqa: SLF001
+    assert isinstance(mutation, expected_type)
+    if isinstance(mutation, MutateIfResampled):
+        assert isinstance(mutation.mutation, MiniPCNMutation)
+
+
+def test_make_standard_bayesian_smc_wraps_custom_mutation() -> None:
+    class CustomMutation(SMCStep):
+        def apply(self, state, context, rng):
+            return state, context, None
+
+    custom_mutation = CustomMutation()
+
+    smc, _, _ = make_standard_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        weighting_criterion="cess",
+        mutation=custom_mutation,
+        logging_frequency=0,
+    )
+
+    mutation = smc._steps[2]  # noqa: SLF001
+    assert isinstance(mutation, MutateIfResampled)
+    assert mutation.mutation is custom_mutation
+
+
+def test_standard_smc_rejects_redundant_conditional_mutation() -> None:
+    with pytest.raises(ValueError, match="always_mutate=False"):
+        make_standard_bayesian_smc(
+            _quadratic_log_prior,
+            _zero_log_likelihood,
+            always_resample=True,
+            always_mutate=False,
         )
 
 

@@ -797,14 +797,16 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         if context.stop_immediately:
             logger.debug(
-                "AdaptiveTemperedWeighting already at max temperature %.3f; "
+                "Iteration %d: AdaptiveTemperedWeighting already at max temperature %.3f; "
                 "requesting immediate stop.",
+                context.t,
                 self._max_temperature,
             )
         else:
             logger.debug(
-                "AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
+                "Iteration %d: AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
                 "target %s ratio=%.4f, ESS ratio=%.4f.",
+                context.t,
                 output["temperature_delta"],
                 output["temperature"],
                 self._criterion.upper(),
@@ -813,8 +815,9 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             )
             if context.stop_requested:
                 logger.debug(
-                    "AdaptiveTemperedWeighting reached max temperature %.3f; "
+                    "Iteration %d: AdaptiveTemperedWeighting reached max temperature %.3f; "
                     "requesting stop after iteration.",
+                    context.t,
                     self._max_temperature,
                 )
         return updated_state, context, output
