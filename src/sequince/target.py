@@ -5,8 +5,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Mapping
 from dataclasses import dataclass
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Self, cast
 from uuid import uuid4
+
+import numpy as np
 
 from ._typing import Array
 from .array_api import asarray, namespace
@@ -222,6 +224,69 @@ class TargetEvaluation:
             target_id=target_id,
             evaluation_key=evaluation_key,
         )
+
+    def encode_for_hdf5(self) -> dict[str, Any]:
+        """Return the versioned portable HDF5 payload."""
+        from .utils.hdf5 import schema_header
+
+        _validate_portable_evaluation_key(
+            self.evaluation_key, "evaluation_key"
+        )
+        return {
+            **schema_header("target_evaluation"),
+            "components": dict(self.components),
+            "target_id": self.target_id,
+            "evaluation_key": self.evaluation_key,
+        }
+
+    @classmethod
+    def _decode_from_hdf5(cls, payload: Mapping[str, Any]) -> Self:
+        """Reconstruct an evaluation from its logical HDF5 payload."""
+        from .utils.hdf5 import validate_schema
+
+        validate_schema(
+            payload,
+            kinds={"target_evaluation"},
+            required={"components", "target_id", "evaluation_key"},
+        )
+        _validate_portable_evaluation_key(
+            payload["evaluation_key"], "evaluation_key"
+        )
+        return cast(Self, cls.from_dict(payload))
+
+    def save(
+        self, h5_file_or_group: Any, path: str = "target_evaluation"
+    ) -> None:
+        """Save this evaluation below ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import recursively_save_to_h5_file
+
+        recursively_save_to_h5_file(
+            h5_file_or_group, path, self.encode_for_hdf5()
+        )
+
+    @classmethod
+    def load(
+        cls, h5_file_or_group: Any, path: str = "target_evaluation"
+    ) -> Self:
+        """Load an evaluation from ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import load_from_h5_file
+
+        return cls._decode_from_hdf5(load_from_h5_file(h5_file_or_group, path))
+
+
+def _validate_portable_evaluation_key(value: Any, path: str) -> None:
+    if value is None or isinstance(value, (str, bytes, bool, np.bool_)):
+        return
+    if isinstance(value, (int, float, complex, np.number)):
+        return
+    if isinstance(value, tuple):
+        for index, child in enumerate(value):
+            _validate_portable_evaluation_key(child, f"{path}/{index}")
+        return
+    raise TypeError(
+        f"Unsupported target evaluation key type {type(value).__name__} "
+        f"at {path}."
+    )
 
 
 class Target(ABC):

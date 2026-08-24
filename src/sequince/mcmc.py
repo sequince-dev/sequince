@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Self
 
 from ._typing import Array
 from .array_api import asarray, namespace
 from .checkpoint import CheckpointWriter, SMCCheckpoint
-from .result import SMCResult
+from .result import SMCResult, _decode_result_output, _encode_result_output
 from .smc import SequentialMonteCarlo, SMCRuntime
 from .state import ParticleState
 from .steps.base import StepContext
@@ -44,6 +44,61 @@ class MCMCResult:
             context=result.context,
             outputs=result.outputs,
         )
+
+    def encode_for_hdf5(self, *, strict: bool = False) -> dict[str, Any]:
+        """Return the logical HDF5 payload for this MCMC result."""
+        from .utils.hdf5 import nested, schema_header
+
+        return {
+            **schema_header("mcmc_result"),
+            "states": [
+                nested(state.encode_for_hdf5()) for state in self.states
+            ],
+            "context": self.context._encode_for_result_hdf5(),
+            "outputs": _encode_result_output(
+                self.outputs, "outputs", set(), strict=strict
+            ),
+        }
+
+    @classmethod
+    def _decode_from_hdf5(cls, payload: Mapping[str, Any]) -> Self:
+        """Reconstruct an MCMC result from its logical payload."""
+        from .utils.hdf5 import validate_schema
+
+        validate_schema(
+            payload,
+            kinds={"mcmc_result"},
+            required={"states", "context", "outputs"},
+        )
+        states = payload["states"]
+        if not isinstance(states, (list, tuple)):
+            raise TypeError("MCMCResult states must be a sequence.")
+        return cls(
+            states=[ParticleState._decode_from_hdf5(item) for item in states],
+            context=StepContext._decode_from_result_hdf5(payload["context"]),
+            outputs=_decode_result_output(payload["outputs"]),
+        )
+
+    def save(
+        self,
+        h5_file_or_group: Any,
+        path: str = "mcmc_result",
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Save this MCMC result below ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import recursively_save_to_h5_file
+
+        recursively_save_to_h5_file(
+            h5_file_or_group, path, self.encode_for_hdf5(strict=strict)
+        )
+
+    @classmethod
+    def load(cls, h5_file_or_group: Any, path: str = "mcmc_result") -> Self:
+        """Load an MCMC result from ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import load_from_h5_file
+
+        return cls._decode_from_hdf5(load_from_h5_file(h5_file_or_group, path))
 
     def _chains(self) -> list[Array]:
         chains: list[Array] = []
