@@ -243,7 +243,8 @@ class MiniPCNMutation(MutationStep):
             )
 
         logger.debug(
-            "MiniPCNMutation completed after %d steps.",
+            "Iteration %d: MiniPCNMutation completed after %d steps.",
+            context.t,
             self._n_steps,
         )
         output = MiniPCNOutput(

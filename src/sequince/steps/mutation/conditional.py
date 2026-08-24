@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from ..base import SMCStep
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
     from ...state import ParticleState
+
+logger = logging.getLogger(__name__)
 
 
 class MutateIfResampled(SMCStep):
@@ -37,8 +40,16 @@ class MutateIfResampled(SMCStep):
         mutation_skipped = not bool(context.metadata.get("resampled", False))
         child_output = None
         if mutation_skipped:
+            logger.debug(
+                "Iteration %d: Skipping mutation step because no resampling occurred.",
+                context.t,
+            )
             updated = state
         else:
+            logger.debug(
+                "Iteration %d: Applying mutation step because resampling occurred.",
+                context.t,
+            )
             updated, context, child_output = self.mutation(state, context, rng)
         return (
             updated,
