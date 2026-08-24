@@ -23,7 +23,7 @@ from .steps import (
     SystematicResampling,
 )
 from .steps.base import SMCStep, StepContext
-from .steps.mutation import get_mutation_step
+from .steps.mutation import MutateIfResampled, get_mutation_step
 from .steps.resampling import ResamplingStep
 from .steps.weighting import TargetESSRatio
 from .target import TemperedTarget
@@ -54,10 +54,12 @@ def make_standard_bayesian_smc(
     resampling: ResamplingStrategy = "systematic",
     resampling_ess_threshold: float | None = 0.5,
     always_resample: bool | None = None,
+    resample_at_end: bool = True,
     resampling_kwargs: Dict[str, Any] | None = None,
     mutation: MutationStrategy | SMCStep = "minipcn",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
+    always_mutate: bool | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
     particle_transform_kwargs: Dict[str, Any] | None = None,
     logging_frequency: int = 1,
@@ -112,6 +114,11 @@ def make_standard_bayesian_smc(
         Force resampling at every iteration regardless of ESS. If set to
         ``None``, defaults to ``True`` if ``weighting_criterion=="ess"`` and
         ``False`` if ``weighting_criterion=="cess"``.
+    resample_at_end:
+        If ``True`` (default) will always resample when the inverse
+        temperature reaches 1.0, regardless of ESS.  If ``False``, the final
+        resampling may be skipped if ``always_resample`` is ``False`` and the
+        ESS ratio is above ``ess_threshold``.
     resampling_kwargs:
         Extra keyword arguments forwarded to the resampling step constructor.
     mutation:
@@ -127,6 +134,11 @@ def make_standard_bayesian_smc(
         weighted move configuration, or the ``"bilby-de"`` preset.
         For ``"blackjax"``, use ``algorithm`` and ``algorithm_kwargs`` to
         configure the JAX mutation kernel.
+    always_mutate:
+        Force mutation at every iteration regardless of resampling. If set to
+        ``None``, defaults to ``True`` if ``always_resample=True`` and ``False``
+        if ``always_resample=False``.
+    particle_transform:
     logging_frequency:
         Frequency (in SMC iterations) at which to log sampler status.
         Defaults to 1 (log every iteration). If set to 0, logging is disabled.
@@ -158,6 +170,23 @@ def make_standard_bayesian_smc(
             "always_resample cannot be False when weighting_criterion='ess' "
             "since ESS-based tempering relies on resampling to achieve the "
             "target ESS ratio."
+        )
+
+    if always_mutate is None:
+        if always_resample:
+            always_mutate = True
+        else:
+            always_mutate = False
+
+    if always_mutate is False and mutation == "none":
+        raise ValueError(
+            "always_mutate cannot be False when mutation is not 'none' "
+            "since mutation moves are required to maintain particle diversity."
+        )
+
+    if always_resample and not always_mutate:
+        raise ValueError(
+            "always_mutate=False is incompatible with always_resample=True."
         )
 
     weighting_step: SMCStep
@@ -197,6 +226,7 @@ def make_standard_bayesian_smc(
     resampling_step = resampling_cls(
         ess_threshold=resampling_ess_threshold,
         always_resample=always_resample,
+        resample_at_end=resample_at_end,
         **resampling_kwargs or {},
     )
 
@@ -226,6 +256,8 @@ def make_standard_bayesian_smc(
 
     steps: list[SMCStep] = [weighting_step, resampling_step]
     if mutation_step is not None:
+        if not always_mutate:
+            mutation_step = MutateIfResampled(mutation_step)
         steps.append(mutation_step)
 
     if logging_frequency > 0:
