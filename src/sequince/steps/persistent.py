@@ -32,7 +32,7 @@ __all__ = [
 def _persistent_arrays(
     log_increment: Array,
     temperatures: ArrayLike,
-    log_evidences: Array,
+    log_normalizing_constants: Array,
     *,
     xp: Any | None,
 ) -> tuple[Array, Array, Array, Any]:
@@ -45,8 +45,8 @@ def _persistent_arrays(
         dtype=increments.dtype,
         like=increments,
     )
-    log_evidences = asarray(
-        log_evidences,
+    log_normalizing_constants = asarray(
+        log_normalizing_constants,
         xp=xp,
         dtype=increments.dtype,
         like=increments,
@@ -56,38 +56,43 @@ def _persistent_arrays(
         raise ValueError("log_increment must be one-dimensional.")
     if temperatures.ndim != 1:
         raise ValueError("temperatures must be one-dimensional.")
-    if log_evidences.ndim != 1:
-        raise ValueError("log_evidences must be one-dimensional.")
+    if log_normalizing_constants.ndim != 1:
+        raise ValueError("log_normalizing_constants must be one-dimensional.")
     if temperatures.shape[0] == 0:
         raise ValueError("temperature history must not be empty.")
-    if temperatures.shape[0] != log_evidences.shape[0]:
+    if temperatures.shape[0] != log_normalizing_constants.shape[0]:
         raise ValueError(
-            "temperatures and log_evidences must have the same length."
+            "temperatures and log_normalizing_constants must have the same "
+            "length."
         )
 
-    return increments, temperatures, log_evidences, xp
+    return increments, temperatures, log_normalizing_constants, xp
 
 
 def persistent_log_mixture_denominator(
     log_increment: Array,
     temperatures: ArrayLike,
-    log_evidences: Array,
+    log_normalizing_constants: Array,
     *,
     xp: Any | None = None,
 ) -> Array:
     """Compute the log density of the equally weighted historical mixture.
 
     The common initial-target density is cancelled, leaving, for particle
-    ``j``, ``logmeanexp(temperatures * log_increment[j] - log_evidences)``.
+    ``j``, ``logmeanexp(temperatures * log_increment[j] -
+    log_normalizing_constants)``.
     """
-    increments, temperatures, log_evidences, xp = _persistent_arrays(
-        log_increment,
-        temperatures,
-        log_evidences,
-        xp=xp,
+    increments, temperatures, log_normalizing_constants, xp = (
+        _persistent_arrays(
+            log_increment,
+            temperatures,
+            log_normalizing_constants,
+            xp=xp,
+        )
     )
     terms = (
-        increments[:, None] * temperatures[None, :] - log_evidences[None, :]
+        increments[:, None] * temperatures[None, :]
+        - log_normalizing_constants[None, :]
     )
     n_targets = asarray(
         temperatures.shape[0],
@@ -101,7 +106,7 @@ def persistent_log_mixture_denominator(
 def persistent_log_weights(
     log_increment: Array,
     temperatures: ArrayLike,
-    log_evidences: Array,
+    log_normalizing_constants: Array,
     temperature: ArrayLike,
     *,
     xp: Any | None = None,
@@ -121,7 +126,7 @@ def persistent_log_weights(
     log_denominator = persistent_log_mixture_denominator(
         increments,
         temperatures,
-        log_evidences,
+        log_normalizing_constants,
         xp=xp,
     )
     return candidate_temperature * increments - log_denominator
@@ -154,13 +159,13 @@ class PersistParticles(SMCStep):
             archived = PersistentParticleState.from_state(
                 state,
                 temperature=temperature,
-                log_evidence=state.log_evidence,
+                log_normalizing_constant=state.log_normalizing_constant,
             )
         else:
             archived = self.persistent_state.append(
                 state,
                 temperature=temperature,
-                log_evidence=state.log_evidence,
+                log_normalizing_constant=state.log_normalizing_constant,
             )
         self.persistent_state = archived
         return archived, context, None
@@ -253,9 +258,9 @@ class BasePersistentTemperedWeighting(SMCStep):
         """Weight the persistent archive at a chosen temperature.
 
         Normalize the resulting importance weights, calculate the direct
-        persistent evidence estimate, and update the state and context
-        temperature metadata. A precomputed mixture denominator may be supplied
-        by adaptive temperature selection.
+        persistent normalizing-constant estimate, and update the state and
+        context temperature metadata. A precomputed mixture denominator may be
+        supplied by adaptive temperature selection.
         """
         xp = namespace(state.log_weights)
         temperature = asarray(
@@ -270,7 +275,7 @@ class BasePersistentTemperedWeighting(SMCStep):
             log_denominator = persistent_log_mixture_denominator(
                 log_increment,
                 state.temperatures,
-                state.log_evidences,
+                state.log_normalizing_constants,
                 xp=xp,
             )
         unnormalized = temperature * log_increment - log_denominator
@@ -282,7 +287,7 @@ class BasePersistentTemperedWeighting(SMCStep):
             dtype=unnormalized.dtype,
             like=unnormalized,
         )
-        log_evidence = log_norm - xp.log(particle_count)
+        log_normalizing_constant = log_norm - xp.log(particle_count)
         normalized = unnormalized - log_norm
         effective_sample_size = ess_from_log_weights(unnormalized)
 
@@ -307,7 +312,7 @@ class BasePersistentTemperedWeighting(SMCStep):
         )
         weighted = state.with_updates(
             log_weights=normalized,
-            log_evidence=log_evidence,
+            log_normalizing_constant=log_normalizing_constant,
             evaluation=evaluation,
             metadata=metadata,
         )
@@ -420,7 +425,7 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         log_denominator = persistent_log_mixture_denominator(
             log_increment,
             state.temperatures,
-            state.log_evidences,
+            state.log_normalizing_constants,
             xp=xp,
         )
         current_temperature = float(

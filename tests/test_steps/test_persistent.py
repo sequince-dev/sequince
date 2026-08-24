@@ -25,10 +25,11 @@ from sequince.steps.persistent import (
 def _reference_denominator(
     log_increment: np.ndarray,
     temperatures: np.ndarray,
-    log_evidences: np.ndarray,
+    log_normalizing_constants: np.ndarray,
 ) -> np.ndarray:
     terms = (
-        log_increment[:, None] * temperatures[None, :] - log_evidences[None, :]
+        log_increment[:, None] * temperatures[None, :]
+        - log_normalizing_constants[None, :]
     )
     return logsumexp(terms, axis=1) - np.log(temperatures.size)
 
@@ -54,7 +55,7 @@ def test_single_initial_target() -> None:
 
 
 @pytest.mark.parametrize(
-    ("temperatures", "log_evidences"),
+    ("temperatures", "log_normalizing_constants"),
     [
         ([0.0, 0.3, 0.8], [0.0, 0.0, 0.0]),
         ([0.0, 0.3, 0.8], [0.0, 1.7, -0.4]),
@@ -64,21 +65,21 @@ def test_single_initial_target() -> None:
 )
 def test_denominator_matches_direct_reference(
     temperatures: list[float],
-    log_evidences: list[float],
+    log_normalizing_constants: list[float],
 ) -> None:
     log_increment = np.array([-1.5, 0.25, 2.0])
     temperatures_array = np.asarray(temperatures)
-    log_evidences_array = np.asarray(log_evidences)
+    log_normalizing_constants_array = np.asarray(log_normalizing_constants)
 
     actual = persistent_log_mixture_denominator(
         log_increment,
         temperatures_array,
-        log_evidences_array,
+        log_normalizing_constants_array,
     )
     expected = _reference_denominator(
         log_increment,
         temperatures_array,
-        log_evidences_array,
+        log_normalizing_constants_array,
     )
 
     np.testing.assert_allclose(actual, expected)
@@ -87,18 +88,18 @@ def test_denominator_matches_direct_reference(
 def test_log_weights_match_direct_reference() -> None:
     log_increment = np.array([-1.5, 0.25, 2.0])
     temperatures = np.array([0.0, 0.2, 0.9])
-    log_evidences = np.array([0.0, 0.6, 1.4])
+    log_normalizing_constants = np.array([0.0, 0.6, 1.4])
     temperature = 0.7
     expected_denominator = _reference_denominator(
         log_increment,
         temperatures,
-        log_evidences,
+        log_normalizing_constants,
     )
 
     actual = persistent_log_weights(
         log_increment,
         temperatures,
-        log_evidences,
+        log_normalizing_constants,
         temperature,
     )
 
@@ -111,17 +112,17 @@ def test_log_weights_match_direct_reference() -> None:
 def test_large_magnitude_values_are_stable() -> None:
     log_increment = np.array([1000.0, -1000.0, 500.0])
     temperatures = np.array([0.0, 0.5, 1.0])
-    log_evidences = np.array([0.0, 25.0, 100.0])
+    log_normalizing_constants = np.array([0.0, 25.0, 100.0])
 
     actual = persistent_log_mixture_denominator(
         log_increment,
         temperatures,
-        log_evidences,
+        log_normalizing_constants,
     )
     expected = _reference_denominator(
         log_increment,
         temperatures,
-        log_evidences,
+        log_normalizing_constants,
     )
 
     assert np.all(np.isfinite(actual))
@@ -137,24 +138,26 @@ def test_supported_backends_preserve_namespace_dtype_and_shape(
     xp = case.xp
     log_increment = case.particles[:, 0]
     temperatures = asarray([0.0, 0.0, 0.5], xp=xp, like=log_increment)
-    log_evidences = asarray([0.0, 0.2, 0.9], xp=xp, like=log_increment)
+    log_normalizing_constants = asarray(
+        [0.0, 0.2, 0.9], xp=xp, like=log_increment
+    )
 
     denominator = persistent_log_mixture_denominator(
         log_increment,
         temperatures,
-        log_evidences,
+        log_normalizing_constants,
     )
     log_weights = persistent_log_weights(
         log_increment,
         temperatures,
-        log_evidences,
+        log_normalizing_constants,
         0.75,
     )
 
     expected = _reference_denominator(
         to_numpy(log_increment),
         to_numpy(temperatures),
-        to_numpy(log_evidences),
+        to_numpy(log_normalizing_constants),
     )
     assert denominator.shape == log_increment.shape
     assert log_weights.shape == log_increment.shape
@@ -166,26 +169,31 @@ def test_supported_backends_preserve_namespace_dtype_and_shape(
 
 
 @pytest.mark.parametrize(
-    ("log_increment", "temperatures", "log_evidences", "match"),
+    (
+        "log_increment",
+        "temperatures",
+        "log_normalizing_constants",
+        "match",
+    ),
     [
         ([1.0], [], [], "must not be empty"),
         ([1.0], [0.0, 0.5], [0.0], "same length"),
         ([[1.0]], [0.0], [0.0], "log_increment"),
         ([1.0], [[0.0]], [0.0], "temperatures"),
-        ([1.0], [0.0], [[0.0]], "log_evidences"),
+        ([1.0], [0.0], [[0.0]], "log_normalizing_constants"),
     ],
 )
 def test_invalid_histories_raise_value_error(
     log_increment,
     temperatures,
-    log_evidences,
+    log_normalizing_constants,
     match: str,
 ) -> None:
     with pytest.raises(ValueError, match=match):
         persistent_log_mixture_denominator(
             log_increment,
             temperatures,
-            log_evidences,
+            log_normalizing_constants,
         )
 
 
@@ -209,13 +217,19 @@ def _linear_target():
     return TemperedPosterior(log_prior, log_likelihood), calls
 
 
-def _evaluated_state(target, particles, *, log_evidence=0.0, temperature=0.0):
+def _evaluated_state(
+    target,
+    particles,
+    *,
+    log_normalizing_constant=0.0,
+    temperature=0.0,
+):
     context = StepContext(t=0, metadata={"temperature": temperature})
     evaluation = target.prepare_evaluation(particles, context)
     return (
         ParticleState(
             particles,
-            log_evidence=log_evidence,
+            log_normalizing_constant=log_normalizing_constant,
             evaluation=evaluation,
             metadata={"temperature": temperature},
         ),
@@ -226,7 +240,7 @@ def _evaluated_state(target, particles, *, log_evidence=0.0, temperature=0.0):
 def test_persist_particles_creates_and_appends_completed_batches(rng) -> None:
     target, _ = _linear_target()
     first, first_context = _evaluated_state(
-        target, np.array([[-1.0], [1.0]]), log_evidence=0.0
+        target, np.array([[-1.0], [1.0]]), log_normalizing_constant=0.0
     )
     step = PersistParticles()
 
@@ -244,7 +258,7 @@ def test_persist_particles_creates_and_appends_completed_batches(rng) -> None:
     second, second_context = _evaluated_state(
         target,
         np.array([[2.0], [3.0]]),
-        log_evidence=0.6,
+        log_normalizing_constant=0.6,
         temperature=0.4,
     )
     two_batches, _, _ = step.apply(second, second_context, rng)
@@ -269,10 +283,10 @@ def test_first_persistent_weighting_is_direct_and_preserves_history(
     active, context = _evaluated_state(
         target,
         np.array([[-2.0], [0.0], [1.0]]),
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     )
     persisted, _, _ = PersistParticles().apply(active, context, rng)
-    persisted = persisted.with_updates(log_evidence=9.0)
+    persisted = persisted.with_updates(log_normalizing_constant=9.0)
     calls_before = dict(calls)
 
     weighted, weighted_context, output = PersistentTemperedWeighting(
@@ -302,17 +316,17 @@ def test_first_persistent_weighting_is_direct_and_preserves_history(
 def test_multiple_targets_and_repeated_temperature_match_helper(rng) -> None:
     target, _ = _linear_target()
     first, context = _evaluated_state(
-        target, np.array([[-1.0], [0.5]]), log_evidence=0.0
+        target, np.array([[-1.0], [0.5]]), log_normalizing_constant=0.0
     )
     second, _ = _evaluated_state(
         target,
         np.array([[1.5], [2.0]]),
-        log_evidence=0.4,
+        log_normalizing_constant=0.4,
         temperature=0.5,
     )
     history = PersistentParticleState.from_state(
-        first, temperature=0.0, log_evidence=0.0
-    ).append(second, temperature=0.5, log_evidence=0.4)
+        first, temperature=0.0, log_normalizing_constant=0.0
+    ).append(second, temperature=0.5, log_normalizing_constant=0.4)
     expected_raw = persistent_log_weights(
         history.particles[:, 0],
         history.temperatures,
@@ -339,7 +353,7 @@ def test_multiple_targets_and_repeated_temperature_match_helper(rng) -> None:
 def test_new_target_is_archived_only_after_resampling(rng) -> None:
     target, _ = _linear_target()
     active, context = _evaluated_state(
-        target, np.array([[-1.0], [1.0]]), log_evidence=0.0
+        target, np.array([[-1.0], [1.0]]), log_normalizing_constant=0.0
     )
     persist = PersistParticles()
     history, _, _ = persist.apply(active, context, rng)
@@ -389,7 +403,7 @@ def test_persistent_steps_preserve_backend(
 def test_persist_particles_state_round_trip(rng) -> None:
     target, _ = _linear_target()
     active, context = _evaluated_state(
-        target, np.array([[0.0], [1.0]]), log_evidence=0.2
+        target, np.array([[0.0], [1.0]]), log_normalizing_constant=0.2
     )
     original = PersistParticles()
     original.apply(active, context, rng)
@@ -694,11 +708,11 @@ def test_adaptive_and_fixed_persistent_weighting_agree_and_preserve_history(
         target,
         np.array([[-1.5], [0.0], [1.0], [2.5]]),
         temperature=0.25,
-        log_evidence=0.3,
+        log_normalizing_constant=0.3,
     )
     history = PersistentParticleState.from_state(
-        first, temperature=0.0, log_evidence=0.0
-    ).append(second, temperature=0.25, log_evidence=0.3)
+        first, temperature=0.0, log_normalizing_constant=0.0
+    ).append(second, temperature=0.25, log_normalizing_constant=0.3)
     context = context.with_metadata(temperature=0.25)
     original_temperatures = np.array(history.temperatures, copy=True)
     original_log_evidences = np.array(history.log_evidences, copy=True)

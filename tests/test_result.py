@@ -43,7 +43,24 @@ def test_smc_results_append_state(
 
 
 def test_smc_results_summary(dummy_results: SMCResult) -> None:
-    dummy_results.summary()
+    summary = dummy_results.summary()
+
+    assert summary["final_log_normalizing_constant"] == pytest.approx(0.0)
+    assert "final_log_evidence" not in summary
+
+
+def test_smc_result_normalizing_constant_alias(
+    particle_state: ParticleState, context_factory
+) -> None:
+    state = particle_state.with_updates(log_normalizing_constant=1.75)
+    result = SMCResult([state], context_factory())
+
+    assert result.log_normalizing_constant() == pytest.approx(1.75)
+    assert result.log_evidence() == result.log_normalizing_constant()
+    np.testing.assert_array_equal(
+        result.log_evidence_history(),
+        result.log_normalizing_constant_history(),
+    )
 
 
 @pytest.fixture
@@ -150,21 +167,25 @@ def test_posterior_samples_rejects_unknown_method(
         weighted_results.posterior_samples(method="unknown")  # type: ignore[arg-type]
 
 
-def test_log_evidence_variance_dispatches_to_incremental(
+def test_log_normalizing_constant_variance_dispatches_to_incremental(
     particle_state, context_factory
 ) -> None:
     states = [
         particle_state.with_updates(
-            metadata={"log_evidence_increment_variance": variance}
+            metadata={"log_normalizing_constant_increment_variance": variance}
         )
         for variance in (0.1, 0.2)
     ]
     result = SMCResult(states, context_factory())
 
-    assert result.log_evidence_variance() == pytest.approx(0.3)
-    assert result.log_evidence_variance(method="incremental") == pytest.approx(
-        0.3
+    assert result.log_normalizing_constant_variance() == pytest.approx(0.3)
+    assert result.log_normalizing_constant_variance(
+        method="incremental"
+    ) == pytest.approx(0.3)
+    assert result.log_normalizing_constant_error() == pytest.approx(
+        np.sqrt(0.3)
     )
+    assert result.log_evidence_variance() == pytest.approx(0.3)
     assert result.log_evidence_error() == pytest.approx(np.sqrt(0.3))
 
 
@@ -437,13 +458,15 @@ def test_fixed_lag_lee_whiteley_handles_no_resampling_and_terminal_weights(
     assert diagnostics.family_ess == pytest.approx(1.6)
 
 
-def test_log_evidence_variance_rejects_unknown_method(
+def test_log_normalizing_constant_variance_rejects_unknown_method(
     dummy_results: SMCResult,
 ) -> None:
     with pytest.raises(
-        ValueError, match="Unknown log-evidence variance method"
+        ValueError, match="Unknown log normalizing-constant variance method"
     ):
-        dummy_results.log_evidence_variance(method="unknown")  # type: ignore[arg-type]
+        dummy_results.log_normalizing_constant_variance(
+            method="unknown"  # type: ignore[arg-type]
+        )
 
 
 def test_get_meta_smc_results(dummy_results: SMCResult) -> None:

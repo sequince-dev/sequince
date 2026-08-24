@@ -50,8 +50,10 @@ def test_normalize_updates_log_weights(
     expected_log_norm = np.log(np.sum(np.exp(particle_state.log_weights)))
     assert pytest.approx(log_norm) == expected_log_norm
     assert (
-        pytest.approx(normalized.log_evidence) == particle_state.log_evidence
+        pytest.approx(normalized.log_normalizing_constant)
+        == particle_state.log_normalizing_constant
     )
+    assert normalized.log_evidence == normalized.log_normalizing_constant
 
     weights = np.exp(normalized.log_weights)
     assert pytest.approx(np.sum(weights)) == 1.0
@@ -80,7 +82,10 @@ def test_state_resamples_and_serializes_target_evaluation() -> None:
     )
 
     resampled = state.resample(np.array([2, 0, 2]))
-    restored = ParticleState.from_dict(resampled.to_dict())
+    payload = resampled.to_dict()
+    assert "log_normalizing_constant" in payload
+    assert "log_evidence" not in payload
+    restored = ParticleState.from_dict(payload)
 
     np.testing.assert_allclose(restored.particles[:, 0], [3.0, 1.0, 3.0])
     np.testing.assert_array_equal(restored.initial_ancestor_indices, [2, 0, 2])
@@ -102,9 +107,20 @@ def test_effective_sample_size_matches_expected(
 
 
 def test_with_updates_returns_new_state(particle_state: ParticleState) -> None:
-    updated = particle_state.with_updates(log_evidence=5.0)
+    updated = particle_state.with_updates(log_normalizing_constant=5.0)
+    assert updated.log_normalizing_constant == 5.0
     assert updated.log_evidence == 5.0
-    assert particle_state.log_evidence == 0.0
+    assert particle_state.log_normalizing_constant == 0.0
+
+
+def test_constructor_accepts_log_normalizing_constant() -> None:
+    state = ParticleState(
+        particles=np.zeros((2, 1)),
+        log_normalizing_constant=1.25,
+    )
+
+    assert state.log_normalizing_constant == pytest.approx(1.25)
+    assert state.log_evidence == pytest.approx(1.25)
 
 
 def test_resample_returns_equal_weights_and_preserves_metadata(
@@ -164,7 +180,7 @@ def test_persistent_state_constructs_one_batch() -> None:
     history = PersistentParticleState.from_state(
         state,
         temperature=0.25,
-        log_evidence=1.5,
+        log_normalizing_constant=1.5,
     )
 
     assert len(history) == 3
@@ -174,7 +190,9 @@ def test_persistent_state_constructs_one_batch() -> None:
     np.testing.assert_array_equal(history.particles, state.particles)
     np.testing.assert_allclose(history.temperatures, [0.25])
     np.testing.assert_allclose(history.log_evidences, [1.5])
+    np.testing.assert_allclose(history.log_normalizing_constants, [1.5])
     assert history.log_evidence == pytest.approx(1.5)
+    assert history.log_normalizing_constant == pytest.approx(1.5)
     np.testing.assert_allclose(history.log_weights, -np.log(3))
     assert history.evaluation is state.evaluation
 
@@ -184,18 +202,18 @@ def test_persistent_state_appends_multiple_batches_in_order() -> None:
     history = PersistentParticleState.from_state(
         first,
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     )
 
     two_batches = history.append(
         _persistent_batch(1.0),
         temperature=0.0,
-        log_evidence=0.4,
+        log_normalizing_constant=0.4,
     )
     three_batches = two_batches.append(
         _persistent_batch(2.0),
         temperature=0.25,
-        log_evidence=1.1,
+        log_normalizing_constant=1.1,
     )
 
     assert history.n_batches == 1
@@ -218,11 +236,11 @@ def test_persistent_state_preserves_evaluation_alignment() -> None:
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     ).append(
         _persistent_batch(2.0),
         temperature=0.5,
-        log_evidence=0.7,
+        log_normalizing_constant=0.7,
     )
 
     assert history.evaluation is not None
@@ -240,14 +258,14 @@ def test_persistent_state_rejects_different_batch_size() -> None:
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     )
 
     with pytest.raises(ValueError, match="must match batch_size"):
         history.append(
             _persistent_batch(1.0, n=2),
             temperature=0.5,
-            log_evidence=0.2,
+            log_normalizing_constant=0.2,
         )
 
 
@@ -262,14 +280,14 @@ def test_persistent_state_rejects_inconsistent_evaluations(
     history = PersistentParticleState.from_state(
         history_state,
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     )
 
     with pytest.raises(ValueError, match="inconsistent target evaluations"):
         history.append(
             appended_state,
             temperature=0.5,
-            log_evidence=0.2,
+            log_normalizing_constant=0.2,
         )
 
 
@@ -277,7 +295,7 @@ def test_persistent_state_append_does_not_mutate_history() -> None:
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     )
     original_particles = history.particles.copy()
     original_temperatures = history.temperatures.copy()
@@ -286,7 +304,7 @@ def test_persistent_state_append_does_not_mutate_history() -> None:
     appended = history.append(
         _persistent_batch(1.0),
         temperature=0.5,
-        log_evidence=0.2,
+        log_normalizing_constant=0.2,
     )
 
     assert appended is not history
@@ -301,7 +319,7 @@ def test_persistent_state_append_does_not_mutate_history() -> None:
         "particles",
         "initial_ancestor_indices",
         "temperatures",
-        "log_evidences",
+        "log_normalizing_constants",
         "batch_size",
     ],
 )
@@ -311,7 +329,7 @@ def test_persistent_state_with_updates_rejects_structural_fields(
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     )
 
     with pytest.raises(ValueError, match="Persistent structure cannot"):
@@ -324,23 +342,25 @@ def test_persistent_state_scalar_log_evidence_can_differ_from_history() -> (
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.7,
+        log_normalizing_constant=0.7,
     )
 
-    weighted = history.with_updates(log_evidence=2.0)
+    weighted = history.with_updates(log_normalizing_constant=2.0)
 
     assert history.log_evidence == pytest.approx(0.7)
     assert weighted.log_evidence == pytest.approx(2.0)
     np.testing.assert_allclose(weighted.log_evidences, [0.7])
 
 
-def test_persistent_state_constructor_accepts_scalar_log_evidence() -> None:
+def test_persistent_state_constructor_accepts_scalar_normalizing_constant() -> (
+    None
+):
     history = PersistentParticleState(
         particles=np.zeros((2, 1)),
         temperatures=[0.0],
-        log_evidences=[0.7],
+        log_normalizing_constants=[0.7],
         batch_size=2,
-        log_evidence=2.0,
+        log_normalizing_constant=2.0,
     )
 
     assert history.log_evidence == pytest.approx(2.0)
@@ -351,7 +371,7 @@ def test_persistent_state_with_updates_accepts_log_weights() -> None:
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     )
 
     updated = history.with_updates(log_weights=np.array([0.0, -1.0, -2.0]))
@@ -365,7 +385,7 @@ def test_normalizing_persistent_state_preserves_type_and_structure() -> None:
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.4,
+        log_normalizing_constant=0.4,
     ).with_updates(log_weights=np.array([0.0, -1.0, -2.0]))
 
     normalized, log_norm = history.normalize()
@@ -391,11 +411,11 @@ def test_persistent_state_concatenates_shared_initial_ancestry() -> None:
     history = PersistentParticleState.from_state(
         first,
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     ).append(
         second,
         temperature=0.5,
-        log_evidence=0.2,
+        log_normalizing_constant=0.2,
     )
 
     np.testing.assert_array_equal(
@@ -410,11 +430,11 @@ def test_resampling_persistent_state_returns_active_state() -> None:
     history = PersistentParticleState.from_state(
         _persistent_batch(0.0),
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     ).append(
         _persistent_batch(2.0),
         temperature=0.5,
-        log_evidence=0.7,
+        log_normalizing_constant=0.7,
     )
 
     resampled = history.resample(np.array([5, 0, 3]))
@@ -431,12 +451,22 @@ def test_resampling_persistent_state_returns_active_state() -> None:
 
 
 @pytest.mark.parametrize(
-    ("temperatures", "log_evidences", "batch_size", "match"),
+    (
+        "temperatures",
+        "log_normalizing_constants",
+        "batch_size",
+        "match",
+    ),
     [
         ([0.0], [0.0], 3, "Particles array cannot be empty"),
         ([0.0], [0.0], 0, "must be positive"),
         ([[0.0]], [0.0], 3, "temperatures must be one-dimensional"),
-        ([0.0], [[0.0]], 3, "log_evidences must be one-dimensional"),
+        (
+            [0.0],
+            [[0.0]],
+            3,
+            "log_normalizing_constants must be one-dimensional",
+        ),
         ([0.0, 0.5], [0.0], 3, "must have the same length"),
         ([0.0], [0.0], 2, "must be divisible"),
         ([0.0, 0.5], [0.0, 0.2], 3, "one entry per particle batch"),
@@ -444,7 +474,7 @@ def test_resampling_persistent_state_returns_active_state() -> None:
 )
 def test_persistent_state_validates_structure(
     temperatures,
-    log_evidences,
+    log_normalizing_constants,
     batch_size: int,
     match: str,
 ) -> None:
@@ -453,7 +483,7 @@ def test_persistent_state_validates_structure(
         PersistentParticleState(
             particles=np.zeros((n_particles, 1)),
             temperatures=np.asarray(temperatures),
-            log_evidences=np.asarray(log_evidences),
+            log_normalizing_constants=np.asarray(log_normalizing_constants),
             batch_size=batch_size,
         )
 
@@ -462,7 +492,7 @@ def test_persistent_state_integer_history_still_has_floating_weights() -> None:
     history = PersistentParticleState(
         particles=np.zeros((3, 1)),
         temperatures=np.array([0]),
-        log_evidences=np.array([0]),
+        log_normalizing_constants=np.array([0]),
         batch_size=3,
     )
 
@@ -486,11 +516,11 @@ def test_persistent_state_preserves_array_backend(
     history = PersistentParticleState.from_state(
         first,
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     ).append(
         second,
         temperature=0.5,
-        log_evidence=0.8,
+        log_normalizing_constant=0.8,
     )
 
     assert namespace(history.particles) is xp
@@ -511,11 +541,11 @@ def test_persistent_state_accepts_absent_evaluations() -> None:
     history = PersistentParticleState.from_state(
         state,
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     ).append(
         state.with_updates(particles=np.ones((2, 1))),
         temperature=0.5,
-        log_evidence=0.3,
+        log_normalizing_constant=0.3,
     )
 
     assert history.evaluation is None
@@ -530,7 +560,7 @@ def test_persistent_state_supports_jax_pytree_round_trip() -> None:
     history = PersistentParticleState.from_state(
         ParticleState(particles=jnp.zeros((2, 1))),
         temperature=0.0,
-        log_evidence=0.0,
+        log_normalizing_constant=0.0,
     ).with_updates(log_weights=jnp.asarray([-0.25, -1.5]))
 
     leaves, structure = jax.tree.flatten(history)

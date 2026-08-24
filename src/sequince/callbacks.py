@@ -211,6 +211,7 @@ class StatePlot(PlotCallback):
         )
 
         plotting_fn = {
+            "log_normalizing_constant": results.plot_log_normalizing_constant,
             "log_evidence": results.plot_log_evidence,
             "ess": results.plot_effective_sample_size,
         }

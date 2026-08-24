@@ -109,7 +109,7 @@ def test_apply_log_weight_increment_accepts_a_scalar() -> None:
     state = ParticleState(
         particles=np.arange(6.0).reshape(3, 2),
         log_weights=np.log(np.array([0.2, 0.3, 0.5])),
-        log_evidence=1.25,
+        log_normalizing_constant=1.25,
     )
 
     updated, log_norm = _apply_log_weight_increment(state, 0.7)
@@ -123,7 +123,7 @@ def test_apply_log_weight_increment_normalizes_vector() -> None:
     state = ParticleState(
         particles=np.arange(6.0).reshape(3, 2),
         log_weights=np.log(np.array([0.2, 0.3, 0.5])),
-        log_evidence=-0.4,
+        log_normalizing_constant=-0.4,
     )
     increment = np.array([-0.3, 0.2, 0.8])
     unnormalized = state.log_weights + increment
@@ -144,7 +144,7 @@ def test_apply_log_weight_increment_can_defer_normalization() -> None:
     state = ParticleState(
         particles=np.arange(6.0).reshape(3, 2),
         log_weights=np.array([-0.1, -0.2, -0.3]),
-        log_evidence=0.6,
+        log_normalizing_constant=0.6,
     )
     increment = np.array([0.4, -0.2, 0.1])
 
@@ -204,8 +204,10 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     assert context.metadata["temperature"] == pytest.approx(0.25)
     assert context.metadata["temperature_delta"] == pytest.approx(0.25)
     assert updated.metadata["temperature_delta"] == pytest.approx(0.25)
-    assert updated.metadata["log_evidence_increment"] == pytest.approx(0.25)
-    assert updated.metadata["log_evidence_increment_variance"] == (
+    assert updated.metadata[
+        "log_normalizing_constant_increment"
+    ] == pytest.approx(0.25)
+    assert updated.metadata["log_normalizing_constant_increment_variance"] == (
         pytest.approx(0.0)
     )
     assert updated.metadata["ess_before_resampling"] == pytest.approx(
@@ -245,7 +247,7 @@ def test_tempering_diagnostics_support_weighted_particles(
     expected_terminal_ess = 1.0 / np.sum(terminal_weights**2)
 
     assert updated.metadata[
-        "log_evidence_increment_variance"
+        "log_normalizing_constant_increment_variance"
     ] == pytest.approx(expected_variance)
     assert updated.metadata["ess_at_max_temperature"] == pytest.approx(
         expected_terminal_ess

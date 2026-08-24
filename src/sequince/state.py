@@ -27,19 +27,25 @@ if TYPE_CHECKING:
         "particles",
         "log_weights",
         "initial_ancestor_indices",
-        "log_evidence",
+        "log_normalizing_constant",
         "evaluation",
         "metadata",
     )
 )
 @dataclass(init=False)
 class ParticleState:
-    """Container for particle locations, log weights, and auxiliary information."""
+    """Container for particle locations, log weights, and auxiliary information.
+
+    ``log_normalizing_constant`` is the accumulated estimate of ``log Z`` for
+    the SMC target sequence. For Bayesian posterior SMC this is the log
+    evidence; for particle filtering it is the log marginal likelihood of the
+    observation sequence.
+    """
 
     particles: Array
     log_weights: Array
     initial_ancestor_indices: Array
-    log_evidence: float = 0.0
+    log_normalizing_constant: float = 0.0
     evaluation: TargetEvaluation | None = None
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
 
@@ -47,7 +53,7 @@ class ParticleState:
         self,
         particles: Array,
         log_weights: Array | Real | None = None,
-        log_evidence: float = 0.0,
+        log_normalizing_constant: float = 0.0,
         initial_ancestor_indices: Array | None = None,
         evaluation: TargetEvaluation | None = None,
         metadata: MutableMapping[str, Any] | None = None,
@@ -56,7 +62,7 @@ class ParticleState:
             raise ValueError("Particles array cannot be empty.")
 
         self.particles = particles
-        self.log_evidence = log_evidence
+        self.log_normalizing_constant = log_normalizing_constant
         self.evaluation = evaluation
         self.metadata = dict(metadata or {})
         n = particles.shape[0]
@@ -89,6 +95,11 @@ class ParticleState:
             )
         self.log_weights = log_weights
 
+    @property
+    def log_evidence(self) -> float:
+        """Alias for ``log_normalizing_constant``."""
+        return self.log_normalizing_constant
+
     def copy(self) -> "ParticleState":
         """Return a copy of the state preserving the array backend."""
         xp = namespace(
@@ -99,7 +110,7 @@ class ParticleState:
         return ParticleState(
             particles=array_copy(self.particles, xp=xp),
             log_weights=array_copy(self.log_weights, xp=xp),
-            log_evidence=self.log_evidence,
+            log_normalizing_constant=self.log_normalizing_constant,
             initial_ancestor_indices=array_copy(
                 self.initial_ancestor_indices,
                 xp=xp,
@@ -111,7 +122,7 @@ class ParticleState:
         )
 
     def normalize(self) -> tuple["ParticleState", float]:
-        """Return a new state with normalized log weights and normalizer."""
+        """Return a new state and its incremental log normalizing constant."""
         state = self.copy()
         xp = namespace(state.log_weights)
         state.log_weights, log_norm = normalize_log_weights(
@@ -174,7 +185,7 @@ class ParticleState:
         return ParticleState(
             particles=new_particles,
             log_weights=log_weights,
-            log_evidence=self.log_evidence,
+            log_normalizing_constant=self.log_normalizing_constant,
             initial_ancestor_indices=asarray(
                 self.initial_ancestor_indices,
                 xp=xp,
@@ -193,7 +204,7 @@ class ParticleState:
         return {
             "particles": copied.particles,
             "log_weights": copied.log_weights,
-            "log_evidence": copied.log_evidence,
+            "log_normalizing_constant": copied.log_normalizing_constant,
             "initial_ancestor_indices": copied.initial_ancestor_indices,
             "evaluation": (
                 None
@@ -213,7 +224,7 @@ class ParticleState:
             for key in (
                 "particles",
                 "log_weights",
-                "log_evidence",
+                "log_normalizing_constant",
                 "initial_ancestor_indices",
                 "metadata",
             )
@@ -234,7 +245,9 @@ class ParticleState:
         return cls(
             particles=payload["particles"],
             log_weights=payload["log_weights"],
-            log_evidence=float(payload["log_evidence"]),
+            log_normalizing_constant=float(
+                payload["log_normalizing_constant"]
+            ),
             initial_ancestor_indices=payload["initial_ancestor_indices"],
             evaluation=evaluation,
             metadata=array_safe_copy(payload["metadata"]),
@@ -246,11 +259,11 @@ class ParticleState:
         "particles",
         "log_weights",
         "initial_ancestor_indices",
-        "log_evidence",
+        "log_normalizing_constant",
         "evaluation",
         "metadata",
         "temperatures",
-        "log_evidences",
+        "log_normalizing_constants",
     ),
     meta_fields=("batch_size",),
 )
@@ -258,32 +271,35 @@ class ParticleState:
 class PersistentParticleState(ParticleState):
     """Equal-sized particle batches retained from historical targets.
 
-    ``log_evidences`` contains evidence estimates for targets which generated
-    archived batches.  The scalar ``log_evidence`` follows the ordinary
-    :class:`ParticleState` interface and may instead describe a new target toward
-    which the archive has just been weighted.
+    ``log_normalizing_constants`` contains normalizing-constant estimates for
+    targets which generated archived batches. The scalar
+    ``log_normalizing_constant`` follows the ordinary :class:`ParticleState`
+    interface and may instead describe a new target toward which the archive
+    has just been weighted.
     """
 
     temperatures: Array
-    log_evidences: Array
+    log_normalizing_constants: Array
     batch_size: int
 
     def __init__(
         self,
         particles: Array,
         temperatures: ArrayLike,
-        log_evidences: ArrayLike,
+        log_normalizing_constants: ArrayLike,
         batch_size: int,
         *,
         log_weights: Array | None = None,
-        log_evidence: Any | None = None,
+        log_normalizing_constant: Any | None = None,
         initial_ancestor_indices: Array | None = None,
         evaluation: TargetEvaluation | None = None,
         metadata: MutableMapping[str, Any] | None = None,
     ) -> None:
         xp = namespace(particles)
         temperatures = asarray(temperatures, xp=xp, like=particles)
-        log_evidences = asarray(log_evidences, xp=xp, like=particles)
+        normalizing_constants = asarray(
+            log_normalizing_constants, xp=xp, like=particles
+        )
 
         if particles.shape[0] == 0:
             raise ValueError("Particles array cannot be empty.")
@@ -291,11 +307,14 @@ class PersistentParticleState(ParticleState):
             raise ValueError("batch_size must be positive.")
         if temperatures.ndim != 1:
             raise ValueError("temperatures must be one-dimensional.")
-        if log_evidences.ndim != 1:
-            raise ValueError("log_evidences must be one-dimensional.")
-        if temperatures.shape[0] != log_evidences.shape[0]:
+        if normalizing_constants.ndim != 1:
             raise ValueError(
-                "temperatures and log_evidences must have the same length."
+                "log_normalizing_constants must be one-dimensional."
+            )
+        if temperatures.shape[0] != normalizing_constants.shape[0]:
+            raise ValueError(
+                "temperatures and log_normalizing_constants must have the "
+                "same length."
             )
 
         n_particles = particles.shape[0]
@@ -304,8 +323,8 @@ class PersistentParticleState(ParticleState):
         n_batches = n_particles // batch_size
         if temperatures.shape[0] != n_batches:
             raise ValueError(
-                "Temperature and evidence histories must contain one entry "
-                "per particle batch."
+                "Temperature and normalizing-constant histories must contain "
+                "one entry per particle batch."
             )
 
         if log_weights is None:
@@ -320,19 +339,29 @@ class PersistentParticleState(ParticleState):
                 raise ValueError(
                     "Log weights must match the persistent particle population."
                 )
-        if log_evidence is None:
-            log_evidence = log_evidences[-1]
+        if log_normalizing_constant is None:
+            log_normalizing_constant = normalizing_constants[-1]
         super().__init__(
             particles=particles,
             log_weights=log_weights,
-            log_evidence=log_evidence,
+            log_normalizing_constant=log_normalizing_constant,
             initial_ancestor_indices=initial_ancestor_indices,
             evaluation=evaluation,
             metadata=metadata,
         )
         self.temperatures = temperatures
-        self.log_evidences = log_evidences
+        self.log_normalizing_constants = normalizing_constants
         self.batch_size = batch_size
+
+    @property
+    def log_evidence(self) -> float:
+        """Alias for ``log_normalizing_constant``."""
+        return self.log_normalizing_constant
+
+    @property
+    def log_evidences(self) -> Array:
+        """Alias for ``log_normalizing_constants``."""
+        return self.log_normalizing_constants
 
     def __len__(self) -> int:
         """Return the total number of retained particles."""
@@ -354,7 +383,7 @@ class PersistentParticleState(ParticleState):
         state: ParticleState,
         *,
         temperature: ArrayLike,
-        log_evidence: ArrayLike,
+        log_normalizing_constant: ArrayLike,
     ) -> "PersistentParticleState":
         """Create a one-batch history from an active particle state."""
         xp = namespace(state.particles)
@@ -364,16 +393,16 @@ class PersistentParticleState(ParticleState):
             xp=xp,
             like=state.particles,
         )
-        evidence_history = cls._history_entry(
-            log_evidence,
-            name="log_evidence",
+        normalizing_constant_history = cls._history_entry(
+            log_normalizing_constant,
+            name="log_normalizing_constant",
             xp=xp,
             like=state.particles,
         )
         return cls(
             particles=state.particles,
             temperatures=temperature_history,
-            log_evidences=evidence_history,
+            log_normalizing_constants=normalizing_constant_history,
             batch_size=state.particles.shape[0],
             initial_ancestor_indices=state.initial_ancestor_indices,
             evaluation=state.evaluation,
@@ -400,15 +429,17 @@ class PersistentParticleState(ParticleState):
             self.log_weights,
             self.initial_ancestor_indices,
             self.temperatures,
-            self.log_evidences,
+            self.log_normalizing_constants,
         )
         copied = type(self)(
             particles=array_copy(self.particles, xp=xp),
             temperatures=array_copy(self.temperatures, xp=xp),
-            log_evidences=array_copy(self.log_evidences, xp=xp),
+            log_normalizing_constants=array_copy(
+                self.log_normalizing_constants, xp=xp
+            ),
             batch_size=self.batch_size,
             log_weights=array_copy(self.log_weights, xp=xp),
-            log_evidence=self.log_evidence,
+            log_normalizing_constant=self.log_normalizing_constant,
             initial_ancestor_indices=array_copy(
                 self.initial_ancestor_indices,
                 xp=xp,
@@ -427,7 +458,12 @@ class PersistentParticleState(ParticleState):
         :meth:`append`. Persistent weighting steps may update ``log_weights``;
         callers may also replace compatible evaluations or metadata.
         """
-        allowed = {"log_weights", "log_evidence", "evaluation", "metadata"}
+        allowed = {
+            "log_weights",
+            "log_normalizing_constant",
+            "evaluation",
+            "metadata",
+        }
         protected = sorted(set(kwargs).difference(allowed))
         if protected:
             raise ValueError(
@@ -464,7 +500,7 @@ class PersistentParticleState(ParticleState):
         state: ParticleState,
         *,
         temperature: ArrayLike,
-        log_evidence: ArrayLike,
+        log_normalizing_constant: ArrayLike,
     ) -> "PersistentParticleState":
         """Return a new history with one equal-sized batch appended.
 
@@ -494,16 +530,19 @@ class PersistentParticleState(ParticleState):
             xp=xp,
             like=self.temperatures,
         )
-        evidence_entry = self._history_entry(
-            log_evidence,
-            name="log_evidence",
+        normalizing_constant_entry = self._history_entry(
+            log_normalizing_constant,
+            name="log_normalizing_constant",
             xp=xp,
-            like=self.log_evidences,
+            like=self.log_normalizing_constants,
         )
         temperatures = xp.concat(
             (self.temperatures, temperature_entry), axis=0
         )
-        log_evidences = xp.concat((self.log_evidences, evidence_entry), axis=0)
+        log_normalizing_constants = xp.concat(
+            (self.log_normalizing_constants, normalizing_constant_entry),
+            axis=0,
+        )
 
         if self.evaluation is None and state.evaluation is None:
             evaluation = None
@@ -519,9 +558,9 @@ class PersistentParticleState(ParticleState):
         return type(self)(
             particles=particles,
             temperatures=temperatures,
-            log_evidences=log_evidences,
+            log_normalizing_constants=log_normalizing_constants,
             batch_size=self.batch_size,
-            log_evidence=log_evidence,
+            log_normalizing_constant=log_normalizing_constant,
             initial_ancestor_indices=initial_ancestor_indices,
             evaluation=evaluation,
             metadata=array_safe_copy(state.metadata),
@@ -533,7 +572,7 @@ class PersistentParticleState(ParticleState):
         copied = self.copy()
         payload.update(
             temperatures=copied.temperatures,
-            log_evidences=copied.log_evidences,
+            log_normalizing_constants=copied.log_normalizing_constants,
             batch_size=copied.batch_size,
         )
         return payload
@@ -545,7 +584,11 @@ class PersistentParticleState(ParticleState):
         """Reconstruct a persistent state from :meth:`to_dict` output."""
         missing = {
             key
-            for key in ("temperatures", "log_evidences", "batch_size")
+            for key in (
+                "temperatures",
+                "log_normalizing_constants",
+                "batch_size",
+            )
             if key not in payload
         }
         if missing:
@@ -557,10 +600,10 @@ class PersistentParticleState(ParticleState):
         return cls(
             particles=base.particles,
             temperatures=payload["temperatures"],
-            log_evidences=payload["log_evidences"],
+            log_normalizing_constants=payload["log_normalizing_constants"],
             batch_size=int(payload["batch_size"]),
             log_weights=base.log_weights,
-            log_evidence=base.log_evidence,
+            log_normalizing_constant=base.log_normalizing_constant,
             initial_ancestor_indices=base.initial_ancestor_indices,
             evaluation=base.evaluation,
             metadata=base.metadata,
