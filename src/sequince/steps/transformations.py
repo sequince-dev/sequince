@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..array_api import asarray, namespace
-from ..utils import call_with_optional_context
+from ..utils.callables import call_with_optional_context
 from .base import SMCStep
 from .context import (
     SMC_TRANSFORMATION_KEY,

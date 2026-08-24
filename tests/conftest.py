@@ -11,7 +11,7 @@ from sequince.array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
-from sequince.utils import resolve_rng
+from sequince.utils.random import resolve_rng
 
 
 def _standard_normal_log_prob(values: Any, context: Any = None) -> Any:

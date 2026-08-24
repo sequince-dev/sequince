@@ -10,7 +10,7 @@ from sequince.state import ParticleState
 from sequince.steps.context import StepContext
 from sequince.steps.mutation import BlackJAXMutation
 from sequince.transforms import ParticleTransform
-from sequince.utils import resolve_rng
+from sequince.utils.random import resolve_rng
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")

@@ -8,18 +8,15 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 from .._typing import Array
 from ..array_api import asarray, logsumexp, namespace, to_numpy
+from ..state import _validate_log_normalizer, normalize_log_weights
 from ..stats import (
     cess_ratio_from_log_weights_and_increments,
     ess_from_log_weights,
     ess_ratio_from_log_weights,
 )
 from ..target import SequentialTarget, TemperedTarget
-from ..utils import (
-    _validate_log_normalizer,
-    bisect_monotone_decreasing,
-    call_with_optional_context,
-    normalize_log_weights,
-)
+from ..utils.callables import call_with_optional_context
+from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:

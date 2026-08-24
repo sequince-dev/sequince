@@ -15,7 +15,7 @@ from ...transforms import (
     has_particle_aligned_auxiliary,
     select_transform_auxiliary,
 )
-from ...utils import pytree_dataclass
+from ...utils.pytrees import pytree_dataclass
 from ..context import StepContext
 from .base import MutationStep, TransformRefit
 

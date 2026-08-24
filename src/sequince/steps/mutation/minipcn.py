@@ -10,7 +10,7 @@ import numpy as np
 from ..._typing import Array
 from ...array_api import asarray, namespace
 from ...transforms import ParticleTransform
-from ...utils import pytree_dataclass
+from ...utils.pytrees import pytree_dataclass
 from ..context import StepContext
 from .base import (
     MutationStep,

@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from ..utils import pytree_dataclass
+from ..utils.pytrees import pytree_dataclass
 
 LOG_PROPOSAL_OVERRIDE_KEY = "log_proposal_override"
 SMC_TRANSFORMATION_KEY = "smc_transformation"

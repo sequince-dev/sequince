@@ -18,7 +18,7 @@ from sequince.transforms import (
     has_particle_aligned_auxiliary,
     select_transform_auxiliary,
 )
-from sequince.utils import pytree_dataclass
+from sequince.utils.pytrees import pytree_dataclass
 
 
 class SignFoldingTransform(IdentityTransform):

@@ -17,7 +17,7 @@ from sequince.result import SMCResult
 from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState
 from sequince.steps.base import SMCStep, StepContext
-from sequince.utils import resolve_rng
+from sequince.utils.random import resolve_rng
 
 
 class StochasticStep(SMCStep):

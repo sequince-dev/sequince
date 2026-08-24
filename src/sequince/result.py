@@ -15,7 +15,7 @@ from .array_api import asarray, get_device, namespace, to_numpy
 from .state import ParticleState
 from .steps.context import StepContext
 from .steps.meta import META_SMC_OUTPUT_KEY
-from .utils import resolve_rng
+from .utils.random import resolve_rng
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
