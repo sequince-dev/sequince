@@ -22,7 +22,8 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
-from .utils import call_with_optional_context, resolve_rng
+from .utils.callables import call_with_optional_context
+from .utils.random import resolve_rng
 
 if TYPE_CHECKING:
     from orng import RandomGenerator

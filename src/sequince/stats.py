@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ._typing import Array
 from .array_api import asarray, logsumexp, namespace
-from .utils import normalize_log_weights
+from .state import normalize_log_weights
 
 
 def ess_from_log_weights(log_weights: Array) -> Array:

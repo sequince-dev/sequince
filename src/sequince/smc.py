@@ -14,9 +14,10 @@ from .checkpoint import (
     restore_steps,
 )
 from .result import SMCResult
-from .state import ParticleState
+from .state import ParticleState, normalize_log_weights
 from .steps.base import StepContext
-from .utils import array_safe_copy, normalize_log_weights, resolve_rng
+from .utils.copying import array_safe_copy
+from .utils.random import resolve_rng
 
 if TYPE_CHECKING:
     import numpy as np

@@ -5,8 +5,51 @@ import pytest
 
 from sequince import DegenerateWeightsError
 from sequince.array_api import namespace, to_numpy
-from sequince.state import ParticleState, PersistentParticleState
+from sequince.state import (
+    ParticleState,
+    PersistentParticleState,
+    normalize_log_weights,
+)
 from sequince.target import TargetEvaluation
+
+
+def test_normalize_log_weights():
+    log_weights = np.log([1.0, 3.0]).tolist()
+
+    normalized, log_norm = normalize_log_weights(log_weights)
+
+    np.testing.assert_allclose(np.exp(normalized), [0.25, 0.75])
+    assert np.isclose(log_norm, np.log(4.0))
+
+
+def test_normalize_log_weights_can_be_jitted():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+
+    normalized, log_norm = jax.jit(normalize_log_weights)(
+        jnp.asarray([0.0, -1.0])
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(normalized),
+        np.asarray([-0.3132617, -1.3132617]),
+    )
+    assert log_norm == pytest.approx(0.3132617)
+
+
+@pytest.mark.parametrize(
+    "log_weights",
+    [
+        [-np.inf, -np.inf],
+        [0.0, np.nan],
+        [0.0, np.inf],
+    ],
+)
+def test_normalize_degenerate_log_weights_returns_nonfinite(log_weights):
+    normalized, log_norm = normalize_log_weights(log_weights)
+
+    assert not np.isfinite(log_norm)
+    assert not np.all(np.isfinite(normalized))
 
 
 def test_copy_creates_independent_state(particle_state: ParticleState) -> None:

@@ -15,7 +15,7 @@ from sequince.steps import (
     FixedTemperedWeighting,
     StepContext,
 )
-from sequince.utils import bisect_monotone_decreasing
+from sequince.utils.optimize import bisect_monotone_decreasing
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")

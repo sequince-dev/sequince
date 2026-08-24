@@ -11,7 +11,8 @@ from array_api_compat import device as get_device
 
 from .._typing import Array
 from ..array_api import asarray, namespace
-from ..utils import normalize_log_weights, pytree_dataclass
+from ..state import normalize_log_weights
+from ..utils.pytrees import pytree_dataclass
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:

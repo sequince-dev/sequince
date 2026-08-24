@@ -15,7 +15,7 @@ from .target import (
     _evaluate_component,
 )
 from .transforms import ParticleTransform, get_prebuilt_transform
-from .utils import array_safe_copy
+from .utils.copying import array_safe_copy
 
 if TYPE_CHECKING:
     from orng import RandomGenerator

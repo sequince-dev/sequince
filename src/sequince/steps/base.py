@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from orng import RandomGenerator
 
 from ..array_api import namespace
-from ..utils import resolve_rng
+from ..utils.random import resolve_rng
 from .context import StepContext
 
 if TYPE_CHECKING:

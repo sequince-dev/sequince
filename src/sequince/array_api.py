@@ -9,22 +9,45 @@ from array_api_compat import (
 from array_api_compat import device as get_device
 from array_api_compat import (
     is_cupy_namespace,
+    is_dask_namespace,
     is_jax_array,
     is_jax_namespace,
+    is_ndonnx_namespace,
     is_numpy_namespace,
+    is_pydata_sparse_namespace,
     is_torch_array,
     is_torch_namespace,
     to_device,
 )
 
+from ._scipy_compat import enable_scipy_array_api as _enable_scipy_array_api
+from ._typing import Array
+
+IS_NAMESPACE_FUNCTIONS = {
+    "numpy": is_numpy_namespace,
+    "torch": is_torch_namespace,
+    "jax": is_jax_namespace,
+    "cupy": is_cupy_namespace,
+    "dask": is_dask_namespace,
+    "pydata_sparse": is_pydata_sparse_namespace,
+    "ndonnx": is_ndonnx_namespace,
+}
+
 __all__ = [
     "asarray",
     "copy",
+    "determine_backend_name",
+    "enable_scipy_array_api",
     "logsumexp",
     "namespace",
     "resolve_dtype",
     "to_numpy",
 ]
+
+
+def enable_scipy_array_api() -> None:
+    """Enable SciPy Array API support; normally done during package import."""
+    _enable_scipy_array_api()
 
 
 def namespace(*arrays: Any):
@@ -33,6 +56,35 @@ def namespace(*arrays: Any):
     if not filtered:
         return _np
     return _array_namespace(*filtered)
+
+
+def determine_backend_name(
+    x: Array | None = None, xp: Any | None = None
+) -> str:
+    """Determine the backend name from an array or array API module.
+
+    Parameters
+    ----------
+    x : Array or None
+        The array to infer the backend from. If None, xp must be provided.
+    xp : Any or None
+        The array API module to infer the backend from. If None, x must be provided.
+
+    Returns
+    -------
+    str
+        The name of the backend. If the backend cannot be determined, returns "unknown".
+    """
+    if x is not None:
+        xp = namespace(x)
+    if xp is None:
+        raise ValueError(
+            "Either x or xp must be provided to determine backend."
+        )
+    for name, is_namespace_fn in IS_NAMESPACE_FUNCTIONS.items():
+        if is_namespace_fn(xp):
+            return name
+    return "unknown"
 
 
 def _namespace_or_numpy(array: Any):

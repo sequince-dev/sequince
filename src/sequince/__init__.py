@@ -4,7 +4,7 @@
 import importlib.metadata
 import logging
 
-from ._scipy_compat import enable_scipy_array_api
+from .array_api import enable_scipy_array_api
 
 enable_scipy_array_api()
 

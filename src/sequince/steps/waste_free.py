@@ -11,7 +11,7 @@ from array_api_compat import device as get_device
 from .._typing import Array
 from ..array_api import asarray, namespace
 from ..target import Target
-from ..utils import call_with_optional_context
+from ..utils.callables import call_with_optional_context
 from .base import SMCStep, StepContext
 from .mutation import (
     MutationKernel,

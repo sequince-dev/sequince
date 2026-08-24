@@ -11,7 +11,8 @@ from uuid import uuid4
 from ._typing import Array
 from .array_api import asarray, namespace
 from .array_api import copy as array_copy
-from .utils import call_with_optional_context, pytree_dataclass
+from .utils.callables import call_with_optional_context
+from .utils.pytrees import pytree_dataclass
 
 if TYPE_CHECKING:
     from .steps.context import StepContext

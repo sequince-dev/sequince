@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 from array_api_compat import device
@@ -7,11 +9,53 @@ from array_api_compat import device
 from sequince.array_api import (
     asarray,
     copy,
+    determine_backend_name,
+    enable_scipy_array_api,
     logsumexp,
     namespace,
     resolve_dtype,
     to_numpy,
 )
+
+
+def test_enable_scipy_array_api(monkeypatch):
+    monkeypatch.delenv("SCIPY_ARRAY_API")
+
+    with pytest.warns(ImportWarning, match="setting it to '1'"):
+        enable_scipy_array_api()
+
+    assert os.environ["SCIPY_ARRAY_API"] == "1"
+
+
+def test_enable_scipy_array_api_warns_for_conflicting_value(monkeypatch):
+    monkeypatch.setenv("SCIPY_ARRAY_API", "0")
+
+    with pytest.warns(RuntimeWarning, match="requires SCIPY_ARRAY_API='1'"):
+        enable_scipy_array_api()
+
+
+@pytest.mark.parametrize(
+    "module_name, name",
+    [
+        ("numpy", "numpy"),
+        ("torch", "torch"),
+        ("jax.numpy", "jax"),
+        ("cupy", "cupy"),
+    ],
+)
+def test_determine_backend_name(module_name, name):
+    xp = pytest.importorskip(module_name)
+    assert determine_backend_name(xp=xp) == name
+
+    x = xp.ones(2)
+    assert determine_backend_name(x=x) == name
+
+
+def test_determine_backend_name_for_unknown_namespace():
+    class UnknownNamespace:
+        __name__ = "not_a_real_namespace"
+
+    assert determine_backend_name(xp=UnknownNamespace()) == "unknown"
 
 
 def test_to_numpy_from_supported_backends(backend, backend_factory):

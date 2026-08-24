@@ -20,7 +20,8 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
-from .utils import OPTREE_NAMESPACE, RNGLike, pytree_dataclass, resolve_rng
+from .utils.pytrees import OPTREE_NAMESPACE, pytree_dataclass
+from .utils.random import RNGLike, resolve_rng
 
 logger = logging.getLogger(__name__)
 

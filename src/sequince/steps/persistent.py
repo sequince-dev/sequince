@@ -10,10 +10,14 @@ from typing import TYPE_CHECKING, Any
 
 from .._typing import Array, ArrayLike
 from ..array_api import asarray, logsumexp, namespace
-from ..state import ParticleState, PersistentParticleState
+from ..state import (
+    ParticleState,
+    PersistentParticleState,
+    _validate_log_normalizer,
+)
 from ..stats import ess_from_log_weights
 from ..target import TemperedTarget
-from ..utils import _validate_log_normalizer, bisect_monotone_decreasing
+from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep
 from .context import StepContext
 

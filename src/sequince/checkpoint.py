@@ -15,7 +15,8 @@ from .array_api import namespace
 from .result import SMCResult
 from .state import ParticleState
 from .steps.context import StepContext
-from .utils import array_safe_copy, resolve_rng
+from .utils.copying import array_safe_copy
+from .utils.random import resolve_rng
 
 CHECKPOINT_VERSION = 1
 _HDF_KIND = "_sequince_kind"

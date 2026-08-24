@@ -9,17 +9,32 @@ from typing import TYPE_CHECKING, Any, MutableMapping
 from array_api_compat import device as get_device
 
 from ._typing import Array, ArrayLike
-from .array_api import asarray, namespace
+from .array_api import asarray, logsumexp, namespace
 from .array_api import copy as array_copy
-from .utils import (
-    _validate_log_normalizer,
-    array_safe_copy,
-    normalize_log_weights,
-    pytree_dataclass,
-)
+from .exceptions import DegenerateWeightsError
+from .utils.copying import array_safe_copy
+from .utils.pytrees import pytree_dataclass
 
 if TYPE_CHECKING:
     from .target import TargetEvaluation
+
+
+def normalize_log_weights(log_weights: Any, *, xp: Any | None = None):
+    """Return normalized log weights and their array scalar normalizer."""
+    if xp is None:
+        values = asarray(log_weights)
+        xp = namespace(values)
+    else:
+        values = asarray(log_weights, xp=xp)
+    log_norm = logsumexp(values, xp=xp)
+    safe_log_norm = xp.where(xp.isfinite(log_norm), log_norm, 0.0)
+    return values - safe_log_norm, log_norm
+
+
+def _validate_log_normalizer(log_normalizer: Any, *, xp: Any) -> None:
+    """Raise for a non-finite normalizer at an eager host boundary."""
+    if not bool(xp.isfinite(log_normalizer)):
+        raise DegenerateWeightsError(log_normalizer)
 
 
 @pytree_dataclass(
