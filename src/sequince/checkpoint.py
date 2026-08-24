@@ -35,11 +35,6 @@ def _rng_state_dict(rng: Any) -> dict[str, Any]:
     return generator.state_dict()
 
 
-def _attr_text(value: Any) -> str:
-    """Normalize an HDF5 text attribute to ``str``."""
-    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
-
-
 def _pickle_bytes(value: Any, protocol: int) -> np.ndarray:
     """Return a pickled value as an HDF5-compatible byte array."""
     return np.frombuffer(pickle.dumps(value, protocol=protocol), dtype="u1")
@@ -84,11 +79,9 @@ def _write_hdf_value(parent: Any, name: str, value: Any, protocol: int) -> Any:
         return node
 
     if isinstance(value, str):
-        import h5py
+        from .utils.hdf5 import _create_string_dataset
 
-        node = parent.create_dataset(
-            name, data=value, dtype=h5py.string_dtype(encoding="utf-8")
-        )
+        node = _create_string_dataset(parent, name, value)
         node.attrs[_HDF_KIND] = "string"
         return node
 
@@ -123,9 +116,11 @@ def _write_hdf_value(parent: Any, name: str, value: Any, protocol: int) -> Any:
 
 def _read_hdf_value(node: Any) -> Any:
     """Reconstruct a value written by :func:`_write_hdf_value`."""
+    from .utils.hdf5 import _decode_hdf5_text, _read_string_dataset
+
     if _HDF_KIND not in node.attrs:
         raise ValueError(f"HDF5 node {node.name!r} has no Sequince type tag.")
-    kind = _attr_text(node.attrs[_HDF_KIND])
+    kind = _decode_hdf5_text(node.attrs[_HDF_KIND])
 
     if kind == "mapping":
         return {
@@ -140,12 +135,7 @@ def _read_hdf_value(node: Any) -> Any:
     if kind == "none":
         return None
     if kind == "string":
-        string_value = node[()]
-        return (
-            string_value.decode("utf-8")
-            if isinstance(string_value, bytes)
-            else str(string_value)
-        )
+        return _read_string_dataset(node)
     if kind == "bytes":
         return node[...].tobytes()
     if kind == "numpy":
@@ -154,7 +144,7 @@ def _read_hdf_value(node: Any) -> Any:
         scalar_value = node[()]
         if isinstance(scalar_value, np.generic):
             scalar_value = scalar_value.item()
-        scalar_type = _attr_text(node.attrs[_HDF_PYTHON_TYPE])
+        scalar_type = _decode_hdf5_text(node.attrs[_HDF_PYTHON_TYPE])
         scalar_constructors = {
             "bool": bool,
             "int": int,
@@ -391,14 +381,16 @@ class SMCCheckpoint:
             "initial_state": (
                 None
                 if self.initial_state is None
-                else self.initial_state.to_dict()
+                else self.initial_state._encode_for_checkpoint()
             ),
         }
 
     def to_dict(self) -> dict[str, Any]:
         """Return a detached plain-Python checkpoint representation."""
         payload = self._runtime_dict()
-        payload["states"] = [item.to_dict() for item in self.states]
+        payload["states"] = [
+            item._encode_for_checkpoint() for item in self.states
+        ]
         return payload
 
     @classmethod
@@ -477,7 +469,8 @@ class SMCCheckpoint:
 
         return cls(
             states=tuple(
-                ParticleState.from_dict(owned(item)) for item in states_payload
+                ParticleState._decode_from_checkpoint(owned(item))
+                for item in states_payload
             ),
             next_iteration=next_iteration,
             next_observation_index=next_observation_index,
@@ -495,9 +488,11 @@ class SMCCheckpoint:
             initial_state=(
                 None
                 if initial_state_payload is None
-                else ParticleState.from_dict(owned(initial_state_payload))
+                else ParticleState._decode_from_checkpoint(
+                    owned(initial_state_payload)
+                )
             ),
-            version=version,
+            version=CHECKPOINT_VERSION,
         )
 
     def restore_rng(self) -> Any | None:
@@ -572,7 +567,7 @@ class SMCCheckpoint:
             _write_hdf_value(
                 states_group,
                 f"{index:08d}",
-                self.states[index].to_dict(),
+                self.states[index]._encode_for_checkpoint(),
                 protocol,
             )
 

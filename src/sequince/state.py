@@ -4,7 +4,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import TYPE_CHECKING, Any, MutableMapping
+from typing import TYPE_CHECKING, Any, MutableMapping, Self, cast
 
 from array_api_compat import device as get_device
 
@@ -17,6 +17,8 @@ from .utils.pytrees import pytree_dataclass
 
 if TYPE_CHECKING:
     from .target import TargetEvaluation
+
+_CHECKPOINT_STATE_KIND_KEY = "_sequince_state_kind"
 
 
 def normalize_log_weights(log_weights: Any, *, xp: Any | None = None):
@@ -267,6 +269,115 @@ class ParticleState:
             evaluation=evaluation,
             metadata=array_safe_copy(payload["metadata"]),
         )
+
+    def _encode_hdf5_fields(self) -> dict[str, Any]:
+        """Encode fields shared by built-in particle-state schemas."""
+        from .target import TargetEvaluation
+        from .utils.hdf5 import nested
+
+        evaluation = self.evaluation
+        return {
+            "particles": self.particles,
+            "log_weights": self.log_weights,
+            "log_normalizing_constant": self.log_normalizing_constant,
+            "initial_ancestor_indices": self.initial_ancestor_indices,
+            "evaluation": (
+                None
+                if evaluation is None
+                else nested(TargetEvaluation.encode_for_hdf5(evaluation))
+            ),
+            "metadata": dict(self.metadata),
+        }
+
+    def _encode_for_checkpoint(self) -> dict[str, Any]:
+        """Encode an ordinary state for the resumable checkpoint format."""
+        if type(self) is not ParticleState:
+            raise TypeError(
+                "Unsupported ParticleState subtype in checkpoint: "
+                f"{type(self).__module__}.{type(self).__qualname__}."
+            )
+        return {
+            _CHECKPOINT_STATE_KIND_KEY: "particle_state",
+            **self.to_dict(),
+        }
+
+    @classmethod
+    def _decode_from_checkpoint(cls, payload: Mapping[str, Any]) -> Self:
+        """Decode an ordinary state or dispatch a persistent checkpoint state."""
+        values = dict(payload)
+        kind = values.pop(_CHECKPOINT_STATE_KIND_KEY, None)
+        if kind == "persistent_particle_state":
+            return cast(
+                Self, PersistentParticleState._decode_from_checkpoint(payload)
+            )
+        if kind != "particle_state":
+            raise ValueError(f"Unsupported checkpoint state kind {kind!r}.")
+        return ParticleState.from_dict(values)  # type: ignore[return-value]
+
+    def encode_for_hdf5(self) -> dict[str, Any]:
+        """Return a versioned, portable particle-state payload."""
+        from .utils.hdf5 import schema_header
+
+        if type(self) is not ParticleState:
+            raise TypeError(
+                "Unsupported ParticleState subtype for HDF5 saving: "
+                f"{type(self).__module__}.{type(self).__qualname__}."
+            )
+        return {
+            **schema_header("particle_state"),
+            **self._encode_hdf5_fields(),
+        }
+
+    @classmethod
+    def _decode_from_hdf5(cls, payload: Mapping[str, Any]) -> Self:
+        """Decode and dispatch a built-in state payload."""
+        from .target import TargetEvaluation
+        from .utils.hdf5 import validate_schema
+
+        if cls is not ParticleState:
+            raise TypeError(
+                "Unsupported ParticleState subtype for HDF5 loading: "
+                f"{cls.__module__}.{cls.__qualname__}."
+            )
+        required = {
+            "particles",
+            "log_weights",
+            "log_normalizing_constant",
+            "initial_ancestor_indices",
+            "evaluation",
+            "metadata",
+        }
+        kind = payload.get("_sequince_kind")
+        if kind == "persistent_particle_state":
+            if cls is not ParticleState:
+                raise ValueError(
+                    f"Unexpected Sequince HDF5 kind {kind!r}; expected "
+                    "particle_state."
+                )
+            return cast(
+                Self, PersistentParticleState._decode_from_hdf5(payload)
+            )
+        validate_schema(payload, kinds={"particle_state"}, required=required)
+        values = {key: payload[key] for key in required}
+        evaluation_payload = values["evaluation"]
+        if evaluation_payload is not None:
+            TargetEvaluation._decode_from_hdf5(evaluation_payload)
+        return ParticleState.from_dict(values)  # type: ignore[return-value]
+
+    def save(self, h5_file_or_group: Any, path: str = "state") -> None:
+        """Save this state below ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import recursively_save_to_h5_file
+
+        recursively_save_to_h5_file(
+            h5_file_or_group, path, self.encode_for_hdf5()
+        )
+
+    @classmethod
+    def load(cls, h5_file_or_group: Any, path: str = "state") -> Self:
+        """Load a built-in state from ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import load_from_h5_file
+
+        return cls._decode_from_hdf5(load_from_h5_file(h5_file_or_group, path))
 
 
 @pytree_dataclass(
@@ -623,3 +734,69 @@ class PersistentParticleState(ParticleState):
             evaluation=base.evaluation,
             metadata=base.metadata,
         )
+
+    def encode_for_hdf5(self) -> dict[str, Any]:
+        """Return a versioned payload including persistent history."""
+        from .utils.hdf5 import schema_header
+
+        if type(self) is not PersistentParticleState:
+            raise TypeError(
+                "Unsupported PersistentParticleState subtype for HDF5 saving: "
+                f"{type(self).__module__}.{type(self).__qualname__}."
+            )
+        return {
+            **schema_header("persistent_particle_state"),
+            **self._encode_hdf5_fields(),
+            "temperatures": self.temperatures,
+            "log_normalizing_constants": self.log_normalizing_constants,
+            "batch_size": self.batch_size,
+        }
+
+    def _encode_for_checkpoint(self) -> dict[str, Any]:
+        """Encode persistent history for the resumable checkpoint format."""
+        if type(self) is not PersistentParticleState:
+            raise TypeError(
+                "Unsupported PersistentParticleState subtype in checkpoint: "
+                f"{type(self).__module__}.{type(self).__qualname__}."
+            )
+        return {
+            _CHECKPOINT_STATE_KIND_KEY: "persistent_particle_state",
+            **self.to_dict(),
+        }
+
+    @classmethod
+    def _decode_from_checkpoint(cls, payload: Mapping[str, Any]) -> Self:
+        """Decode persistent history from a checkpoint payload."""
+        values = dict(payload)
+        kind = values.pop(_CHECKPOINT_STATE_KIND_KEY, None)
+        if kind != "persistent_particle_state":
+            raise ValueError(f"Unsupported checkpoint state kind {kind!r}.")
+        return cast(Self, cls.from_dict(values))
+
+    @classmethod
+    def _decode_from_hdf5(cls, payload: Mapping[str, Any]) -> Self:
+        """Decode a persistent-state payload without flattening its subtype."""
+        from .target import TargetEvaluation
+        from .utils.hdf5 import validate_schema
+
+        required = {
+            "particles",
+            "log_weights",
+            "log_normalizing_constant",
+            "initial_ancestor_indices",
+            "evaluation",
+            "metadata",
+            "temperatures",
+            "log_normalizing_constants",
+            "batch_size",
+        }
+        validate_schema(
+            payload,
+            kinds={"persistent_particle_state"},
+            required=required,
+        )
+        values = {key: payload[key] for key in required}
+        evaluation_payload = values["evaluation"]
+        if evaluation_payload is not None:
+            TargetEvaluation._decode_from_hdf5(evaluation_payload)
+        return cast(Self, cls.from_dict(values))

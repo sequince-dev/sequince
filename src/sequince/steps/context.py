@@ -8,6 +8,14 @@ from ..utils.pytrees import pytree_dataclass
 
 LOG_PROPOSAL_OVERRIDE_KEY = "log_proposal_override"
 SMC_TRANSFORMATION_KEY = "smc_transformation"
+RESULT_HDF5_OMITTED_METADATA_KEYS = frozenset(
+    {
+        "particle_transform",
+        "_functional_particle_transform",
+        SMC_TRANSFORMATION_KEY,
+        LOG_PROPOSAL_OVERRIDE_KEY,
+    }
+)
 
 
 @pytree_dataclass(
@@ -58,3 +66,57 @@ class StepContext:
     def clear_stop_request(self) -> StepContext:
         """Clear any pending stop request."""
         return replace(self, stop_requested=False, stop_immediately=False)
+
+    def _encode_for_result_hdf5(self) -> dict[str, Any]:
+        """Encode this context as a non-resumable analysis snapshot.
+
+        Live runtime values in ``shared`` and ``observation`` are omitted, as
+        are Sequince-owned transformation and proposal entries at the top level
+        of ``metadata``.
+        """
+        from ..utils.hdf5 import schema_header
+
+        metadata = {
+            key: value
+            for key, value in self.metadata.items()
+            if key not in RESULT_HDF5_OMITTED_METADATA_KEYS
+        }
+        return {
+            **schema_header("step_context", include_version=False),
+            "t": self.t,
+            "next_observation_index": self.next_observation_index,
+            "metadata": metadata,
+            "stop_requested": self.stop_requested,
+            "stop_immediately": self.stop_immediately,
+        }
+
+    @classmethod
+    def _decode_from_result_hdf5(
+        cls, payload: Mapping[str, Any]
+    ) -> StepContext:
+        """Decode a result analysis snapshot with safe runtime defaults."""
+        from ..utils.hdf5 import validate_schema
+
+        validate_schema(
+            payload,
+            kinds={"step_context"},
+            required={
+                "t",
+                "next_observation_index",
+                "metadata",
+                "stop_requested",
+                "stop_immediately",
+            },
+        )
+        metadata = payload["metadata"]
+        if not isinstance(metadata, Mapping):
+            raise TypeError("Saved StepContext metadata must be a mapping.")
+        return cls(
+            t=int(payload["t"]),
+            next_observation_index=int(payload["next_observation_index"]),
+            observation=None,
+            shared={},
+            metadata=dict(metadata),
+            stop_requested=bool(payload["stop_requested"]),
+            stop_immediately=bool(payload["stop_immediately"]),
+        )

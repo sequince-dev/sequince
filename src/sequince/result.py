@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Self
 
 import numpy as np
 from numpy.random import Generator as NumPyGenerator
@@ -94,6 +94,142 @@ def _warn_if_resampling_is_not_multinomial(
         )
 
 
+def _supported_output_record_types() -> tuple[type[Any], ...]:
+    from .steps.control import ConditionalStepOutput
+    from .steps.mutation.blackjax import BlackJAXOutput
+    from .steps.mutation.minipcn import MiniPCNOutput
+    from .steps.resampling import ResamplingOutput
+
+    return (
+        ConditionalStepOutput,
+        ResamplingOutput,
+        MiniPCNOutput,
+        BlackJAXOutput,
+    )
+
+
+def _encode_result_output(
+    value: Any,
+    path: str,
+    active: set[int],
+    *,
+    strict: bool,
+) -> Any:
+    """Normalize portable result output without copying array leaves."""
+    if isinstance(value, SMCResult):
+        return value._encode_for_hdf5(
+            active=active,
+            include_version=False,
+            strict=strict,
+        )
+    if isinstance(value, _supported_output_record_types()):
+        identity = id(value)
+        if identity in active:
+            raise ValueError(f"Cyclic result output at {path}.")
+        active.add(identity)
+        try:
+            return {
+                item.name: _encode_result_output(
+                    getattr(value, item.name),
+                    f"{path}/{item.name}",
+                    active,
+                    strict=strict,
+                )
+                for item in fields(value)
+            }
+        finally:
+            active.remove(identity)
+    if isinstance(value, Mapping):
+        identity = id(value)
+        if identity in active:
+            raise ValueError(f"Cyclic result output at {path}.")
+        active.add(identity)
+        try:
+            return {
+                key: _encode_result_output(
+                    child, f"{path}/{key}", active, strict=strict
+                )
+                for key, child in value.items()
+            }
+        finally:
+            active.remove(identity)
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in active:
+            raise ValueError(f"Cyclic result output at {path}.")
+        active.add(identity)
+        try:
+            children = [
+                _encode_result_output(
+                    child, f"{path}/{index}", active, strict=strict
+                )
+                for index, child in enumerate(value)
+            ]
+            return children if isinstance(value, list) else tuple(children)
+        finally:
+            active.remove(identity)
+    encoder = getattr(value, "encode_for_hdf5", None)
+    if callable(encoder):
+        identity = id(value)
+        if identity in active:
+            raise ValueError(f"Cyclic result output at {path}.")
+        active.add(identity)
+        try:
+            encoded = encoder()
+            if not isinstance(encoded, Mapping):
+                raise TypeError(
+                    f"{type(value).__name__}.encode_for_hdf5() at {path} "
+                    "must return a mapping."
+                )
+            return _encode_result_output(encoded, path, active, strict=strict)
+        finally:
+            active.remove(identity)
+    if hasattr(type(value), "__dataclass_fields__"):
+        if not strict:
+            warnings.warn(
+                "Converting unrecognized result-output dataclass "
+                f"{type(value).__module__}.{type(value).__qualname__} at "
+                f"{path} to a dictionary; its class will not be restored.",
+                UserWarning,
+                stacklevel=4,
+            )
+            identity = id(value)
+            if identity in active:
+                raise ValueError(f"Cyclic result output at {path}.")
+            active.add(identity)
+            try:
+                return {
+                    item.name: _encode_result_output(
+                        getattr(value, item.name),
+                        f"{path}/{item.name}",
+                        active,
+                        strict=strict,
+                    )
+                    for item in fields(value)
+                }
+            finally:
+                active.remove(identity)
+        raise TypeError(
+            f"Unsupported result output type {type(value).__module__}."
+            f"{type(value).__qualname__} at {path}."
+        )
+    return value
+
+
+def _decode_result_output(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if value.get("_sequince_kind") == "smc_result":
+            return SMCResult._decode_from_hdf5(value)
+        return {
+            key: _decode_result_output(child) for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_decode_result_output(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_decode_result_output(child) for child in value)
+    return value
+
+
 @dataclass(frozen=True)
 class SMCResult:
     """Lightweight container exposing diagnostics for a completed SMC run."""
@@ -121,6 +257,123 @@ class SMCResult:
             outputs=self.outputs,
             initial_state=self.initial_state,
         )
+
+    def encode_for_hdf5(self, *, strict: bool = False) -> dict[str, Any]:
+        """Return a portable HDF5 payload for this result.
+
+        By default, unrecognized output dataclasses are converted to
+        dictionaries with a warning. ``strict=True`` rejects them instead.
+        """
+        return self._encode_for_hdf5(
+            active=set(), include_version=True, strict=strict
+        )
+
+    def _encode_for_hdf5(
+        self,
+        *,
+        active: set[int],
+        include_version: bool,
+        strict: bool,
+    ) -> dict[str, Any]:
+        """Return the logical HDF5 payload for this result."""
+        from .utils.hdf5 import nested, schema_header
+
+        identity = id(self)
+        if identity in active:
+            raise ValueError("Cyclic nested SMCResult in result outputs.")
+        active.add(identity)
+        try:
+            return {
+                **schema_header("smc_result", include_version=include_version),
+                "states": [
+                    nested(state.encode_for_hdf5()) for state in self.states
+                ],
+                "context": self.context._encode_for_result_hdf5(),
+                "initial_state": (
+                    None
+                    if self.initial_state is None
+                    else nested(self.initial_state.encode_for_hdf5())
+                ),
+                "outputs": _encode_result_output(
+                    self.outputs, "outputs", active, strict=strict
+                ),
+            }
+        finally:
+            active.remove(identity)
+
+    @classmethod
+    def _decode_from_hdf5(cls, payload: Mapping[str, Any]) -> Self:
+        """Reconstruct a result from its logical HDF5 payload."""
+        from .utils.hdf5 import validate_schema
+
+        validate_schema(
+            payload,
+            kinds={"smc_result"},
+            required={"states", "context", "initial_state", "outputs"},
+        )
+        states_payload = payload["states"]
+        if not isinstance(states_payload, (list, tuple)):
+            raise TypeError("SMCResult states must be a sequence.")
+        initial_payload = payload["initial_state"]
+        return cls(
+            states=[
+                ParticleState._decode_from_hdf5(state)
+                for state in states_payload
+            ],
+            context=StepContext._decode_from_result_hdf5(payload["context"]),
+            initial_state=(
+                None
+                if initial_payload is None
+                else ParticleState._decode_from_hdf5(initial_payload)
+            ),
+            outputs=_decode_result_output(payload["outputs"]),
+        )
+
+    def save(
+        self,
+        h5_file_or_group: Any,
+        path: str = "result",
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Save this result below ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import recursively_save_to_h5_file
+
+        recursively_save_to_h5_file(
+            h5_file_or_group, path, self.encode_for_hdf5(strict=strict)
+        )
+
+    def save_to_file(
+        self,
+        file_path: str | Path,
+        path: str = "result",
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Save this result to an HDF5 file without replacing existing data."""
+        import h5py
+
+        with h5py.File(file_path, "a") as h5_file:
+            self.save(h5_file, path=path, strict=strict)
+
+    @classmethod
+    def load_from_file(
+        cls,
+        file_path: str | Path,
+        path: str = "result",
+    ) -> Self:
+        """Load a result from an HDF5 file."""
+        import h5py
+
+        with h5py.File(file_path, "r") as h5_file:
+            return cls.load(h5_file, path=path)
+
+    @classmethod
+    def load(cls, h5_file_or_group: Any, path: str = "result") -> Self:
+        """Load a result from ``path`` in an open HDF5 handle."""
+        from .utils.hdf5 import load_from_h5_file
+
+        return cls._decode_from_hdf5(load_from_h5_file(h5_file_or_group, path))
 
     def get_meta_results(
         self,
@@ -964,6 +1217,61 @@ class MetaSMCResult:
 
     def __getitem__(self, index: int) -> SMCResult:
         return self.results[index]
+
+    def encode_for_hdf5(self, *, strict: bool = False) -> dict[str, Any]:
+        """Return the logical HDF5 payload for this meta-SMC result."""
+        from .utils.hdf5 import schema_header
+
+        active: set[int] = set()
+        return {
+            **schema_header("meta_smc_result"),
+            "results": [
+                result._encode_for_hdf5(
+                    active=active,
+                    include_version=False,
+                    strict=strict,
+                )
+                for result in self.results
+            ],
+        }
+
+    @classmethod
+    def _decode_from_hdf5(cls, payload: Mapping[str, Any]) -> Self:
+        """Reconstruct a meta-SMC result from its logical payload."""
+        from .utils.hdf5 import validate_schema
+
+        validate_schema(
+            payload,
+            kinds={"meta_smc_result"},
+            required={"results"},
+        )
+        results = payload["results"]
+        if not isinstance(results, (list, tuple)):
+            raise TypeError("MetaSMCResult results must be a sequence.")
+        return cls(
+            results=[SMCResult._decode_from_hdf5(item) for item in results]
+        )
+
+    def save(
+        self,
+        h5_file_or_group: Any,
+        path: str = "meta_result",
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Save this meta-SMC result in an open HDF5 handle."""
+        from .utils.hdf5 import recursively_save_to_h5_file
+
+        recursively_save_to_h5_file(
+            h5_file_or_group, path, self.encode_for_hdf5(strict=strict)
+        )
+
+    @classmethod
+    def load(cls, h5_file_or_group: Any, path: str = "meta_result") -> Self:
+        """Load a meta-SMC result from an open HDF5 handle."""
+        from .utils.hdf5 import load_from_h5_file
+
+        return cls._decode_from_hdf5(load_from_h5_file(h5_file_or_group, path))
 
     @property
     def final_result(self) -> SMCResult:
