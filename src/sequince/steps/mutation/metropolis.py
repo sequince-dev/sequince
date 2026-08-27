@@ -13,7 +13,11 @@ from .base import (
     MutationStep,
     TransformRefit,
 )
-from .kernels import MutationKernel, evaluate_log_transition_ratio
+from .kernels import (
+    ComplementaryEnsembleKernel,
+    MutationKernel,
+    evaluate_log_transition_ratio,
+)
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -24,10 +28,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MutationKernelFactory = Callable[[Array, StepContext], MutationKernel]
-RedBlueKernelFactory = Callable[
-    [Array, Array, StepContext],
-    MutationKernel,
-]
 
 
 class MetropolisHastingsMutation(MutationStep):
@@ -258,23 +258,25 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
     """Metropolis-Hastings updates using complementary particle ensembles.
 
     Each of ``n_steps`` is one complete red-blue sweep. The population is
-    randomly repartitioned, the red group is updated using a kernel built from
-    the frozen blue group, and then blue is updated using the accepted red
-    population as its frozen complement.
+    randomly repartitioned, the red group is updated against the frozen blue
+    group, and then blue is updated against the accepted red population. A
+    persistent :class:`ComplementaryEnsembleKernel` receives both groups
+    directly.
     """
 
     def __init__(
         self,
         log_prob_fn: Callable[..., Array | float] | "Target",
-        kernel_factory: RedBlueKernelFactory,
+        kernel: ComplementaryEnsembleKernel,
         *,
         n_steps: int = 1,
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
     ) -> None:
-        if not callable(kernel_factory):
-            raise TypeError("kernel_factory must be callable.")
+        if not isinstance(kernel, ComplementaryEnsembleKernel):
+            raise TypeError("kernel must be a ComplementaryEnsembleKernel.")
+        self._complementary_ensemble_kernel = kernel
         MutationStep.__init__(
             self,
             log_prob_fn,
@@ -285,24 +287,21 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
         self._n_steps = int(n_steps)
-        self._red_blue_kernel_factory = kernel_factory
 
     @staticmethod
     def _split_indices(
         n_particles: int,
         rng: "RandomGenerator",
-        *,
-        like: Array,
     ) -> tuple[Array, Array]:
         """Randomly split particle indices into two non-empty groups."""
         if n_particles < 2:
             raise ValueError(
                 "A red-blue update requires at least two particles."
             )
-        xp = namespace(like)
-        permutation = asarray(
-            rng.choice(n_particles, size=n_particles, replace=False),
-            xp=xp,
+        permutation = rng.choice(
+            n_particles,
+            size=n_particles,
+            replace=False,
         )
         split = n_particles // 2
         group_a = permutation[:split]
@@ -311,31 +310,14 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             raise ValueError("Red-blue groups must both be non-empty.")
         return group_a, group_b
 
-    def _resolve_red_blue_kernel(
-        self,
-        active: Array,
-        complementary: Array,
-        context: StepContext,
-    ) -> MutationKernel:
-        kernel = self._red_blue_kernel_factory(
-            active,
-            complementary,
-            context,
-        )
-        if not self._is_kernel(kernel):
-            raise TypeError(
-                "Resolved kernel must implement sample() and either "
-                "log_transition_ratio() or log_density()."
-            )
-        return kernel
-
     def _apply_half(
         self,
         current: Array,
         current_log_prob: Array,
         current_evaluation: "TargetEvaluation | None",
         active_indices: Array,
-        kernel: MutationKernel,
+        complementary: Array,
+        kernel: ComplementaryEnsembleKernel,
         transform: ParticleTransform | None,
         transform_auxiliary: Any,
         context: StepContext,
@@ -350,11 +332,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             active_indices,
             n_particles=current.shape[0],
         )
-        proposals = asarray(
-            kernel.sample(active, rng),
-            xp=xp,
-            like=active,
-        )
+        proposals = kernel.sample(active, complementary, rng)
         if proposals.shape != active.shape:
             raise ValueError(
                 "Mutation kernel must return the same shape as its input."
@@ -365,10 +343,10 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             context,
             auxiliary=active_auxiliary,
         )
-        transition_ratio = asarray(
-            evaluate_log_transition_ratio(kernel, active, proposals),
-            xp=xp,
-            like=active_log_prob,
+        transition_ratio = kernel.log_transition_ratio(
+            active,
+            proposals,
+            complementary,
         )
         n_active = active.shape[0]
         if transition_ratio.shape != (n_active,):
@@ -462,13 +440,8 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             group_a, group_b = self._split_indices(
                 n_particles,
                 rng,
-                like=current,
             )
-            kernel_a = self._resolve_red_blue_kernel(
-                current[group_a],
-                current[group_b],
-                context,
-            )
+            complementary_a = current[group_b]
             (
                 current,
                 current_log_prob,
@@ -479,17 +452,14 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 current_log_prob,
                 current_evaluation,
                 group_a,
-                kernel_a,
+                complementary_a,
+                self._complementary_ensemble_kernel,
                 transform,
                 transform_auxiliary,
                 context,
                 rng,
             )
-            kernel_b = self._resolve_red_blue_kernel(
-                current[group_b],
-                current[group_a],
-                context,
-            )
+            complementary_b = current[group_a]
             (
                 current,
                 current_log_prob,
@@ -500,7 +470,8 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 current_log_prob,
                 current_evaluation,
                 group_b,
-                kernel_b,
+                complementary_b,
+                self._complementary_ensemble_kernel,
                 transform,
                 transform_auxiliary,
                 context,
