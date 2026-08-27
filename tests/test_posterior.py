@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from sequince.array_api import get_device, namespace, to_numpy
 from sequince.posterior import (
     TemperedPosterior,
     draw_additional_samples,
@@ -221,6 +222,54 @@ def test_target_evaluation_selects_and_serializes() -> None:
     assert restored.evaluation_key == "stage-a"
 
 
+def test_target_evaluation_replaces_rows_across_backends(
+    backend,
+    backend_factory,
+) -> None:
+    case = backend_factory(backend)
+    xp = namespace(case.particles)
+    indices = xp.asarray(
+        [3, 1],
+        dtype=xp.int32,
+        device=get_device(case.particles),
+    )
+    scores = xp.arange(
+        case.particles.shape[0],
+        dtype=case.particles.dtype,
+        device=get_device(case.particles),
+    )
+    current = TargetEvaluation(
+        components={"vectors": case.particles, "scores": scores},
+        target_id="target-a",
+        evaluation_key="stage-a",
+    )
+    replacement = TargetEvaluation(
+        components={
+            "vectors": case.particles[indices] + 10,
+            "scores": scores[indices] + 10,
+        },
+        target_id="target-a",
+        evaluation_key="stage-a",
+    )
+    original = to_numpy(case.particles).copy()
+
+    updated = current.replace(indices, replacement)
+
+    expected = original.copy()
+    expected[[3, 1]] += 10
+    np.testing.assert_array_equal(to_numpy(updated["vectors"]), expected)
+    np.testing.assert_array_equal(to_numpy(current["vectors"]), original)
+    np.testing.assert_array_equal(
+        to_numpy(updated["vectors"])[[0, 2]], original[[0, 2]]
+    )
+    assert updated["vectors"].shape == case.particles.shape
+    assert updated["vectors"].dtype == case.particles.dtype
+    assert get_device(updated["vectors"]) == get_device(case.particles)
+    assert case.matches_namespace(updated["vectors"])
+    assert updated.target_id == current.target_id
+    assert updated.evaluation_key == current.evaluation_key
+
+
 def test_target_evaluation_rejects_combining_different_targets() -> None:
     current = TargetEvaluation(
         components={"value": np.array([1.0, 2.0])},
@@ -233,6 +282,8 @@ def test_target_evaluation_rejects_combining_different_targets() -> None:
 
     with pytest.raises(ValueError, match="different targets"):
         current.select(proposed, np.array([True, False]))
+    with pytest.raises(ValueError, match="different targets"):
+        current.replace(np.array([0, 1]), proposed)
     with pytest.raises(ValueError, match="different targets"):
         TargetEvaluation.concatenate([current, proposed])
 
@@ -251,6 +302,8 @@ def test_target_evaluation_rejects_combining_different_stages() -> None:
 
     with pytest.raises(ValueError, match="different target stages"):
         current.select(proposed, np.array([True, False]))
+    with pytest.raises(ValueError, match="different target stages"):
+        current.replace(np.array([0, 1]), proposed)
     with pytest.raises(ValueError, match="different target stages"):
         TargetEvaluation.concatenate([current, proposed])
 
