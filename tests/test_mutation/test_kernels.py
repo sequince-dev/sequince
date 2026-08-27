@@ -9,11 +9,13 @@ from sequince.steps.base import StepContext
 from sequince.steps.mutation import (
     AdaptiveMaskedGaussianRandomWalk,
     CallableMutationKernel,
+    DifferentialEvolutionKernel,
     GaussianRandomWalk,
     MaskedGaussianRandomWalk,
     MetropolisHastingsMutation,
     MixtureMutationKernel,
     evaluate_log_transition_ratio,
+    get_complementary_ensemble_kernel,
     get_mutation_kernel,
 )
 
@@ -86,6 +88,23 @@ def test_get_mutation_kernel_constructs_named_kernel() -> None:
 def test_get_mutation_kernel_validates_name() -> None:
     with pytest.raises(ValueError, match="Unknown mutation kernel"):
         get_mutation_kernel("unknown")
+
+
+def test_get_complementary_ensemble_kernel_constructs_named_kernel() -> None:
+    kernel = get_complementary_ensemble_kernel(
+        "differential-evolution",
+        gamma=0.7,
+    )
+
+    assert isinstance(kernel, DifferentialEvolutionKernel)
+    assert kernel.gamma == 0.7
+
+
+def test_kernel_registries_reject_incompatible_kernel_kinds() -> None:
+    with pytest.raises(ValueError, match="Unknown mutation kernel"):
+        get_mutation_kernel("differential-evolution")
+    with pytest.raises(ValueError, match="Unknown complementary-ensemble"):
+        get_complementary_ensemble_kernel("gaussian-random-walk")
 
 
 def test_mixture_kernel_selects_component_for_complete_sweep(rng) -> None:

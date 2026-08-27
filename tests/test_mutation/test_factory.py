@@ -4,18 +4,30 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from sequince.steps import DifferentialEvolutionMutation as PublicDEMutation
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.mutation import (
     BlackJAXMutation,
+    DifferentialEvolutionKernel,
+    DifferentialEvolutionMutation,
     GaussianRandomWalk,
     MetropolisHastingsMutation,
     MiniPCNMutation,
     MixtureMutationKernel,
+    RedBlueMetropolisHastingsMutation,
     get_mutation_step,
+)
+from sequince.steps.mutation.metropolis import (
+    DifferentialEvolutionMutation as DirectDEMutation,
 )
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
+
+
+def test_differential_evolution_mutation_is_publicly_importable() -> None:
+    assert PublicDEMutation is DifferentialEvolutionMutation
+    assert DirectDEMutation is DifferentialEvolutionMutation
 
 
 def test_get_mutation_step_constructs_blackjax(
@@ -113,6 +125,70 @@ def test_get_mutation_step_constructs_mixture_kernel(
     assert isinstance(mixture, MixtureMutationKernel)
     assert isinstance(mixture.kernels[0], GaussianRandomWalk)
     assert isinstance(mixture.kernels[1], GaussianRandomWalk)
+
+
+def test_get_mutation_step_constructs_differential_evolution(
+    standard_normal_posterior,
+    particle_state,
+    context_factory,
+    rng,
+) -> None:
+    mutation = get_mutation_step(
+        "differential-evolution",
+        standard_normal_posterior,
+        mutation_n_steps=2,
+        mutation_kwargs={
+            "gamma": 0.7,
+            "gamma_one_probability": 0.0,
+            "gamma_randomization": "bilby",
+        },
+    )
+
+    assert isinstance(mutation, DifferentialEvolutionMutation)
+    kernel = mutation._complementary_ensemble_kernel  # noqa: SLF001
+    assert isinstance(kernel, DifferentialEvolutionKernel)
+    assert kernel.gamma == 0.7
+    assert kernel.gamma_randomization == "bilby"
+    updated, _, output = mutation(particle_state, context_factory(), rng)
+    assert updated.particles.shape == particle_state.particles.shape
+    assert output["steps"] == 2
+
+
+def test_get_mutation_step_constructs_named_red_blue_kernel(
+    standard_normal_posterior,
+) -> None:
+    mutation = get_mutation_step(
+        "red-blue",
+        standard_normal_posterior,
+        mutation_n_steps=3,
+        mutation_kwargs={
+            "kernel": "differential-evolution",
+            "kernel_kwargs": {"gamma": 0.5},
+        },
+    )
+
+    assert isinstance(mutation, RedBlueMetropolisHastingsMutation)
+    kernel = mutation._complementary_ensemble_kernel  # noqa: SLF001
+    assert isinstance(kernel, DifferentialEvolutionKernel)
+    assert kernel.gamma == 0.5
+    assert mutation._n_steps == 3  # noqa: SLF001
+
+
+def test_factory_rejects_kernel_from_wrong_registry(
+    standard_normal_posterior,
+) -> None:
+    with pytest.raises(ValueError, match="Unknown mutation kernel"):
+        get_mutation_step(
+            "metropolis-hastings",
+            standard_normal_posterior,
+            mutation_kwargs={"kernel": "differential-evolution"},
+        )
+    with pytest.raises(ValueError, match="Unknown complementary-ensemble"):
+        get_mutation_step(
+            "red-blue",
+            standard_normal_posterior,
+            mutation_kwargs={"kernel": "gaussian-random-walk"},
+        )
 
 
 def test_get_mutation_step_can_disable_mutation(
