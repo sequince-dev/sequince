@@ -1,20 +1,25 @@
-______________________________________________________________________
-
-title: 'Sequince: a modular sequential Monte Carlo toolkit' tags:
-
-- Python
-- Bayesian inference
-- Sequential Monte Carlo
-- Particle filtering authors:
-- name: Michael J. Williams orcid: 0000-0003-2198-2974 affiliation: 1
-- name: Christian E. A. Chapman-Bird orcid: 0000-0002-2728-9612 affiliation: 2
-  affiliations:
-- name: Institute of Cosmology and Gravitation, University of Portsmouth,
-  United Kingdom index: 1
-- name: Institute for Gravitational Wave Astronomy, University of Birmingham,
-  United Kingdom index: 2 date: 18 June 2026 bibliography: paper.bib
-
-______________________________________________________________________
+---
+title: 'Sequince: a modular sequential Monte Carlo toolkit'
+tags:
+  - Python
+  - Bayesian inference
+  - Sequential Monte Carlo
+  - Particle filtering
+authors:
+- name: Michael J. Williams
+  orcid: 0000-0003-2198-2974
+  affiliation: 1
+- name: Christian E. A. Chapman-Bird
+  orcid: 0000-0002-2728-9612
+  affiliation: 2
+affiliations:
+- name: Institute of Cosmology and Gravitation, University of Portsmouth, United Kingdom
+  index: 1
+- name: Institute for Gravitational Wave Astronomy, University of Birmingham, United Kingdom
+  index: 2
+date: 18 June 2026
+bibliography: paper.bib
+---
 
 # Summary
 
