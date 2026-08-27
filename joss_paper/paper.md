@@ -1,25 +1,20 @@
----
-title: 'Sequince: a modular sequential Monte Carlo toolkit'
-tags:
-  - Python
-  - Bayesian inference
-  - Sequential Monte Carlo
-  - Particle filtering
-authors:
-  - name: Michael J. Williams
-    orcid: 0000-0003-2198-2974
-    affiliation: 1
-  - name: Christian E. A. Chapman-Bird
-    orcid: 0000-0002-2728-9612
-    affiliation: 2
-affiliations:
-  - name: Institute of Cosmology and Gravitation, University of Portsmouth, United Kingdom
-    index: 1
-  - name: Institute for Gravitational Wave Astronomy, University of Birmingham, United Kingdom
-    index: 2
-date: 18 June 2026
-bibliography: paper.bib
----
+______________________________________________________________________
+
+title: 'Sequince: a modular sequential Monte Carlo toolkit' tags:
+
+- Python
+- Bayesian inference
+- Sequential Monte Carlo
+- Particle filtering authors:
+- name: Michael J. Williams orcid: 0000-0003-2198-2974 affiliation: 1
+- name: Christian E. A. Chapman-Bird orcid: 0000-0002-2728-9612 affiliation: 2
+  affiliations:
+- name: Institute of Cosmology and Gravitation, University of Portsmouth,
+  United Kingdom index: 1
+- name: Institute for Gravitational Wave Astronomy, University of Birmingham,
+  United Kingdom index: 2 date: 18 June 2026 bibliography: paper.bib
+
+______________________________________________________________________
 
 # Summary
 
@@ -198,9 +193,11 @@ observations arriving over time.
 `sequince` is being developed as reusable infrastructure for both
 methodological research and problem-specific inference workflows. Current
 applications include customised sampling strategies for astrophysical inference
-problems related to the Laser Interferometer Space Antenna (LISA), as well as
-integration with broader Bayesian inference ecosystems such as `bilby`
-[@ashton2019bilby].
+problems relevant to ongoing LIGO-Virgo-KAGRA analyses and future observations
+with the Laser Interferometer Space Antenna (LISA), as well as integration with
+broader Bayesian inference ecosystems such as bilby [@ashton2019bilby]. The
+same methodology is also relevant to future ground-based observatories such as
+the Einstein Telescope (ET) and Cosmic Explorer (CE).
 
 In these applications, the principal benefit of `sequince` is not a single
 sampling algorithm but a shared framework in which new sequential inference
