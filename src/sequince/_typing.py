@@ -12,10 +12,14 @@ ArrayLike: TypeAlias = Array | Sequence[float] | float
 
 MutationStrategy = Literal[
     "blackjax",
+    "differential-evolution",
     "emcee",
     "metropolis-hastings",
     "minipcn",
     "none",
+    "red-blue",
+    "red-blue-metropolis-hastings",
+    "red-blue-mh",
 ]
 
 MetaData = MutableMapping[str, Any]

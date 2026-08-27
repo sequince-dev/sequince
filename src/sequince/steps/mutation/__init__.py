@@ -19,6 +19,7 @@ from .emcee import (
 )
 from .factory import get_mutation_step
 from .kernels import (
+    COMPLEMENTARY_ENSEMBLE_KERNELS,
     MUTATION_KERNELS,
     AdaptiveMaskedGaussianRandomWalk,
     CallableMutationKernel,
@@ -31,9 +32,11 @@ from .kernels import (
     SymmetricComplementaryEnsembleKernel,
     SymmetricMutationKernel,
     evaluate_log_transition_ratio,
+    get_complementary_ensemble_kernel,
     get_mutation_kernel,
 )
 from .metropolis import (
+    DifferentialEvolutionMutation,
     MetropolisHastingsMutation,
     RedBlueMetropolisHastingsMutation,
 )
@@ -46,8 +49,10 @@ __all__ = [
     "BlackJAXAlgorithmFactory",
     "BlackJAXMutation",
     "CallableMutationKernel",
+    "COMPLEMENTARY_ENSEMBLE_KERNELS",
     "ComplementaryEnsembleKernel",
     "DifferentialEvolutionKernel",
+    "DifferentialEvolutionMutation",
     "EMCEE_MOVES",
     "EmceeMutation",
     "GaussianRandomWalk",
@@ -68,6 +73,7 @@ __all__ = [
     "SymmetricMutationKernel",
     "TransformRefit",
     "evaluate_log_transition_ratio",
+    "get_complementary_ensemble_kernel",
     "get_emcee_move",
     "get_mutation_kernel",
     "get_mutation_step",

@@ -15,6 +15,8 @@ from .base import (
 )
 from .kernels import (
     ComplementaryEnsembleKernel,
+    DifferentialEvolutionKernel,
+    GammaRandomization,
     MutationKernel,
     evaluate_log_transition_ratio,
 )
@@ -528,4 +530,60 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             ),
             context,
             output,
+        )
+
+
+class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
+    """Rejuvenate particles with red-blue differential-evolution proposals.
+
+    Parameters
+    ----------
+    log_prob_fn
+        Function returning the target log probability for each particle, or a
+        :class:`~sequince.target.Target` instance.
+    n_steps
+        Number of complete red-blue sweeps to perform.
+    gamma
+        Base differential-evolution scale. If ``None``, use
+        ``2.38 / sqrt(2 * n_dimensions)``.
+    gamma_one_probability
+        Probability, independently for each proposal, of replacing the
+        ordinary scale with exactly one.
+    gamma_randomization
+        Scale strategy. ``"none"`` uses the fixed base scale; ``"bilby"``
+        multiplies it by an independent ``Gamma(shape=4, scale=0.25)`` draw.
+    transform
+        Optional coordinate transform applied before mutation.
+    transform_refit
+        Transform refitting policy: ``"always"``, ``"per-context"``,
+        ``"once"``, or a callable receiving the particles and step context.
+    store_chains
+        Whether to include the particle state after every complete red-blue
+        sweep in the step output.
+    """
+
+    def __init__(
+        self,
+        log_prob_fn: Callable[..., Array | float] | "Target",
+        *,
+        n_steps: int = 1,
+        gamma: float | None = None,
+        gamma_one_probability: float = 0.1,
+        gamma_randomization: GammaRandomization = "none",
+        transform: ParticleTransform | None = None,
+        transform_refit: TransformRefit = "always",
+        store_chains: bool = False,
+    ) -> None:
+        kernel = DifferentialEvolutionKernel(
+            gamma=gamma,
+            gamma_one_probability=gamma_one_probability,
+            gamma_randomization=gamma_randomization,
+        )
+        super().__init__(
+            log_prob_fn,
+            kernel,
+            n_steps=n_steps,
+            transform=transform,
+            transform_refit=transform_refit,
+            store_chains=store_chains,
         )

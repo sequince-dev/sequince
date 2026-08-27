@@ -662,6 +662,12 @@ MUTATION_KERNELS: dict[str, type] = {
     "mixture": MixtureMutationKernel,
 }
 
+COMPLEMENTARY_ENSEMBLE_KERNELS: dict[
+    str, type[ComplementaryEnsembleKernel]
+] = {
+    "differential-evolution": DifferentialEvolutionKernel,
+}
+
 
 def get_mutation_kernel(name: str, **kwargs: Any) -> MutationKernel:
     """Construct a named mutation kernel."""
@@ -682,6 +688,22 @@ def get_mutation_kernel(name: str, **kwargs: Any) -> MutationKernel:
         kwargs["kernels"] = [
             _resolve_mutation_kernel_spec(spec) for spec in kernel_specs
         ]
+    return kernel_cls(**kwargs)
+
+
+def get_complementary_ensemble_kernel(
+    name: str,
+    **kwargs: Any,
+) -> ComplementaryEnsembleKernel:
+    """Construct a named complementary-ensemble mutation kernel."""
+    try:
+        kernel_cls = COMPLEMENTARY_ENSEMBLE_KERNELS[name]
+    except KeyError as exc:
+        valid = ", ".join(sorted(COMPLEMENTARY_ENSEMBLE_KERNELS))
+        raise ValueError(
+            f"Unknown complementary-ensemble kernel '{name}'. "
+            f"Valid options are: {valid}."
+        ) from exc
     return kernel_cls(**kwargs)
 
 
