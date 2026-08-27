@@ -19,6 +19,7 @@ from .mutation import (
     MiniPCNMutation,
     MutateIfResampled,
     ProposalRejuvenation,
+    RedBlueMetropolisHastingsMutation,
 )
 from .persistent import (
     PersistentAdaptiveTemperedWeighting,
@@ -65,6 +66,7 @@ __all__ = [
     "EmceeMutation",
     "MaskedGaussianRandomWalk",
     "MetropolisHastingsMutation",
+    "RedBlueMetropolisHastingsMutation",
     "MetropolisBlock",
     "MiniPCNMutation",
     "MutateIfResampled",

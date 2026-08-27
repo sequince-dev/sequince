@@ -30,7 +30,11 @@ from .kernels import (
     evaluate_log_transition_ratio,
     get_mutation_kernel,
 )
-from .metropolis import MetropolisHastingsMutation
+from .metropolis import (
+    MetropolisHastingsMutation,
+    RedBlueKernelFactory,
+    RedBlueMetropolisHastingsMutation,
+)
 from .minipcn import MiniPCNMutation
 from .rejuvenation import GenerativeProposal, ProposalRejuvenation
 
@@ -46,6 +50,8 @@ __all__ = [
     "GenerativeProposal",
     "MUTATION_KERNELS",
     "MetropolisHastingsMutation",
+    "RedBlueKernelFactory",
+    "RedBlueMetropolisHastingsMutation",
     "MiniPCNMutation",
     "MaskedGaussianRandomWalk",
     "MetropolisBlock",
