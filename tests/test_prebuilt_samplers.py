@@ -237,17 +237,17 @@ def test_make_persistent_bayesian_smc_builds_fixed_size_pipeline() -> None:
     n_particles = 17
     target_ess = 29
     target_total_ess = 41
-    target = TemperedPosterior(
-        log_prior=_quadratic_log_prior,
-        log_likelihood=_zero_log_likelihood,
-    )
 
-    smc = make_persistent_bayesian_smc(
-        target,
+    smc, posterior, metadata = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
         n_particles=n_particles,
         target_ess=target_ess,
         target_total_ess=target_total_ess,
     )
+
+    assert isinstance(posterior, TemperedPosterior)
+    assert metadata == {}
 
     steps = smc._steps  # noqa: SLF001 - inspecting configured steps for testing.
     assert len(steps) == 4
@@ -266,12 +266,9 @@ def test_make_persistent_bayesian_smc_logs_archive_progress(
     caplog,
 ) -> None:
     n_particles = 5
-    target = TemperedPosterior(
-        log_prior=_quadratic_log_prior,
-        log_likelihood=_zero_log_likelihood,
-    )
-    smc = make_persistent_bayesian_smc(
-        target,
+    smc, posterior, metadata = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
         n_particles=n_particles,
         target_ess=2 * n_particles,
         mutation="none",
@@ -280,11 +277,11 @@ def test_make_persistent_bayesian_smc_logs_archive_progress(
     context = StepContext(t=0, metadata={"beta": 0.0})
     initial_state = ParticleState(
         particles,
-        evaluation=target.prepare_evaluation(particles, context),
+        evaluation=posterior.prepare_evaluation(particles, context),
     )
 
     with caplog.at_level("INFO", logger="sequince.prebuilt_samplers"):
-        smc.run(initial_state, rng=rng)
+        smc.run(initial_state, metadata=metadata, rng=rng)
 
     assert "Persistent SMC iteration 0" in caplog.messages[0]
     terminal_message = caplog.messages[-1]
@@ -302,12 +299,9 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
     rng,
 ) -> None:
     n_particles = 5
-    target = TemperedPosterior(
-        log_prior=_quadratic_log_prior,
-        log_likelihood=_zero_log_likelihood,
-    )
-    smc = make_persistent_bayesian_smc(
-        target,
+    smc, posterior, metadata = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
         n_particles=n_particles,
         target_ess=2 * n_particles,
         mutation="none",
@@ -316,10 +310,10 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
     context = StepContext(t=0, metadata={"beta": 0.0})
     initial_state = ParticleState(
         particles,
-        evaluation=target.prepare_evaluation(particles, context),
+        evaluation=posterior.prepare_evaluation(particles, context),
     )
 
-    result = smc.run(initial_state, rng=rng)
+    result = smc.run(initial_state, metadata=metadata, rng=rng)
 
     assert isinstance(result.final_state, PersistentParticleState)
     assert result.final_state.particles.shape == (2 * n_particles, 1)
@@ -344,41 +338,35 @@ def test_make_persistent_bayesian_smc_rejects_incompatible_resampling(
     resampling_kwargs: dict[str, object],
     message: str,
 ) -> None:
-    target = TemperedPosterior(
-        log_prior=_quadratic_log_prior,
-        log_likelihood=_zero_log_likelihood,
-    )
-
     with pytest.raises(ValueError, match=message):
         make_persistent_bayesian_smc(
-            target,
+            _quadratic_log_prior,
+            _zero_log_likelihood,
             n_particles=4,
             resampling_kwargs=resampling_kwargs,
         )
 
 
 def test_make_persistent_bayesian_smc_accepts_custom_resampling_step() -> None:
-    target = TemperedPosterior(
-        log_prior=_quadratic_log_prior,
-        log_likelihood=_zero_log_likelihood,
-    )
     resampling = SystematicResampling(always_resample=True, n_samples=4)
 
-    smc = make_persistent_bayesian_smc(
-        target, n_particles=4, resampling=resampling
+    smc, _, _ = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        n_particles=4,
+        resampling=resampling,
     )
 
     assert smc._steps[2] is resampling  # noqa: SLF001
 
 
 def test_make_persistent_bayesian_smc_rejects_custom_resampling_step() -> None:
-    target = TemperedPosterior(
-        log_prior=_quadratic_log_prior,
-        log_likelihood=_zero_log_likelihood,
-    )
     resampling = SystematicResampling(always_resample=True, n_samples=5)
 
     with pytest.raises(ValueError, match="n_samples=4"):
         make_persistent_bayesian_smc(
-            target, n_particles=4, resampling=resampling
+            _quadratic_log_prior,
+            _zero_log_likelihood,
+            n_particles=4,
+            resampling=resampling,
         )

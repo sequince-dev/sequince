@@ -26,7 +26,6 @@ from .steps.base import SMCStep, StepContext
 from .steps.mutation import MutateIfResampled, get_mutation_step
 from .steps.resampling import ResamplingStep
 from .steps.weighting import TargetESSRatio
-from .target import TemperedTarget
 from .transforms import ParticleTransform, get_prebuilt_transform
 
 if TYPE_CHECKING:
@@ -291,8 +290,10 @@ def make_standard_bayesian_smc(
 
 
 def make_persistent_bayesian_smc(
-    target: TemperedTarget,
+    log_prior: Callable[..., Any],
+    log_likelihood: Callable[..., Any],
     *,
+    log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
     n_particles: int = 256,
     target_ess: float = 512,
     target_total_ess: float | None = None,
@@ -311,7 +312,7 @@ def make_persistent_bayesian_smc(
     ]
     | None = None,
     checkpoint_writers: Sequence[CheckpointWriter] | None = None,
-) -> SequentialMonteCarlo:
+) -> tuple[SequentialMonteCarlo, TemperedPosterior, MetaData]:
     """Return an SMC runner configured for persistent sampling.
 
     ``n_particles`` is the active population size drawn from the complete
@@ -334,9 +335,15 @@ def make_persistent_bayesian_smc(
         raise ValueError("n_particles must be a positive integer.")
     n_particles = int(n_particles)
 
+    posterior = TemperedPosterior(
+        log_prior=log_prior,
+        log_likelihood=log_likelihood,
+        log_proposal=log_proposal,
+    )
+
     persist_step = PersistParticles()
     weighting_step = PersistentAdaptiveTemperedWeighting(
-        target,
+        posterior,
         target_ess=target_ess,
         target_total_ess=target_total_ess,
         **weighting_kwargs or {},
@@ -408,7 +415,7 @@ def make_persistent_bayesian_smc(
 
     mutation_step = get_mutation_step(
         mutation,
-        target=target,
+        target=posterior,
         transform=particle_transform,
         mutation_n_steps=mutation_n_steps,
         mutation_kwargs=mutation_kwargs,
@@ -472,9 +479,10 @@ def make_persistent_bayesian_smc(
 
         configured_callbacks.append(logging_callback)
 
-    return SequentialMonteCarlo(
+    runner = SequentialMonteCarlo(
         steps=steps,
         callbacks=configured_callbacks,
         checkpoint_writers=checkpoint_writers,
         auto_normalize=auto_normalize,
     )
+    return runner, posterior, {}
