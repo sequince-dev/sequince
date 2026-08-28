@@ -295,7 +295,7 @@ def make_persistent_bayesian_smc(
     *,
     log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
     n_particles: int = 256,
-    target_ess: float = 512,
+    target_ess: float | None = None,
     target_total_ess: float | None = None,
     weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy | ResamplingStep = "systematic",
@@ -316,9 +316,10 @@ def make_persistent_bayesian_smc(
     """Return an SMC runner configured for persistent sampling.
 
     ``n_particles`` is the active population size drawn from the complete
-    persistent archive on every iteration. ``target_ess`` and
-    ``target_total_ess`` are absolute effective sample sizes of that archive;
-    they are not fractions of the active population size.
+    persistent archive on every iteration. ``target_ess`` defaults to twice
+    ``n_particles``. ``target_ess`` and ``target_total_ess`` are absolute
+    effective sample sizes of that archive; they are not fractions of the active
+    population size.
 
     The caller should initialize an ordinary :class:`ParticleState` containing
     ``n_particles`` draws from the initial target. The first persistence step
@@ -334,6 +335,8 @@ def make_persistent_bayesian_smc(
     if n_particles <= 0:
         raise ValueError("n_particles must be a positive integer.")
     n_particles = int(n_particles)
+    if target_ess is None:
+        target_ess = 2 * n_particles
 
     posterior = TemperedPosterior(
         log_prior=log_prior,

@@ -261,6 +261,22 @@ def test_make_persistent_bayesian_smc_builds_fixed_size_pipeline() -> None:
     assert steps[2]._always_resample  # noqa: SLF001
 
 
+def test_make_persistent_bayesian_smc_defaults_target_ess_to_two_batches() -> (
+    None
+):
+    n_particles = 17
+
+    smc, _, _ = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        n_particles=n_particles,
+    )
+
+    weighting = smc._steps[1]  # noqa: SLF001
+    assert isinstance(weighting, PersistentAdaptiveTemperedWeighting)
+    assert weighting._target_ess == 2 * n_particles  # noqa: SLF001
+
+
 def test_make_persistent_bayesian_smc_logs_archive_progress(
     rng,
     caplog,
