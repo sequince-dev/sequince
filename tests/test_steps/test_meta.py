@@ -20,12 +20,12 @@ def test_meta_smc_invalidates_evaluation_after_changing_proposal(
         log_prior=lambda values, context: np.zeros(len(values)),
         log_likelihood=lambda values, context: -values[:, 0],
     )
-    inner_context = context_factory(metadata={"temperature": 1.0})
+    inner_context = context_factory(metadata={"beta": 1.0})
     evaluation = posterior.evaluate(particles, inner_context)
     final_state = ParticleState(particles, evaluation=evaluation)
     runner = Mock()
     runner.run.return_value = SMCResult([final_state], inner_context)
-    outer_context = context_factory(metadata={"temperature": 0.0})
+    outer_context = context_factory(metadata={"beta": 0.0})
 
     updated, outer_context, _ = MetaSMCStep(runner, posterior)(
         ParticleState(particles),

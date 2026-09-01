@@ -70,7 +70,7 @@ class ResamplingStep(SMCStep):
         number as are present in the input state.
     resample_at_end:
         If ``True`` (default) will always resample when the inverse
-        temperature reaches 1.0, regardless of ESS.  If ``False``, the final
+        temperature β reaches 1.0, regardless of ESS. If ``False``, the final
         resampling may be skipped if ``always_resample`` is ``False`` and the
         ESS ratio is above ``ess_threshold``.
     """

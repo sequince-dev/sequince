@@ -33,9 +33,9 @@ def test_dimensionality_expansion_appends_block(
             particles = np.concatenate([state.particles, new_block], axis=1)
             return state.with_updates(particles=particles)
 
-    context = context_factory(metadata={"temperature": 0.8})
+    context = context_factory(metadata={"beta": 0.8})
     initial_state = particle_state.with_updates(
-        metadata=dict(particle_state.metadata, temperature=0.8)
+        metadata=dict(particle_state.metadata, beta=0.8)
     )
 
     step = ExpandDimensions(
@@ -55,9 +55,9 @@ def test_dimensionality_expansion_appends_block(
     assert context.metadata["dims"] == expanded.particles.shape[1]
     assert context.metadata["dims_added"] == 2
     assert context.metadata["dims_delta"] == 2
-    assert expanded.metadata["temperature"] == 0.8
-    assert context.metadata["temperature"] == 0.8
-    assert "temperature_delta" not in context.metadata
+    assert expanded.metadata["beta"] == 0.8
+    assert context.metadata["beta"] == 0.8
+    assert "delta_beta" not in context.metadata
     assert output["dims_delta"] == 2
 
 

@@ -43,7 +43,7 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
         scale=2.0,
         size=(n_particles, 1),
     )
-    initial_context = StepContext(t=0, metadata={"temperature": 0.0})
+    initial_context = StepContext(t=0, metadata={"beta": 0.0})
     initial_state = ParticleState(
         initial_particles,
         evaluation=target.prepare_evaluation(
@@ -54,14 +54,12 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
 
     result = smc.run(initial_state, rng=5678)
 
-    temperatures = [
-        float(outputs[1]["temperature"]) for outputs in result.outputs
+    betas = [float(outputs[1]["beta"]) for outputs in result.outputs]
+    delta_betas = [
+        float(outputs[1]["delta_beta"]) for outputs in result.outputs
     ]
-    temperature_deltas = [
-        float(outputs[1]["temperature_delta"]) for outputs in result.outputs
-    ]
-    assert temperature_deltas[:2] == pytest.approx([0.0, 0.0])
-    assert temperatures[-1] == pytest.approx(1.0)
+    assert delta_betas[:2] == pytest.approx([0.0, 0.0])
+    assert betas[-1] == pytest.approx(1.0)
     assert result.context.stop_requested
     assert result.context.stop_immediately
     assert isinstance(result.final_state, PersistentParticleState)
@@ -115,7 +113,7 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
         scale=2.0,
         size=(n_particles, 1),
     )
-    initial_context = StepContext(t=0, metadata={"temperature": 0.0})
+    initial_context = StepContext(t=0, metadata={"beta": 0.0})
     initial_state = ParticleState(
         initial_particles,
         evaluation=target.prepare_evaluation(
@@ -127,15 +125,15 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
     result = smc.run(
         initial_state,
         rng=5678,
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
 
-    temperature_deltas = [
-        float(iteration_output[1]["temperature_delta"])
+    delta_betas = [
+        float(iteration_output[1]["delta_beta"])
         for iteration_output in result.outputs
     ]
-    temperatures = [
-        float(iteration_output[1]["temperature"])
+    betas = [
+        float(iteration_output[1]["beta"])
         for iteration_output in result.outputs
     ]
     persistent_ess = [
@@ -143,13 +141,13 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
         for iteration_output in result.outputs
     ]
 
-    assert temperature_deltas[:2] == pytest.approx([0.0, 0.0])
-    assert temperatures[:2] == pytest.approx([0.0, 0.0])
+    assert delta_betas[:2] == pytest.approx([0.0, 0.0])
+    assert betas[:2] == pytest.approx([0.0, 0.0])
     assert persistent_ess[:2] == pytest.approx([n_particles, target_ess])
-    assert any(delta > 0.0 for delta in temperature_deltas[2:])
-    assert temperatures[-1] == pytest.approx(1.0)
-    assert temperature_deltas[-1] == pytest.approx(0.0)
-    assert temperatures.count(1.0) >= 2
+    assert any(delta > 0.0 for delta in delta_betas[2:])
+    assert betas[-1] == pytest.approx(1.0)
+    assert delta_betas[-1] == pytest.approx(0.0)
+    assert betas.count(1.0) >= 2
     assert persistent_ess[-1] >= target_total_ess
     assert result.context.stop_requested
     assert result.context.stop_immediately
@@ -159,7 +157,7 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
     assert persist.persistent_state is not None
     assert persist.persistent_state.n_batches == len(result)
     assert persist.persistent_state.n_particles == len(result) * n_particles
-    assert persist.persistent_state.temperatures[-1] == pytest.approx(1.0)
+    assert persist.persistent_state.betas[-1] == pytest.approx(1.0)
     assert (
         result.final_state.n_particles == persist.persistent_state.n_particles
     )
@@ -188,7 +186,7 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
         scale=2.0,
         size=(n_particles, 1),
     )
-    initial_context = StepContext(t=0, metadata={"temperature": 0.0})
+    initial_context = StepContext(t=0, metadata={"beta": 0.0})
     initial_state = ParticleState(
         initial_particles,
         evaluation=target.prepare_evaluation(
@@ -216,12 +214,12 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
     reference = make_sampler().run(
         initial_state,
         rng=5678,
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
     first_nonterminal_beta_one = next(
         index
         for index, outputs in enumerate(reference.outputs)
-        if float(outputs[1]["temperature"]) == pytest.approx(1.0)
+        if float(outputs[1]["beta"]) == pytest.approx(1.0)
         and float(outputs[1]["effective_sample_size"]) < target_total_ess
     )
     split_after = first_nonterminal_beta_one + 1
@@ -233,7 +231,7 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
         initial_state,
         num_steps=split_after,
         rng=5678,
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
     checkpoint = SMCCheckpoint.load_pickle(checkpoint_path)
     partial_persist = partial_sampler._steps[0]  # noqa: SLF001
@@ -245,7 +243,7 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
     assert checkpoint.next_iteration == split_after
     assert n_archived_batches == split_after
     assert not isinstance(checkpointed_active, PersistentParticleState)
-    assert float(partial.context.metadata["temperature"]) == pytest.approx(1.0)
+    assert float(partial.context.metadata["beta"]) == pytest.approx(1.0)
     assert float(partial.outputs[-1][1]["effective_sample_size"]) < (
         target_total_ess
     )
@@ -307,8 +305,8 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
         reference_final.log_weights,
     )
     np.testing.assert_allclose(
-        resumed_final.temperatures,
-        reference_final.temperatures,
+        resumed_final.betas,
+        reference_final.betas,
     )
     np.testing.assert_allclose(
         resumed_final.log_evidences,
@@ -332,22 +330,22 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             reference_final.evaluation[component],
         )
 
-    reference_temperatures = np.asarray(
-        [float(outputs[1]["temperature"]) for outputs in reference.outputs]
+    reference_betas = np.asarray(
+        [float(outputs[1]["beta"]) for outputs in reference.outputs]
     )
-    resumed_temperatures = np.asarray(
-        [float(outputs[1]["temperature"]) for outputs in resumed.outputs]
+    resumed_betas = np.asarray(
+        [float(outputs[1]["beta"]) for outputs in resumed.outputs]
     )
-    np.testing.assert_allclose(resumed_temperatures, reference_temperatures)
-    assert np.count_nonzero(np.isclose(reference_temperatures, 1.0)) >= 2
-    assert len(resumed_final.temperatures) == len(reference_final.temperatures)
+    np.testing.assert_allclose(resumed_betas, reference_betas)
+    assert np.count_nonzero(np.isclose(reference_betas, 1.0)) >= 2
+    assert len(resumed_final.betas) == len(reference_final.betas)
     assert len(resumed_final.log_evidences) == len(
         reference_final.log_evidences
     )
 
     for key in (
-        "temperature",
-        "temperature_delta",
+        "beta",
+        "delta_beta",
         "target_ess",
         "target_total_ess",
     ):

@@ -31,13 +31,13 @@ def test_standard_sampler_reaches_gaussian_posterior(
     )
     initial_state = ParticleState(
         initial_particles,
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
 
     result = sampler.run(initial_state, rng=5678, metadata=metadata)
 
     assert result.context.stop_requested
-    assert result.context.metadata["temperature"] == pytest.approx(1.0)
+    assert result.context.metadata["beta"] == pytest.approx(1.0)
     np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
 
     final_particles = np.asarray(result.final_state.particles)[:, 0]
@@ -101,4 +101,4 @@ def test_standard_sampler_resamples_and_mutates_at_end(
     assert mutated == expected_executed
     assert mutation_calls == ([1] if resample_at_end else [])
     assert result.context.stop_requested
-    assert result.context.metadata["temperature"] == pytest.approx(1.0)
+    assert result.context.metadata["beta"] == pytest.approx(1.0)

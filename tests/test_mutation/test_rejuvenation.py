@@ -77,7 +77,7 @@ def test_rejuvenates_with_minimal_generative_proposal(
     standard_normal_posterior,
 ) -> None:
     particles = np.linspace(-2.0, 2.0, 100)[:, None]
-    context = StepContext(t=2, metadata={"temperature": 0.5})
+    context = StepContext(t=2, metadata={"beta": 0.5})
     state = ParticleState(
         particles,
         log_weights=np.linspace(-2.0, 0.0, len(particles)),

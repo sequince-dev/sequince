@@ -79,21 +79,21 @@ def _context() -> StepContext:
     return StepContext(
         t=jnp.asarray(0),
         metadata={
-            "max_temperature": jnp.asarray(1.0),
-            "temperature": jnp.asarray(0.0),
-            "temperature_delta": jnp.asarray(0.0),
+            "max_beta": jnp.asarray(1.0),
+            "beta": jnp.asarray(0.0),
+            "delta_beta": jnp.asarray(0.0),
             "ess": jnp.asarray(4.0),
             "resampled": jnp.asarray(False),
         },
     )
 
 
-def _adaptive_context(*, temperature=0.0) -> StepContext:
+def _adaptive_context(*, beta=0.0) -> StepContext:
     return StepContext(
         t=jnp.asarray(0),
         metadata={
-            "temperature": jnp.asarray(temperature),
-            "temperature_delta": jnp.asarray(0.0),
+            "beta": jnp.asarray(beta),
+            "delta_beta": jnp.asarray(0.0),
             "target_ess_ratio": jnp.asarray(0.8),
             "ess_ratio": jnp.asarray(1.0),
             "cess_ratio": jnp.asarray(1.0),
@@ -116,7 +116,7 @@ def _adaptive_sampler(*, criterion: Literal["ess", "cess"] = "ess"):
         log_prior,
         log_likelihood,
         target_ess_ratio=0.8,
-        max_temperature=0.6,
+        max_beta=0.6,
         min_delta=1e-6,
         weighting_criterion=criterion,
         always_resample=True,
@@ -132,7 +132,7 @@ def test_functional_metadata_is_initialized_by_the_step_pipeline() -> None:
     smc, _, metadata = make_standard_bayesian_smc(
         lambda x, context: -0.5 * jnp.sum(x**2, axis=-1),
         lambda x, context: jnp.linspace(-1.0, 1.0, x.shape[0]),
-        target_ess_ratio=lambda temperature: 0.8,
+        target_ess_ratio=lambda beta: 0.8,
         always_resample=True,
         mutation="none",
         particle_transform=None,
@@ -141,7 +141,7 @@ def test_functional_metadata_is_initialized_by_the_step_pipeline() -> None:
     custom = jnp.asarray(7.0)
     state = ParticleState(
         jnp.zeros((4, 1)),
-        metadata={"temperature": jnp.asarray(0.25)},
+        metadata={"beta": jnp.asarray(0.25)},
     )
 
     _, initialized_context = smc.initialize_functional(
@@ -154,9 +154,9 @@ def test_functional_metadata_is_initialized_by_the_step_pipeline() -> None:
     initialized = initialized_context.metadata
 
     assert initialized["custom"] is custom
-    assert initialized["max_temperature"] == pytest.approx(1.0)
-    assert initialized["temperature"] == pytest.approx(0.25)
-    assert initialized["temperature_delta"] == pytest.approx(0.0)
+    assert initialized["max_beta"] == pytest.approx(1.0)
+    assert initialized["beta"] == pytest.approx(0.25)
+    assert initialized["delta_beta"] == pytest.approx(0.0)
     assert initialized["target_ess_ratio"] == pytest.approx(1.0)
     assert initialized["ess_ratio"] == pytest.approx(1.0)
     assert initialized["cess_ratio"] == pytest.approx(1.0)
@@ -176,7 +176,7 @@ def test_fixed_functional_metadata_does_not_require_adaptive_target() -> None:
     assert "target_ess_ratio" not in initialized
     assert "ess_ratio" not in initialized
     assert "cess_ratio" not in initialized
-    assert initialized["temperature"] == pytest.approx(0.0)
+    assert initialized["beta"] == pytest.approx(0.0)
     assert initialized["ess"] == pytest.approx(4.0)
 
 
@@ -193,7 +193,7 @@ def test_run_functional_initializes_metadata_automatically() -> None:
     )
 
     assert result.context.metadata["custom"] == pytest.approx(7.0)
-    assert result.context.metadata["temperature"] == pytest.approx(1.0)
+    assert result.context.metadata["beta"] == pytest.approx(1.0)
 
 
 def test_compile_functional_iteration_lowers_one_stable_signature() -> None:
@@ -286,7 +286,7 @@ def test_functional_iteration_can_be_jitted() -> None:
 
     assert updated.particles.shape == (4, 2)
     assert updated.initial_ancestor_indices.shape == (4,)
-    assert context.metadata["temperature"] == pytest.approx(0.5)
+    assert context.metadata["beta"] == pytest.approx(0.5)
     assert len(outputs) == 3
     assert outputs[1]["ancestors"].shape == (4,)
     assert outputs[1]["resampling_scheme"] == "systematic"
@@ -359,8 +359,8 @@ def test_functional_iteration_matches_host_iteration() -> None:
         expected.final_state.initial_ancestor_indices,
     )
     np.testing.assert_allclose(
-        actual_context.metadata["temperature"],
-        expected.context.metadata["temperature"],
+        actual_context.metadata["beta"],
+        expected.context.metadata["beta"],
     )
     np.testing.assert_array_equal(
         jax.random.key_data(actual_key),
@@ -408,7 +408,7 @@ def test_functional_iteration_runs_under_scan() -> None:
     )((state, context, jax.random.key(42)))
 
     assert state.particles.shape == (4, 2)
-    assert context.metadata["temperature"] == pytest.approx(1.0)
+    assert context.metadata["beta"] == pytest.approx(1.0)
 
 
 def test_run_functional_returns_advanced_random_state() -> None:
@@ -425,7 +425,7 @@ def test_run_functional_returns_advanced_random_state() -> None:
     )
 
     assert len(result) == 2
-    assert result.context.metadata["temperature"] == pytest.approx(1.0)
+    assert result.context.metadata["beta"] == pytest.approx(1.0)
     assert not np.array_equal(
         jax.random.key_data(key),
         jax.random.key_data(final_key),
@@ -561,7 +561,7 @@ def test_functional_resampling_requires_fixed_control_flow() -> None:
 def test_fixed_tempering_uses_same_eager_and_functional_transition() -> None:
     step = FixedTemperedWeighting(
         lambda particles: jnp.linspace(-1.0, 1.0, particles.shape[0]),
-        temperature_increment=0.25,
+        beta_increment=0.25,
     )
     state = ParticleState(jnp.zeros((4, 1)))
     context = _context()
@@ -584,8 +584,8 @@ def test_fixed_tempering_uses_same_eager_and_functional_transition() -> None:
         expected_state.log_evidence,
     )
     np.testing.assert_allclose(
-        next_context.metadata["temperature"],
-        expected_context.metadata["temperature"],
+        next_context.metadata["beta"],
+        expected_context.metadata["beta"],
     )
     assert output.keys() == expected_output.keys()
     np.testing.assert_allclose(
@@ -602,7 +602,7 @@ def test_adaptive_tempering_functional_step_can_be_jitted(
     step = AdaptiveTemperedWeighting(
         lambda particles: increments,
         target_ess_ratio=0.8,
-        max_temperature=0.6,
+        max_beta=0.6,
         min_delta=1e-6,
         criterion=criterion,
     )
@@ -619,12 +619,12 @@ def test_adaptive_tempering_functional_step_can_be_jitted(
         state, context, key
     )
 
-    assert output["temperature_delta"] > 0.0
-    assert output["temperature"] <= 0.6
+    assert output["delta_beta"] > 0.0
+    assert output["beta"] <= 0.6
     assert output["log_weight_increment"].shape == (4,)
     np.testing.assert_allclose(
-        next_context.metadata["temperature"],
-        output["temperature"],
+        next_context.metadata["beta"],
+        output["beta"],
     )
     np.testing.assert_allclose(
         updated.log_weights,
@@ -632,8 +632,8 @@ def test_adaptive_tempering_functional_step_can_be_jitted(
         atol=1e-6,
     )
     np.testing.assert_allclose(
-        output["temperature_delta"],
-        expected_context.metadata["temperature_delta"],
+        output["delta_beta"],
+        expected_context.metadata["delta_beta"],
         atol=1e-6,
     )
     np.testing.assert_array_equal(
@@ -646,7 +646,7 @@ def test_adaptive_tempering_functional_step_can_be_jitted(
 def test_adaptive_tempering_terminal_output_has_fixed_structure() -> None:
     step = AdaptiveTemperedWeighting(
         lambda particles: jnp.linspace(-2.0, 2.0, particles.shape[0]),
-        max_temperature=0.6,
+        max_beta=0.6,
     )
     state = ParticleState(jnp.zeros((4, 1)))
     key = jax.random.key(42)
@@ -659,12 +659,12 @@ def test_adaptive_tempering_terminal_output_has_fixed_structure() -> None:
     )
     updated, context, _, terminal_output = functional_step(
         state,
-        _adaptive_context(temperature=0.6),
+        _adaptive_context(beta=0.6),
         key,
     )
 
     assert active_output.keys() == terminal_output.keys()
-    assert terminal_output["temperature_delta"] == pytest.approx(0.0)
+    assert terminal_output["delta_beta"] == pytest.approx(0.0)
     np.testing.assert_array_equal(
         terminal_output["log_weight_increment"],
         jnp.zeros(4),
@@ -675,13 +675,13 @@ def test_adaptive_tempering_terminal_output_has_fixed_structure() -> None:
 
 
 def test_adaptive_callable_target_and_bounds_are_jittable() -> None:
-    def target(temperature, context):
-        return 0.9 - 0.1 * temperature + 0.0 * context.t
+    def target(beta, context):
+        return 0.9 - 0.1 * beta + 0.0 * context.t
 
     step = AdaptiveTemperedWeighting(
         lambda particles: jnp.zeros(particles.shape[0]),
         target_ess_ratio=target,
-        max_temperature=0.6,
+        max_beta=0.6,
         max_delta=0.2,
     )
 
@@ -692,8 +692,8 @@ def test_adaptive_callable_target_and_bounds_are_jittable() -> None:
     )
 
     assert output["target_ess_ratio"] == pytest.approx(0.9)
-    assert output["temperature_delta"] == pytest.approx(0.2)
-    assert context.metadata["temperature"] == pytest.approx(0.2)
+    assert output["delta_beta"] == pytest.approx(0.2)
+    assert context.metadata["beta"] == pytest.approx(0.2)
     np.testing.assert_array_equal(
         output["log_weight_increment"],
         jnp.zeros(4),
@@ -701,7 +701,7 @@ def test_adaptive_callable_target_and_bounds_are_jittable() -> None:
 
 
 @pytest.mark.parametrize("criterion", ["ess", "cess"])
-def test_adaptive_functional_run_reaches_max_temperature(
+def test_adaptive_functional_run_reaches_max_beta(
     criterion: Literal["ess", "cess"],
 ) -> None:
     smc, _, metadata = _adaptive_sampler(criterion=criterion)
@@ -715,6 +715,6 @@ def test_adaptive_functional_run_reaches_max_temperature(
         iteration=jax.jit(smc.functional_iteration),
     )
 
-    assert result.context.metadata["temperature"] == pytest.approx(0.6)
+    assert result.context.metadata["beta"] == pytest.approx(0.6)
     assert result.context.stop_requested
     assert len(result) < 20

@@ -157,7 +157,7 @@ def test_runtime_checkpoint_detaches_callback_states_without_duplicates(
     final_state = particle_state.with_updates(
         particles=np.asarray(particle_state.particles) + 1.0
     )
-    context = StepContext(t=1, metadata={"temperature": 1.0})
+    context = StepContext(t=1, metadata={"beta": 1.0})
     result = SMCResult(
         states=[particle_state, final_state],
         context=context,
@@ -249,7 +249,7 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
         metadata={"notes": ["x"]},
     )
     state = particle_state.with_updates(
-        metadata={"temperature": 0.5, "nested": {"value": [1, 2, 3]}}
+        metadata={"beta": 0.5, "nested": {"value": [1, 2, 3]}}
     )
     result = SMCResult(
         states=[particle_state, state],

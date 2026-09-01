@@ -484,7 +484,7 @@ def test_get_meta_smc_results(dummy_results: SMCResult) -> None:
 def test_smc_results_plot_metadata_history(dummy_results: SMCResult) -> None:
     import matplotlib.pyplot as plt
 
-    ax = dummy_results.plot_metadata_history("temperature", default=0.0)
+    ax = dummy_results.plot_metadata_history("beta", default=0.0)
     plt.close(ax.get_figure())
 
 

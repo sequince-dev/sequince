@@ -388,7 +388,7 @@ class ParticleState:
         "log_normalizing_constant",
         "evaluation",
         "metadata",
-        "temperatures",
+        "betas",
         "log_normalizing_constants",
     ),
     meta_fields=("batch_size",),
@@ -404,14 +404,14 @@ class PersistentParticleState(ParticleState):
     has just been weighted.
     """
 
-    temperatures: Array
+    betas: Array
     log_normalizing_constants: Array
     batch_size: int
 
     def __init__(
         self,
         particles: Array,
-        temperatures: ArrayLike,
+        betas: ArrayLike,
         log_normalizing_constants: ArrayLike,
         batch_size: int,
         *,
@@ -422,7 +422,7 @@ class PersistentParticleState(ParticleState):
         metadata: MutableMapping[str, Any] | None = None,
     ) -> None:
         xp = namespace(particles)
-        temperatures = asarray(temperatures, xp=xp, like=particles)
+        betas = asarray(betas, xp=xp, like=particles)
         normalizing_constants = asarray(
             log_normalizing_constants, xp=xp, like=particles
         )
@@ -431,15 +431,15 @@ class PersistentParticleState(ParticleState):
             raise ValueError("Particles array cannot be empty.")
         if batch_size <= 0:
             raise ValueError("batch_size must be positive.")
-        if temperatures.ndim != 1:
-            raise ValueError("temperatures must be one-dimensional.")
+        if betas.ndim != 1:
+            raise ValueError("betas must be one-dimensional.")
         if normalizing_constants.ndim != 1:
             raise ValueError(
                 "log_normalizing_constants must be one-dimensional."
             )
-        if temperatures.shape[0] != normalizing_constants.shape[0]:
+        if betas.shape[0] != normalizing_constants.shape[0]:
             raise ValueError(
-                "temperatures and log_normalizing_constants must have the "
+                "betas and log_normalizing_constants must have the "
                 "same length."
             )
 
@@ -447,9 +447,9 @@ class PersistentParticleState(ParticleState):
         if n_particles % batch_size != 0:
             raise ValueError("Particle count must be divisible by batch_size.")
         n_batches = n_particles // batch_size
-        if temperatures.shape[0] != n_batches:
+        if betas.shape[0] != n_batches:
             raise ValueError(
-                "Temperature and normalizing-constant histories must contain "
+                "beta and normalizing-constant histories must contain "
                 "one entry per particle batch."
             )
 
@@ -475,7 +475,7 @@ class PersistentParticleState(ParticleState):
             evaluation=evaluation,
             metadata=metadata,
         )
-        self.temperatures = temperatures
+        self.betas = betas
         self.log_normalizing_constants = normalizing_constants
         self.batch_size = batch_size
 
@@ -501,21 +501,21 @@ class PersistentParticleState(ParticleState):
     @property
     def n_batches(self) -> int:
         """Return the number of historical particle batches."""
-        return self.temperatures.shape[0]
+        return self.betas.shape[0]
 
     @classmethod
     def from_state(
         cls,
         state: ParticleState,
         *,
-        temperature: ArrayLike,
+        beta: ArrayLike,
         log_normalizing_constant: ArrayLike,
     ) -> "PersistentParticleState":
         """Create a one-batch history from an active particle state."""
         xp = namespace(state.particles)
-        temperature_history = cls._history_entry(
-            temperature,
-            name="temperature",
+        beta_history = cls._history_entry(
+            beta,
+            name="beta",
             xp=xp,
             like=state.particles,
         )
@@ -527,7 +527,7 @@ class PersistentParticleState(ParticleState):
         )
         return cls(
             particles=state.particles,
-            temperatures=temperature_history,
+            betas=beta_history,
             log_normalizing_constants=normalizing_constant_history,
             batch_size=state.particles.shape[0],
             initial_ancestor_indices=state.initial_ancestor_indices,
@@ -554,12 +554,12 @@ class PersistentParticleState(ParticleState):
             self.particles,
             self.log_weights,
             self.initial_ancestor_indices,
-            self.temperatures,
+            self.betas,
             self.log_normalizing_constants,
         )
         copied = type(self)(
             particles=array_copy(self.particles, xp=xp),
-            temperatures=array_copy(self.temperatures, xp=xp),
+            betas=array_copy(self.betas, xp=xp),
             log_normalizing_constants=array_copy(
                 self.log_normalizing_constants, xp=xp
             ),
@@ -625,7 +625,7 @@ class PersistentParticleState(ParticleState):
         self,
         state: ParticleState,
         *,
-        temperature: ArrayLike,
+        beta: ArrayLike,
         log_normalizing_constant: ArrayLike,
     ) -> "PersistentParticleState":
         """Return a new history with one equal-sized batch appended.
@@ -650,11 +650,11 @@ class PersistentParticleState(ParticleState):
             (self.initial_ancestor_indices, new_ancestors),
             axis=0,
         )
-        temperature_entry = self._history_entry(
-            temperature,
-            name="temperature",
+        beta_entry = self._history_entry(
+            beta,
+            name="beta",
             xp=xp,
-            like=self.temperatures,
+            like=self.betas,
         )
         normalizing_constant_entry = self._history_entry(
             log_normalizing_constant,
@@ -662,9 +662,7 @@ class PersistentParticleState(ParticleState):
             xp=xp,
             like=self.log_normalizing_constants,
         )
-        temperatures = xp.concat(
-            (self.temperatures, temperature_entry), axis=0
-        )
+        betas = xp.concat((self.betas, beta_entry), axis=0)
         log_normalizing_constants = xp.concat(
             (self.log_normalizing_constants, normalizing_constant_entry),
             axis=0,
@@ -683,7 +681,7 @@ class PersistentParticleState(ParticleState):
 
         return type(self)(
             particles=particles,
-            temperatures=temperatures,
+            betas=betas,
             log_normalizing_constants=log_normalizing_constants,
             batch_size=self.batch_size,
             log_normalizing_constant=log_normalizing_constant,
@@ -697,7 +695,7 @@ class PersistentParticleState(ParticleState):
         payload = super().to_dict()
         copied = self.copy()
         payload.update(
-            temperatures=copied.temperatures,
+            betas=copied.betas,
             log_normalizing_constants=copied.log_normalizing_constants,
             batch_size=copied.batch_size,
         )
@@ -711,7 +709,7 @@ class PersistentParticleState(ParticleState):
         missing = {
             key
             for key in (
-                "temperatures",
+                "betas",
                 "log_normalizing_constants",
                 "batch_size",
             )
@@ -725,7 +723,7 @@ class PersistentParticleState(ParticleState):
         base = ParticleState.from_dict(payload)
         return cls(
             particles=base.particles,
-            temperatures=payload["temperatures"],
+            betas=payload["betas"],
             log_normalizing_constants=payload["log_normalizing_constants"],
             batch_size=int(payload["batch_size"]),
             log_weights=base.log_weights,
@@ -747,7 +745,7 @@ class PersistentParticleState(ParticleState):
         return {
             **schema_header("persistent_particle_state"),
             **self._encode_hdf5_fields(),
-            "temperatures": self.temperatures,
+            "betas": self.betas,
             "log_normalizing_constants": self.log_normalizing_constants,
             "batch_size": self.batch_size,
         }
@@ -786,7 +784,7 @@ class PersistentParticleState(ParticleState):
             "initial_ancestor_indices",
             "evaluation",
             "metadata",
-            "temperatures",
+            "betas",
             "log_normalizing_constants",
             "batch_size",
         }

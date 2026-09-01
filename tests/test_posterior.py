@@ -60,7 +60,7 @@ def test_target_replaces_evaluation_from_another_target(
         log_likelihood=likelihood("second", 2.0),
     )
     particles = np.zeros((3, 1))
-    context = context_factory(metadata={"temperature": 0.5})
+    context = context_factory(metadata={"beta": 0.5})
 
     first_evaluation = first.evaluate(particles, context)
     with caplog.at_level("DEBUG", logger="sequince.target"):
@@ -94,7 +94,7 @@ def test_annealed_posterior_accepts_proposal_distribution_object(
         log_proposal=analytic_proposal_factory(n_dim=1, quadratic_scale=0.25),
     )
     particles = np.array([[0.0], [2.0]], dtype=float)
-    context = context_factory(metadata={"temperature": 0.25})
+    context = context_factory(metadata={"beta": 0.25})
 
     evaluation = posterior.evaluate(particles, context)
     values = posterior.log_prob(particles, context, evaluation=evaluation)
@@ -147,7 +147,7 @@ def test_target_evaluation_refreshes_only_requested_components(
         log_proposal=component("proposal", -3.0),
     )
     particles = np.zeros((4, 2))
-    context = context_factory(metadata={"temperature": 0.5})
+    context = context_factory(metadata={"beta": 0.5})
 
     evaluation = posterior.evaluate(particles, context)
     refreshed = posterior.refresh(
@@ -177,7 +177,7 @@ def test_tempered_posterior_evaluates_directly_from_particles(
 
     posterior = TemperedPosterior(log_prior, log_likelihood)
     particles = np.zeros((3, 1))
-    context = context_factory(metadata={"temperature": 0.5})
+    context = context_factory(metadata={"beta": 0.5})
 
     values = posterior.log_prob(particles, context)
 
@@ -267,7 +267,7 @@ def test_target_evaluation_rejects_different_particle_count(
         context_factory(),
     )
     particles = np.zeros((3, 1))
-    context = context_factory(metadata={"temperature": 0.5})
+    context = context_factory(metadata={"beta": 0.5})
 
     with pytest.raises(ValueError, match="2 entries.*3 particles"):
         posterior.log_prob(particles, context, evaluation=evaluation)
@@ -345,9 +345,9 @@ def test_draw_additional_samples_respects_terminal_weights(
     state = ParticleState(
         particles=particles,
         log_weights=np.array([0.0, -1.0e9, -1.0e9]),
-        metadata={"temperature": 1.0},
+        metadata={"beta": 1.0},
     )
-    result = SMCResult([state], context_factory(metadata={"temperature": 1.0}))
+    result = SMCResult([state], context_factory(metadata={"beta": 1.0}))
 
     updated_state, updated_result = draw_additional_samples(
         result=result,
@@ -371,9 +371,9 @@ def test_draw_additional_samples_supports_metropolis_hastings(
     particles = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
     state = ParticleState(
         particles=particles,
-        metadata={"temperature": 1.0},
+        metadata={"beta": 1.0},
     )
-    result = SMCResult([state], context_factory(metadata={"temperature": 1.0}))
+    result = SMCResult([state], context_factory(metadata={"beta": 1.0}))
     posterior = TemperedPosterior(
         log_prior=lambda values, context: np.zeros(values.shape[0]),
         log_likelihood=lambda values, context: np.zeros(values.shape[0]),

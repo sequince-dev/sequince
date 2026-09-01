@@ -60,6 +60,37 @@ def test_draw_initial_state_retains_evaluation_without_recomputing_proposal():
     np.testing.assert_allclose(state.evaluation["log_proposal"], 0.0)
 
 
+def test_draw_initial_state_does_not_evaluate_implicit_prior_proposal():
+    class PriorProposal(DeterministicProposal):
+        def sample(
+            self,
+            n_samples,
+            context=None,
+            *,
+            rng=None,
+            xp=None,
+        ):
+            self.sample_calls += 1
+            self.sample_kwargs.append({"rng": rng, "xp": xp})
+            return self.particles.copy()
+
+        def sample_and_log_prob(self, *args, **kwargs):
+            raise AssertionError("The prior density should not be evaluated")
+
+    proposal = PriorProposal([[0.0], [1.0], [2.0]])
+    posterior = TemperedPosterior(
+        log_prior=lambda particles, context: -particles[:, 0],
+        log_likelihood=lambda particles, context: -2 * particles[:, 0],
+    )
+
+    state = draw_initial_state(proposal, 3, posterior=posterior)
+
+    assert proposal.sample_calls == 1
+    assert state.evaluation is not None
+    assert "log_proposal" not in state.evaluation
+    assert state.metadata["evaluation_counts"].proposal_evaluations == 0
+
+
 def test_draw_initial_state_retains_zero_density_points_for_evidence():
     proposal = DeterministicProposal([[0.0], [1.0]])
     posterior = TemperedPosterior(
@@ -67,7 +98,7 @@ def test_draw_initial_state_retains_zero_density_points_for_evidence():
         log_likelihood=lambda particles, context: np.array([0.0, -np.inf]),
         log_proposal=proposal,
     )
-    context = StepContext(t=0, metadata={"max_temperature": 1.0})
+    context = StepContext(t=0, metadata={"max_beta": 1.0})
     state = draw_initial_state(
         proposal,
         2,
@@ -77,7 +108,7 @@ def test_draw_initial_state_retains_zero_density_points_for_evidence():
 
     weighted, _, _ = FixedTemperedWeighting(
         posterior,
-        temperature_increment=1.0,
+        beta_increment=1.0,
     )(state, context, np.random.default_rng(123))
 
     assert len(state.particles) == 2
