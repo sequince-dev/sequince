@@ -13,7 +13,12 @@ from sequince.posterior import (
 from sequince.proposals import FlowProposal
 from sequince.result import SMCResult
 from sequince.state import ParticleState
-from sequince.target import TargetEvaluation, TemperedTarget
+from sequince.steps.context import StepContext
+from sequince.target import (
+    EvaluationCounts,
+    TargetEvaluation,
+    TemperedTarget,
+)
 
 
 def test_tempered_posterior_implements_tempered_target() -> None:
@@ -23,6 +28,43 @@ def test_tempered_posterior_implements_tempered_target() -> None:
     )
 
     assert isinstance(target, TemperedTarget)
+
+
+def test_tempered_posterior_reports_new_component_evaluations() -> None:
+    particles = np.zeros((5, 2))
+    context = StepContext(t=0, metadata={"temperature": 0.5})
+    target = TemperedPosterior(
+        log_prior=lambda values: np.zeros(values.shape[0]),
+        log_likelihood=lambda values: np.ones(values.shape[0]),
+        log_proposal=lambda values: np.full(values.shape[0], -1.0),
+    )
+
+    evaluation, counts = target.prepare_evaluation(
+        particles, context, return_counts=True
+    )
+
+    assert counts == EvaluationCounts(
+        target_evaluations=5,
+        proposal_evaluations=5,
+    )
+
+    cached, cached_counts = target.prepare_evaluation(
+        particles,
+        context,
+        evaluation=evaluation,
+        return_counts=True,
+    )
+    assert cached is evaluation
+    assert cached_counts == EvaluationCounts.zeros(xp=np)
+
+    _, refreshed_counts = target.prepare_evaluation(
+        particles,
+        context,
+        evaluation=evaluation,
+        refresh_components={"log_likelihood"},
+        return_counts=True,
+    )
+    assert refreshed_counts == EvaluationCounts(target_evaluations=5)
 
 
 def test_targets_receive_distinct_automatic_evaluation_ids() -> None:

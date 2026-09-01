@@ -16,7 +16,7 @@ from sequince.steps.mutation.blackjax import BlackJAXOutput
 from sequince.steps.mutation.minipcn import MiniPCNOutput
 from sequince.steps.resampling import ResamplingOutput
 from sequince.steps.transformations import SMCTransformation
-from sequince.target import TargetEvaluation
+from sequince.target import EvaluationCounts, TargetEvaluation
 
 
 def make_evaluation() -> TargetEvaluation:
@@ -122,6 +122,10 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
             "log_proposal_override": lambda x: x,
             "nested": {"particle_transform": "user value"},
         },
+        evaluation_counts=EvaluationCounts(
+            target_evaluations=12,
+            proposal_evaluations=7,
+        ),
         stop_requested=True,
         stop_immediately=False,
     )
@@ -173,6 +177,7 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
         "beta": 0.5,
         "nested": {"particle_transform": "user value"},
     }
+    assert actual.evaluation_counts == expected.evaluation_counts
     assert isinstance(actual.outputs[0][0], dict)
     assert (
         actual.outputs[0][0]["child_output"]["resampling_scheme"]

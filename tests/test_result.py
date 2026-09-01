@@ -5,7 +5,9 @@ import pytest
 
 from sequince.result import MetaSMCResult, SMCResult
 from sequince.state import ParticleState
+from sequince.steps.context import StepContext
 from sequince.steps.meta import META_SMC_OUTPUT_KEY
+from sequince.target import EvaluationCounts
 
 
 @pytest.fixture
@@ -30,6 +32,19 @@ def test_smc_results_indexing(
         assert dummy_results[i] == particle_state
 
     assert dummy_results.final_state == particle_state
+
+
+def test_smc_result_exposes_evaluation_counts(particle_state) -> None:
+    counts = EvaluationCounts(
+        target_evaluations=12,
+        proposal_evaluations=3,
+    )
+    result = SMCResult(
+        [particle_state],
+        StepContext(t=0, evaluation_counts=counts),
+    )
+
+    assert result.evaluation_counts is counts
 
 
 def test_smc_results_append_state(
