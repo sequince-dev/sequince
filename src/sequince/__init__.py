@@ -24,7 +24,13 @@ from .proposals import (
 from .result import SMCResult
 from .smc import SequentialMonteCarlo
 from .state import ParticleState, PersistentParticleState
-from .target import SequentialTarget, Target, TargetEvaluation, TemperedTarget
+from .target import (
+    EvaluationCounts,
+    SequentialTarget,
+    Target,
+    TargetEvaluation,
+    TemperedTarget,
+)
 
 try:
     __version__ = importlib.metadata.version("sequince")
@@ -35,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DegenerateWeightsError",
+    "EvaluationCounts",
     "ParticleState",
     "PersistentParticleState",
     "ProposalDistribution",

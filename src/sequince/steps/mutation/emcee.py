@@ -10,6 +10,7 @@ import numpy as np
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
+from ...target import EvaluationCounts, TargetEvaluation
 from ...transforms import (
     ParticleTransform,
     has_particle_aligned_auxiliary,
@@ -38,6 +39,51 @@ EMCEE_MOVES = {
     "stretch": "StretchMove",
     "walk": "WalkMove",
 }
+
+
+def _evaluation_blob(
+    evaluation: TargetEvaluation,
+    index: int,
+) -> dict[str, np.ndarray]:
+    """Convert one particle's target components to an emcee blob."""
+    return {
+        name: np.array(to_numpy(values[index]), copy=True)
+        for name, values in evaluation.components.items()
+    }
+
+
+def _evaluation_from_blobs(
+    blobs: Any,
+    *,
+    target: Target,
+    particles: Array,
+    context: StepContext,
+) -> TargetEvaluation:
+    """Reassemble the final particle-aligned evaluation from emcee blobs."""
+    entries = list(np.asarray(blobs, dtype=object).reshape(-1))
+    if not entries or not all(isinstance(entry, Mapping) for entry in entries):
+        raise RuntimeError("emcee did not return target-evaluation blobs.")
+
+    component_names = tuple(entries[0])
+    if any(tuple(entry) != component_names for entry in entries[1:]):
+        raise RuntimeError(
+            "emcee returned inconsistent target-evaluation blobs."
+        )
+
+    xp = namespace(particles)
+    evaluation = TargetEvaluation(
+        components={
+            name: xp.stack(
+                tuple(
+                    asarray(entry[name], xp=xp, like=particles)
+                    for entry in entries
+                ),
+                axis=0,
+            )
+            for name in component_names
+        }
+    )
+    return target.bind_evaluation(evaluation, context)
 
 
 def get_emcee_move(name: str, **kwargs: Any) -> Any:
@@ -217,10 +263,12 @@ class EmceeMutation(MutationStep):
         )
 
         vectorized = bool(self._kwargs.get("vectorize", False))
+        counts = EvaluationCounts.zeros(xp=xp)
 
         if vectorized:
 
-            def _log_prob_vectorized(positions: np.ndarray) -> np.ndarray:
+            def _log_prob_vectorized(positions: np.ndarray) -> Any:
+                nonlocal counts
                 backend_positions = asarray(
                     positions, xp=xp, like=latent_particles
                 )
@@ -230,9 +278,23 @@ class EmceeMutation(MutationStep):
                     context,
                     auxiliary=transform_auxiliary,
                 )
-                result, _ = self._evaluate_target(original, context)
+                result, evaluation, delta = self._evaluate_target(
+                    original, context
+                )
+                counts = counts + delta
                 result = self._combine_with_log_det(result, log_det)
-                return as_vector_log_prob(result, backend_positions.shape[0])
+                log_prob = as_vector_log_prob(
+                    result, backend_positions.shape[0]
+                )
+                if self._target is None:
+                    return log_prob
+
+                if evaluation is None:  # pragma: no cover - target contract
+                    raise RuntimeError("Target did not return an evaluation.")
+                return [
+                    (log_prob[index], _evaluation_blob(evaluation, index))
+                    for index in range(backend_positions.shape[0])
+                ]
 
             log_prob_callable: Callable[[np.ndarray], Any] = (
                 _log_prob_vectorized
@@ -240,28 +302,43 @@ class EmceeMutation(MutationStep):
 
         else:
 
-            def _log_prob_scalar(position: np.ndarray) -> float:
+            def _log_prob_scalar(position: np.ndarray) -> Any:
+                nonlocal counts
                 backend_position = asarray(
                     position, xp=xp, like=latent_particles
                 )
+                evaluation_position = (
+                    xp.expand_dims(backend_position, axis=0)
+                    if self._target is not None
+                    else backend_position
+                )
                 original, log_det = self._inverse_transform(
-                    backend_position,
+                    evaluation_position,
                     transform,
                     context,
                     auxiliary=transform_auxiliary,
                 )
-                result, _ = self._evaluate_target(original, context)
+                result, evaluation, delta = self._evaluate_target(
+                    original, context
+                )
+                counts = counts + delta
                 result = self._combine_with_log_det(result, log_det)
-                return as_scalar_log_prob(result)
+                log_prob = as_scalar_log_prob(result)
+                if evaluation is None:
+                    return log_prob
+                return log_prob, _evaluation_blob(evaluation, 0)
 
             log_prob_callable = _log_prob_scalar
 
+        sampler_kwargs = dict(self._kwargs)
+        if self._target is not None:
+            sampler_kwargs["blobs_dtype"] = object
         sampler = emcee.EnsembleSampler(
             n_walkers,
             ndim,
             log_prob_callable,
             moves=self._move,
-            **self._kwargs,
+            **sampler_kwargs,
         )
         emcee_seed = int(
             float(to_numpy(rng.random((1,)))[0]) * np.iinfo(np.uint32).max
@@ -287,7 +364,15 @@ class EmceeMutation(MutationStep):
             context,
             auxiliary=transform_auxiliary,
         )
-        _, final_evaluation = self._evaluate_target(new_particles, context)
+        final_evaluation = None
+        if self._target is not None:
+            final_evaluation = _evaluation_from_blobs(
+                state_result.blobs,
+                target=self._target,
+                particles=new_particles,
+                context=context,
+            )
+        context = context.add_evaluation_counts(counts)
 
         acceptance = float(np.mean(sampler.acceptance_fraction))
         stored_chain = None

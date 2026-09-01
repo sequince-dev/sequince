@@ -244,13 +244,14 @@ class BasePersistentTemperedWeighting(SMCStep):
         self,
         state: PersistentParticleState,
         context: StepContext,
-    ) -> tuple[Any, Array]:
+    ) -> tuple[Any, Array, Any]:
         """Prepare one cached target evaluation and its log increment."""
-        evaluation = self._target.prepare_evaluation(
+        evaluation, counts = self._target.prepare_evaluation(
             state.particles,
             context,
             evaluation=state.evaluation,
             refresh_components=self._refresh_components,
+            return_counts=True,
         )
         log_increment = self._target.log_increment(
             state.particles,
@@ -267,7 +268,7 @@ class BasePersistentTemperedWeighting(SMCStep):
             raise ValueError(
                 "Target log increment must return one value per particle."
             )
-        return evaluation, log_increment
+        return evaluation, log_increment, counts
 
     def _weight(
         self,
@@ -373,7 +374,10 @@ class PersistentTemperedWeighting(BasePersistentTemperedWeighting):
     ) -> tuple[PersistentParticleState, StepContext, dict[str, Any]]:
         del rng
         state = self._require_persistent_state(state)
-        evaluation, log_increment = self._prepare_log_increment(state, context)
+        evaluation, log_increment, counts = self._prepare_log_increment(
+            state, context
+        )
+        context = context.add_evaluation_counts(counts)
         return self._weight(
             state,
             evaluation,
@@ -444,7 +448,10 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
     ) -> tuple[PersistentParticleState, StepContext, dict[str, Any]]:
         del rng
         state = self._require_persistent_state(state)
-        evaluation, log_increment = self._prepare_log_increment(state, context)
+        evaluation, log_increment, counts = self._prepare_log_increment(
+            state, context
+        )
+        context = context.add_evaluation_counts(counts)
         xp = namespace(state.log_weights)
         log_denominator = persistent_log_mixture_denominator(
             log_increment,

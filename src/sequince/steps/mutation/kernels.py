@@ -4,13 +4,14 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, overload
 
 import numpy as np
 from array_api_compat import device as get_device
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
+from ...target import EvaluationCounts
 from ..base import StepContext
 
 if TYPE_CHECKING:
@@ -170,21 +171,83 @@ class CallableMutationKernel:
         return asarray(values, xp=xp, like=start)
 
 
+@overload
 def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
     to_particles: Array,
-) -> Array:
-    """Evaluate a kernel transition ratio, including legacy density kernels."""
+    *,
+    return_counts: Literal[False] = False,
+) -> Array: ...
+
+
+@overload
+def evaluate_log_transition_ratio(
+    kernel: object,
+    from_particles: Array,
+    to_particles: Array,
+    *,
+    return_counts: Literal[True],
+) -> tuple[Array, EvaluationCounts]: ...
+
+
+@overload
+def evaluate_log_transition_ratio(
+    kernel: object,
+    from_particles: Array,
+    to_particles: Array,
+    *,
+    return_counts: bool,
+) -> Array | tuple[Array, EvaluationCounts]: ...
+
+
+def evaluate_log_transition_ratio(
+    kernel: object,
+    from_particles: Array,
+    to_particles: Array,
+    *,
+    return_counts: bool = False,
+) -> Array | tuple[Array, EvaluationCounts]:
+    """Evaluate a transition ratio, optionally returning work counts."""
+    if isinstance(kernel, MixtureMutationKernel):
+        selected = kernel.selected_kernel
+        if selected is None:
+            raise RuntimeError(
+                "MixtureMutationKernel.sample() must be called before "
+                "log_transition_ratio()."
+            )
+        return evaluate_log_transition_ratio(
+            selected,
+            from_particles,
+            to_particles,
+            return_counts=return_counts,
+        )
+
+    n_particles = from_particles.shape[0]
     ratio_fn = getattr(kernel, "log_transition_ratio", None)
     if callable(ratio_fn):
-        return ratio_fn(from_particles, to_particles)
+        values = ratio_fn(from_particles, to_particles)
+        if isinstance(kernel, SymmetricMutationKernel) or (
+            isinstance(kernel, CallableMutationKernel) and kernel.symmetric
+        ):
+            n_evaluations = 0
+        elif (
+            isinstance(kernel, CallableMutationKernel)
+            and kernel.log_density_fn is not None
+        ):
+            n_evaluations = 2 * n_particles
+        else:
+            n_evaluations = n_particles
+        counts = EvaluationCounts(proposal_evaluations=n_evaluations)
+        return (values, counts) if return_counts else values
 
     density_fn = getattr(kernel, "log_density", None)
     if callable(density_fn):
-        return density_fn(to_particles, from_particles) - density_fn(
+        values = density_fn(to_particles, from_particles) - density_fn(
             from_particles, to_particles
         )
+        counts = EvaluationCounts(proposal_evaluations=2 * n_particles)
+        return (values, counts) if return_counts else values
     raise TypeError(
         "Mutation kernel must implement log_transition_ratio() or log_density()."
     )
@@ -645,15 +708,8 @@ class MixtureMutationKernel:
         from_particles: Array,
         to_particles: Array,
     ) -> Array:
-        if self._selected_kernel is None:
-            raise RuntimeError(
-                "MixtureMutationKernel.sample() must be called before "
-                "log_transition_ratio()."
-            )
         return evaluate_log_transition_ratio(
-            self._selected_kernel,
-            from_particles,
-            to_particles,
+            self, from_particles, to_particles
         )
 
 

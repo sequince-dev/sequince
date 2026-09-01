@@ -4,9 +4,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from ..target import EvaluationCounts
 from ..utils.pytrees import pytree_dataclass
 
 LOG_PROPOSAL_OVERRIDE_KEY = "log_proposal_override"
+EVALUATION_COUNTS_KEY = "evaluation_counts"
 SMC_TRANSFORMATION_KEY = "smc_transformation"
 RESULT_HDF5_OMITTED_METADATA_KEYS = frozenset(
     {
@@ -25,6 +27,7 @@ RESULT_HDF5_OMITTED_METADATA_KEYS = frozenset(
         "observation",
         "shared",
         "metadata",
+        "evaluation_counts",
         "stop_requested",
         "stop_immediately",
     )
@@ -43,6 +46,9 @@ class StepContext:
     """
     metadata: Mapping[str, Any] = field(default_factory=dict)
     """Dictionary for step metadata that can be used for communication between steps and callbacks."""
+    evaluation_counts: EvaluationCounts = field(
+        default_factory=EvaluationCounts
+    )
     stop_requested: bool = False
     stop_immediately: bool = False
 
@@ -54,6 +60,13 @@ class StepContext:
     def with_metadata(self, **updates: Any) -> StepContext:
         """Return a context with copy-on-write metadata updates."""
         return replace(self, metadata={**self.metadata, **updates})
+
+    def add_evaluation_counts(self, counts: EvaluationCounts) -> StepContext:
+        """Return a context with newly incurred work added to its counters."""
+        return replace(
+            self,
+            evaluation_counts=self.evaluation_counts + counts,
+        )
 
     def request_stop(self) -> StepContext:
         """Signal that the SMC runner should halt after this iteration."""
@@ -86,6 +99,14 @@ class StepContext:
             "t": self.t,
             "next_observation_index": self.next_observation_index,
             "metadata": metadata,
+            "evaluation_counts": {
+                "target_evaluations": (
+                    self.evaluation_counts.target_evaluations
+                ),
+                "proposal_evaluations": (
+                    self.evaluation_counts.proposal_evaluations
+                ),
+            },
             "stop_requested": self.stop_requested,
             "stop_immediately": self.stop_immediately,
         }
@@ -107,6 +128,7 @@ class StepContext:
                 "stop_requested",
                 "stop_immediately",
             },
+            optional={"evaluation_counts"},
         )
         metadata = payload["metadata"]
         if not isinstance(metadata, Mapping):
@@ -117,6 +139,9 @@ class StepContext:
             observation=None,
             shared={},
             metadata=dict(metadata),
+            evaluation_counts=EvaluationCounts(
+                **dict(payload.get("evaluation_counts", {}))
+            ),
             stop_requested=bool(payload["stop_requested"]),
             stop_immediately=bool(payload["stop_immediately"]),
         )

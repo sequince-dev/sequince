@@ -7,6 +7,7 @@ import array_api_extra as xpx
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
+from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
 from ..context import StepContext
 from .base import (
@@ -102,12 +103,12 @@ class MetropolisHastingsMutation(MutationStep):
         evaluation: "TargetEvaluation | None" = None,
         *,
         auxiliary: Any = None,
-    ) -> tuple[Array, "TargetEvaluation | None"]:
+    ) -> tuple[Array, "TargetEvaluation | None", EvaluationCounts]:
         xp = namespace(latent_particles)
         original, log_det = self._inverse_transform(
             latent_particles, transform, context, auxiliary=auxiliary
         )
-        result, evaluation = self._evaluate_target(
+        result, evaluation, counts = self._evaluate_target(
             original,
             context,
             evaluation=evaluation,
@@ -123,7 +124,7 @@ class MetropolisHastingsMutation(MutationStep):
             raise ValueError(
                 "log_prob_fn must return a scalar or one value per particle."
             )
-        return values, evaluation
+        return values, evaluation, counts
 
     def apply(
         self,
@@ -145,7 +146,7 @@ class MetropolisHastingsMutation(MutationStep):
         )
         n_particles = current.shape[0]
         kernel = self._resolve_kernel(current, context)
-        current_log_prob, current_evaluation = self._evaluate_log_prob(
+        current_log_prob, current_evaluation, counts = self._evaluate_log_prob(
             current,
             transform,
             context,
@@ -164,14 +165,28 @@ class MetropolisHastingsMutation(MutationStep):
                 raise ValueError(
                     "Mutation kernel must return the same shape as its input."
                 )
-            proposed_log_prob, proposed_evaluation = self._evaluate_log_prob(
+            (
+                proposed_log_prob,
+                proposed_evaluation,
+                proposed_counts,
+            ) = self._evaluate_log_prob(
                 proposals,
                 transform,
                 context,
                 auxiliary=transform_auxiliary,
             )
+            counts = counts + proposed_counts
+            transition_ratio, transition_counts = (
+                evaluate_log_transition_ratio(
+                    kernel,
+                    current,
+                    proposals,
+                    return_counts=True,
+                )
+            )
+            counts = counts + transition_counts
             transition_ratio = asarray(
-                evaluate_log_transition_ratio(kernel, current, proposals),
+                transition_ratio,
                 xp=xp,
                 like=current_log_prob,
             )
@@ -231,7 +246,7 @@ class MetropolisHastingsMutation(MutationStep):
                 like=state.particles,
             )
 
-        context = context.with_metadata(
+        context = context.add_evaluation_counts(counts).with_metadata(
             metropolis_hastings_acceptance=acceptance
         )
         logger.debug(

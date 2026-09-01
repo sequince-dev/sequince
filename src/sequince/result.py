@@ -20,6 +20,8 @@ from .utils.random import resolve_rng
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
+    from .target import EvaluationCounts
+
 
 NormalizingConstantVarianceMethod = Literal[
     "incremental",
@@ -402,6 +404,11 @@ class SMCResult:
     def final_state(self) -> ParticleState:
         """Return the last state produced by the run."""
         return self.states[-1]
+
+    @property
+    def evaluation_counts(self) -> EvaluationCounts:
+        """Return the probabilistic work accumulated during the run."""
+        return self.context.evaluation_counts
 
     def log_normalizing_constant(self) -> Array:
         """Return the log normalizing constant of the final state."""

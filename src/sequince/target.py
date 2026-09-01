@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Mapping
 from dataclasses import dataclass
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Callable, Self, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Self, cast, overload
 from uuid import uuid4
 
 import array_api_extra as xpx
@@ -24,6 +24,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TargetComponentFn = Callable[..., Array | float]
+
+
+@pytree_dataclass(
+    data_fields=(
+        "target_evaluations",
+        "proposal_evaluations",
+    )
+)
+@dataclass(frozen=True)
+class EvaluationCounts:
+    """Backend-compatible counters for probabilistic model evaluations."""
+
+    target_evaluations: Any = 0
+    proposal_evaluations: Any = 0
+
+    def __add__(self, other: EvaluationCounts) -> EvaluationCounts:
+        if not isinstance(other, EvaluationCounts):
+            return NotImplemented
+        return type(self)(
+            target_evaluations=(
+                self.target_evaluations + other.target_evaluations
+            ),
+            proposal_evaluations=(
+                self.proposal_evaluations + other.proposal_evaluations
+            ),
+        )
+
+    @classmethod
+    def zeros(cls, *, xp: Any | None = None) -> EvaluationCounts:
+        """Return zero counts, optionally as scalars from an array namespace."""
+        if xp is None:
+            return cls()
+        zero = xp.asarray(0)
+        return cls(zero, zero)
 
 
 def _evaluate_component(
@@ -370,17 +404,52 @@ class Target(ABC):
             self.evaluation_key(context),
         )
 
+    @overload
     def prepare_evaluation(
         self,
         particles: Array,
         context: StepContext,
         *,
         evaluation: TargetEvaluation | None = None,
+        components: Collection[str] | None = None,
         refresh_components: Collection[str] = (),
-    ) -> TargetEvaluation:
-        """Return a compatible evaluation, refreshing it when required."""
+        return_counts: Literal[False] = False,
+    ) -> TargetEvaluation: ...
+
+    @overload
+    def prepare_evaluation(
+        self,
+        particles: Array,
+        context: StepContext,
+        *,
+        evaluation: TargetEvaluation | None = None,
+        components: Collection[str] | None = None,
+        refresh_components: Collection[str] = (),
+        return_counts: Literal[True],
+    ) -> tuple[TargetEvaluation, EvaluationCounts]: ...
+
+    def prepare_evaluation(
+        self,
+        particles: Array,
+        context: StepContext,
+        *,
+        evaluation: TargetEvaluation | None = None,
+        components: Collection[str] | None = None,
+        refresh_components: Collection[str] = (),
+        return_counts: bool = False,
+    ) -> TargetEvaluation | tuple[TargetEvaluation, EvaluationCounts]:
+        """Return a compatible evaluation, optionally with new work counts.
+
+        ``components`` limits a fresh evaluation. ``refresh_components``
+        requests recomputation when a compatible cached evaluation is supplied.
+        """
+        xp = namespace(particles)
         if evaluation is None:
-            prepared = self.evaluate(particles, context)
+            prepared, counts = self._evaluate(
+                particles,
+                context,
+                components=components,
+            )
         elif not self.accepts_evaluation(evaluation, context):
             logger.debug(
                 "Discarding evaluation from target %s at key %r; "
@@ -391,20 +460,27 @@ class Target(ABC):
                 self.evaluation_id,
                 self.evaluation_key(context),
             )
-            prepared = self.evaluate(particles, context)
+            prepared, counts = self._evaluate(
+                particles,
+                context,
+                components=components,
+            )
         elif refresh_components:
             evaluation.validate_for(particles)
-            prepared = self.refresh(
+            prepared, counts = self._evaluate(
                 particles,
-                evaluation,
                 context,
+                evaluation=evaluation,
                 components=refresh_components,
+                refresh=True,
             )
         else:
             evaluation.validate_for(particles)
-            return evaluation
+            counts = EvaluationCounts.zeros(xp=xp)
+            return (evaluation, counts) if return_counts else evaluation
         prepared.validate_for(particles)
-        return self.bind_evaluation(prepared, context)
+        prepared = self.bind_evaluation(prepared, context)
+        return (prepared, counts) if return_counts else prepared
 
     def validate_evaluation(
         self,
@@ -444,6 +520,46 @@ class Target(ABC):
             context,
             components=components,
             evaluation=evaluation,
+        )
+
+    def _evaluate(
+        self,
+        particles: Array,
+        context: StepContext,
+        *,
+        components: Collection[str] | None = None,
+        evaluation: TargetEvaluation | None = None,
+        refresh: bool = False,
+    ) -> tuple[TargetEvaluation, EvaluationCounts]:
+        """Evaluate the target and report newly incurred work.
+
+        Custom targets default to one target evaluation per particle. They may
+        override this method when they can classify their component work more
+        precisely.
+        """
+        if refresh:
+            if evaluation is None or components is None:
+                raise ValueError(
+                    "Refreshing requires an evaluation and component names."
+                )
+            result = self.refresh(
+                particles,
+                evaluation,
+                context,
+                components=components,
+            )
+        else:
+            result = self.evaluate(
+                particles,
+                context,
+                components=components,
+                evaluation=evaluation,
+            )
+        xp = namespace(particles)
+        n_particles = 1 if particles.ndim == 1 else particles.shape[0]
+        return result, EvaluationCounts(
+            target_evaluations=xp.asarray(n_particles),
+            proposal_evaluations=xp.asarray(0),
         )
 
     @abstractmethod

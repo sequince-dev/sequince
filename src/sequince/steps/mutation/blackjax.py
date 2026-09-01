@@ -10,6 +10,7 @@ from array_api_compat import is_jax_namespace
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
+from ...target import EvaluationCounts
 from ...transforms import (
     ParticleTransform,
     has_particle_aligned_auxiliary,
@@ -231,7 +232,7 @@ class BlackJAXMutation(MutationStep):
                 context,
                 auxiliary=particle_auxiliary,
             )
-            result, _ = self._evaluate_target(original, context)
+            result, _, _ = self._evaluate_target(original, context)
             result = self._combine_with_log_det(result, log_det)
             scalar = jnp.reshape(jnp.asarray(result), ())
             return jnp.where(jnp.isnan(scalar), -jnp.inf, scalar)
@@ -297,7 +298,29 @@ class BlackJAXMutation(MutationStep):
             context,
             auxiliary=transform_auxiliary,
         )
-        _, final_evaluation = self._evaluate_target(new_particles, context)
+        _, final_evaluation, final_counts = self._evaluate_target(
+            new_particles, context
+        )
+
+        integration_steps = getattr(infos, "num_integration_steps", None)
+        if integration_steps is None:
+            internal_evaluation_points = n_particles * (self._n_steps + 1)
+        else:
+            internal_evaluation_points = n_particles + jnp.sum(
+                integration_steps
+            )
+        total_evaluation_points = internal_evaluation_points + n_particles
+        counts = EvaluationCounts(
+            target_evaluations=(
+                (final_counts.target_evaluations // n_particles)
+                * total_evaluation_points
+            ),
+            proposal_evaluations=(
+                (final_counts.proposal_evaluations // n_particles)
+                * total_evaluation_points
+            ),
+        )
+        context = context.add_evaluation_counts(counts)
 
         acceptance = getattr(infos, "acceptance_rate", None)
         if acceptance is None:

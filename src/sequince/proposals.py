@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .posterior import TemperedPosterior
     from .state import ParticleState
     from .steps.context import StepContext
-    from .target import Target
+from .target import EvaluationCounts, Target
 
 logger = logging.getLogger(__name__)
 
@@ -214,13 +214,8 @@ def _proposal_batch(
     )
     xp = namespace(particles, log_proposal)
     particles = asarray(particles, xp=xp)
-    if particles.ndim == 0 or particles.shape[0] != n_particles:
-        raise ValueError(
-            "Proposal must return exactly one particle per requested sample."
-        )
-    if not bool(to_numpy(xp.all(xp.isfinite(particles)))):
-        raise ValueError("Proposal returned non-finite particles.")
-
+    particles = _validate_proposal_particles(particles, n_particles)
+    log_proposal = asarray(log_proposal, xp=xp, like=particles)
     log_proposal = _particle_values(
         log_proposal,
         particles,
@@ -229,6 +224,22 @@ def _proposal_batch(
     if not bool(to_numpy(xp.all(xp.isfinite(log_proposal)))):
         raise ValueError("Proposal returned non-finite log densities.")
     return particles, log_proposal
+
+
+def _validate_proposal_particles(
+    particles: Array,
+    n_particles: int,
+) -> Array:
+    """Validate particles drawn from a proposal."""
+    xp = namespace(particles)
+    particles = asarray(particles, xp=xp)
+    if particles.ndim == 0 or particles.shape[0] != n_particles:
+        raise ValueError(
+            "Proposal must return exactly one particle per requested sample."
+        )
+    if not bool(to_numpy(xp.all(xp.isfinite(particles)))):
+        raise ValueError("Proposal returned non-finite particles.")
+    return particles
 
 
 def _particle_values(values: Any, particles: Array, *, name: str) -> Array:
@@ -259,10 +270,12 @@ def draw_initial_state(
 ) -> "ParticleState":
     """Draw one initial population and retain its target evaluation.
 
-    The proposal must return finite particles and log densities. Non-finite
-    posterior densities are retained because discarding them would condition
-    the proposal and invalidate evidence estimates. NaN target evaluations are
-    rejected as evaluation errors.
+    The proposal must return finite particles. Its log density is only
+    evaluated when the posterior has an explicit proposal endpoint; otherwise
+    the proposal is assumed to be the prior. Non-finite posterior densities are
+    retained because discarding them would condition the proposal and
+    invalidate evidence estimates. NaN target evaluations are rejected as
+    evaluation errors.
     """
     from .state import ParticleState
     from .steps.context import StepContext
@@ -272,27 +285,52 @@ def draw_initial_state(
         raise ValueError("n_particles must be positive.")
 
     evaluation_context = context or StepContext(t=0)
-    particles, log_proposal = _proposal_batch(
-        proposal,
-        n_particles,
-        evaluation_context,
-        rng=rng,
-        xp=xp,
-    )
-    xp = namespace(particles, log_proposal)
+    log_proposal_fn = None
+    if posterior is not None:
+        log_proposal_fn = posterior.resolve_log_proposal(
+            evaluation_context.metadata.get(
+                posterior.log_proposal_override_key
+            )
+        )
+    if posterior is not None and log_proposal_fn is None:
+        particles = proposal.sample(
+            n_particles,
+            context=evaluation_context,
+            rng=rng,
+            xp=xp,
+        )
+        particles = _validate_proposal_particles(particles, n_particles)
+        log_proposal = None
+        counts = EvaluationCounts()
+    else:
+        particles, log_proposal = _proposal_batch(
+            proposal,
+            n_particles,
+            evaluation_context,
+            rng=rng,
+            xp=xp,
+        )
+        counts = EvaluationCounts(
+            proposal_evaluations=n_particles,
+        )
+    xp = namespace(particles)
 
     evaluation = None
     if posterior is not None:
-        evaluation = posterior.bind_evaluation(
-            TargetEvaluation(components={"log_proposal": log_proposal}),
-            evaluation_context,
-        )
-        evaluation = posterior.evaluate(
+        if log_proposal is not None:
+            evaluation = posterior.bind_evaluation(
+                TargetEvaluation(components={"log_proposal": log_proposal}),
+                evaluation_context,
+            )
+        evaluation, target_counts = posterior.prepare_evaluation(
             particles,
             evaluation_context,
             components={"log_prior", "log_likelihood"},
             evaluation=evaluation,
+            refresh_components={"log_prior", "log_likelihood"},
+            return_counts=True,
         )
+        counts = counts + target_counts
         if any(
             bool(to_numpy(xp.any(xp.isnan(values) | (values == float("inf")))))
             for values in evaluation.components.values()
@@ -301,7 +339,11 @@ def draw_initial_state(
                 "Posterior evaluation returned NaN or +inf values."
             )
 
-    return ParticleState(particles=particles, evaluation=evaluation)
+    return ParticleState(
+        particles=particles,
+        evaluation=evaluation,
+        metadata={"evaluation_counts": counts},
+    )
 
 
 def draw_mcmc_initial_state(
@@ -334,6 +376,7 @@ def draw_mcmc_initial_state(
     accepted: list[Array] = []
     accepted_evaluations: list[TargetEvaluation] = []
     n_accepted = 0
+    counts = EvaluationCounts()
     for _ in range(max_batches):
         particles, _ = _proposal_batch(
             proposal,
@@ -343,12 +386,17 @@ def draw_mcmc_initial_state(
             xp=xp,
         )
         xp = namespace(particles)
+        counts = counts + EvaluationCounts(
+            proposal_evaluations=n_particles,
+        )
         evaluation = None
         if isinstance(log_prob_fn, Target):
-            evaluation = log_prob_fn.prepare_evaluation(
+            evaluation, target_counts = log_prob_fn.prepare_evaluation(
                 particles,
                 evaluation_context,
+                return_counts=True,
             )
+            counts = counts + target_counts
             log_prob = log_prob_fn.log_prob(
                 particles,
                 evaluation_context,
@@ -397,4 +445,8 @@ def draw_mcmc_initial_state(
         evaluation = TargetEvaluation.concatenate(accepted_evaluations).take(
             xp.arange(n_particles, device=get_device(particles))
         )
-    return ParticleState(particles=particles, evaluation=evaluation)
+    return ParticleState(
+        particles=particles,
+        evaluation=evaluation,
+        metadata={"evaluation_counts": counts},
+    )
