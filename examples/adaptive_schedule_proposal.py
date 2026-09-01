@@ -48,10 +48,10 @@ def log_proposal(particles: np.ndarray, context) -> np.ndarray:
 
 
 def logging_fn(state: ParticleState, context: StepContext) -> str:
-    current_temp = context.metadata.get("temperature", 0.0)
+    current_beta = context.metadata.get("beta", 0.0)
     return (
         f"SMC iteration {context.t}: "
-        f"Temperature={current_temp:.2g}, "
+        f"Beta={current_beta:.2g}, "
         f"Log-evidence={state.log_evidence:.2g}"
     )
 
@@ -77,7 +77,7 @@ def main() -> None:
     initial_state = ParticleState(
         particles=initial_particles,
         log_weights=initial_log_weights,
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
 
     posterior = TemperedPosterior(
@@ -118,12 +118,12 @@ def main() -> None:
     print("Posterior covariance estimate:")
     print(np.round(posterior_cov, 3))
 
-    # Plot temperature and log-evidence history
+    # Plot beta and log-evidence history
     fig, axes = plt.subplots(2, 1, figsize=(6, 6))
-    results.plot_metadata_history("temperature", ax=axes[0])
+    results.plot_metadata_history("beta", ax=axes[0])
     results.plot_log_evidence(ax=axes[1])
     plt.tight_layout()
-    fig.savefig("adaptive_temperature_proposal_history.png")
+    fig.savefig("adaptive_beta_proposal_history.png")
 
     # Plot initial and final particle distributions on the same axis
     fig, ax = plt.subplots()
@@ -164,12 +164,12 @@ def main() -> None:
             color="black",
         )
         for state in results.states[1:-1]:
-            temp = state.metadata.get("temperature", 0.0)
+            beta = state.metadata.get("beta", 0.0)
             axes[d].hist(
                 state.particles[:, d],
                 bins=16,
                 density=True,
-                color=plt.cm.viridis(temp),
+                color=plt.cm.viridis(beta),
                 histtype="step",
                 ls="--",
             )

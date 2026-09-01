@@ -107,6 +107,8 @@ def main() -> None:
         mutation_n_steps=4,
     )
 
+    result.save_to_file("adaptive_schedule_results.h5")
+
     # Analyze the posterior particles
     particles = posterior_state.particles
     mean_estimate = np.mean(particles, axis=0)
@@ -116,9 +118,9 @@ def main() -> None:
 
     fig, axes = plt.subplots(3, 1)
     result.plot_log_evidence(ax=axes[0])
-    result.plot_metadata_history("temperature", ax=axes[1])
+    result.plot_metadata_history("beta", ax=axes[1])
     result.plot_metadata_history("target_ess_ratio", ax=axes[2])
-    fig.savefig("adaptive_temperature_history.png")
+    fig.savefig("adaptive_beta_history.png")
 
     fig, ax = plt.subplots(2, 1)
     result.plot_metadata_history(
