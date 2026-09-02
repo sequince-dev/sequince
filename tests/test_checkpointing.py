@@ -250,8 +250,9 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
         shared={"alpha": 1.5},
         metadata={"notes": ["x"]},
         evaluation_counts=EvaluationCounts(
-            target_evaluations=12,
-            proposal_evaluations=7,
+            log_target_evaluations=12,
+            log_proposal_evaluations=7,
+            log_increment_evaluations=5,
         ),
     )
     state = particle_state.with_updates(

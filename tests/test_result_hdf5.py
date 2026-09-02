@@ -123,8 +123,9 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
             "nested": {"particle_transform": "user value"},
         },
         evaluation_counts=EvaluationCounts(
-            target_evaluations=12,
-            proposal_evaluations=7,
+            log_target_evaluations=12,
+            log_proposal_evaluations=7,
+            log_increment_evaluations=5,
         ),
         stop_requested=True,
         stop_immediately=False,

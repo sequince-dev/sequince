@@ -164,7 +164,7 @@ def test_target_owns_and_reuses_cached_evaluations(context_factory) -> None:
     assert replaced.target_id == other_target.evaluation_id
 
 
-def test_custom_target_counts_evaluated_particles_by_default(
+def test_custom_target_counts_log_target_evaluations_by_default(
     context_factory,
 ) -> None:
     particles = np.zeros((3, 1))
@@ -191,9 +191,9 @@ def test_custom_target_counts_evaluated_particles_by_default(
     )
 
     assert cached is evaluation
-    assert counts.target_evaluations == 3
+    assert counts.log_target_evaluations == 3
     assert cached_counts == EvaluationCounts.zeros(xp=np)
-    assert refreshed_counts.target_evaluations == 3
+    assert refreshed_counts.log_target_evaluations == 3
 
 
 def test_sequential_target_does_not_assume_beta(context_factory) -> None:

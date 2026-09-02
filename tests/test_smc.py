@@ -107,8 +107,8 @@ def test_smc_consumes_initial_evaluation_counts(
     particle_state: ParticleState, rng
 ) -> None:
     counts = EvaluationCounts(
-        target_evaluations=5,
-        proposal_evaluations=5,
+        log_target_evaluations=5,
+        log_proposal_evaluations=5,
     )
     particle_state.metadata["evaluation_counts"] = counts
     smc = SequentialMonteCarlo(steps=[StopAfterNStep(limit=1)])

@@ -52,10 +52,13 @@ def test_callable_kernel_computes_ratio_from_density(rng) -> None:
     np.testing.assert_allclose(
         kernel.log_transition_ratio(particles, proposals), expected
     )
+    np.testing.assert_allclose(
+        evaluate_log_transition_ratio(kernel, particles, proposals), expected
+    )
     _, counts = evaluate_log_transition_ratio(
         kernel, particles, proposals, return_counts=True
     )
-    assert counts.proposal_evaluations == 2 * len(particles)
+    assert counts.log_proposal_evaluations == 0
 
 
 def test_callable_kernel_requires_one_transition_correction() -> None:
@@ -133,7 +136,7 @@ def test_mixture_kernel_selects_component_for_complete_sweep(rng) -> None:
     _, counts = evaluate_log_transition_ratio(
         kernel, particles, proposals, return_counts=True
     )
-    assert counts.proposal_evaluations == 0
+    assert counts.log_proposal_evaluations == 0
     assert kernel.selected_kernel is first
 
 

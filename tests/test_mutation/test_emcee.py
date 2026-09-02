@@ -117,7 +117,7 @@ def test_emcee_uses_blobs_for_final_target_evaluation(
             result.evaluation[component], expected[component]
         )
     n_walkers = particle_state.particles.shape[0]
-    assert context.evaluation_counts.target_evaluations == n_walkers * (
+    assert context.evaluation_counts.log_target_evaluations == n_walkers * (
         n_steps + 1
     )
 

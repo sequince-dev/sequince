@@ -46,8 +46,8 @@ def test_metropolis_tracks_target_and_proposal_work(rng) -> None:
         rng,
     )
 
-    assert context.evaluation_counts.target_evaluations == 12
-    assert context.evaluation_counts.proposal_evaluations == 0
+    assert context.evaluation_counts.log_target_evaluations == 12
+    assert context.evaluation_counts.log_proposal_evaluations == 0
 
 
 def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
@@ -119,10 +119,11 @@ def test_metropolis_hastings_mutation_applies_transition_ratio(
         kernel,
     )
 
-    updated, _, output = step(particle_state, context_factory(), rng)
+    updated, context, output = step(particle_state, context_factory(), rng)
 
     np.testing.assert_allclose(updated.particles, particle_state.particles)
     assert output["acceptance"] == 0.0
+    assert context.evaluation_counts.log_proposal_evaluations == 0
 
 
 def test_metropolis_hastings_mutation_supports_kernel_factory(

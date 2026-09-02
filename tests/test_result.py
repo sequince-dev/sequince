@@ -36,8 +36,8 @@ def test_smc_results_indexing(
 
 def test_smc_result_exposes_evaluation_counts(particle_state) -> None:
     counts = EvaluationCounts(
-        target_evaluations=12,
-        proposal_evaluations=3,
+        log_target_evaluations=12,
+        log_proposal_evaluations=3,
     )
     result = SMCResult(
         [particle_state],

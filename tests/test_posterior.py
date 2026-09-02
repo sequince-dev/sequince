@@ -30,7 +30,7 @@ def test_tempered_posterior_implements_tempered_target() -> None:
     assert isinstance(target, TemperedTarget)
 
 
-def test_tempered_posterior_reports_new_component_evaluations() -> None:
+def test_tempered_posterior_reports_proposal_component_evaluations() -> None:
     particles = np.zeros((5, 2))
     context = StepContext(t=0, metadata={"temperature": 0.5})
     target = TemperedPosterior(
@@ -44,8 +44,8 @@ def test_tempered_posterior_reports_new_component_evaluations() -> None:
     )
 
     assert counts == EvaluationCounts(
-        target_evaluations=5,
-        proposal_evaluations=5,
+        log_target_evaluations=5,
+        log_proposal_evaluations=5,
     )
 
     cached, cached_counts = target.prepare_evaluation(
@@ -64,7 +64,7 @@ def test_tempered_posterior_reports_new_component_evaluations() -> None:
         refresh_components={"log_likelihood"},
         return_counts=True,
     )
-    assert refreshed_counts == EvaluationCounts(target_evaluations=5)
+    assert refreshed_counts == EvaluationCounts(log_target_evaluations=5)
 
 
 def test_targets_receive_distinct_automatic_evaluation_ids() -> None:

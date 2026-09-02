@@ -147,8 +147,8 @@ def test_persistent_red_blue_kernel_transition_ratio_is_applied(
 
     np.testing.assert_array_equal(updated.particles, particles)
     assert output["acceptance"] == 0.0
-    assert returned_context.evaluation_counts.target_evaluations == 0
-    assert returned_context.evaluation_counts.proposal_evaluations == 6
+    assert returned_context.evaluation_counts.log_target_evaluations == 12
+    assert returned_context.evaluation_counts.log_proposal_evaluations == 0
 
 
 def test_fixed_rng_replays_stochastic_red_blue_result(context_factory) -> None:
@@ -205,8 +205,8 @@ def test_only_active_particles_are_evaluated(context_factory) -> None:
     assert evaluation_sizes == [5, 2, 3, 2, 3]
     assert sum(evaluation_sizes[1:3]) == 5
     assert sum(evaluation_sizes[3:]) == 5
-    assert returned_context.evaluation_counts.target_evaluations == 0
-    assert returned_context.evaluation_counts.proposal_evaluations == 0
+    assert returned_context.evaluation_counts.log_target_evaluations == 15
+    assert returned_context.evaluation_counts.log_proposal_evaluations == 0
 
 
 def test_acceptance_updates_only_the_active_half(context_factory) -> None:
@@ -294,8 +294,8 @@ def test_cached_target_cost_is_one_population_per_sweep(
     assert calls["likelihood"] == [2, 3, 2, 3]
     assert sum(calls["prior"]) == 2 * state.particles.shape[0]
     assert sum(calls["likelihood"]) == 2 * state.particles.shape[0]
-    assert returned_context.evaluation_counts.target_evaluations == 10
-    assert returned_context.evaluation_counts.proposal_evaluations == 0
+    assert returned_context.evaluation_counts.log_target_evaluations == 10
+    assert returned_context.evaluation_counts.log_proposal_evaluations == 0
 
 
 class StructuredAuxiliaryTransform(ParticleTransform):
