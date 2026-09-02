@@ -323,10 +323,11 @@ def make_persistent_bayesian_smc(
 
     The caller should initialize an ordinary :class:`ParticleState` containing
     ``n_particles`` draws from the initial target. The first persistence step
-    archives that state at beta zero, and the adaptive weighting step
-    requests an immediate runner stop once its terminal ESS condition is met.
-    Progress is logged every ``logging_frequency`` iterations and once more for
-    the terminal weighted state. Set ``logging_frequency=0`` to disable it.
+    prepares the target evaluation automatically and archives the state at beta
+    zero. The adaptive weighting step requests an immediate runner stop once its
+    terminal ESS condition is met. Progress is logged every
+    ``logging_frequency`` iterations and once more for the terminal weighted
+    state. Set ``logging_frequency=0`` to disable it.
 
     For more details see https://arxiv.org/abs/2407.20722.
     """
@@ -344,7 +345,7 @@ def make_persistent_bayesian_smc(
         log_proposal=log_proposal,
     )
 
-    persist_step = PersistParticles()
+    persist_step = PersistParticles(posterior)
     weighting_step = PersistentAdaptiveTemperedWeighting(
         posterior,
         target_ess=target_ess,
