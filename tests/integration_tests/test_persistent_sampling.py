@@ -13,7 +13,6 @@ from sequince import (
     make_persistent_bayesian_smc,
 )
 from sequince.checkpoint import PickleCheckpointWriter, SMCCheckpoint
-from sequince.smc import SequentialMonteCarlo
 from sequince.steps import (
     PersistParticles,
     StepContext,
@@ -178,14 +177,13 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
         scale=2.0,
         size=(n_particles, 1),
     )
-    initial_state = ParticleState(initial_particles)
 
     def make_sampler(
         *,
         checkpoint_writers=(),
         callbacks=(),
-    ) -> SequentialMonteCarlo:
-        sampler, _, _ = make_persistent_bayesian_smc(
+    ):
+        return make_persistent_bayesian_smc(
             log_prior,
             log_likelihood,
             n_particles=n_particles,
@@ -196,12 +194,13 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             checkpoint_writers=checkpoint_writers,
             callbacks=callbacks,
         )
-        return sampler
 
-    reference = make_sampler().run(
+    reference_sampler, _, metadata = make_sampler()
+    initial_state = ParticleState(initial_particles)
+    reference = reference_sampler.run(
         initial_state,
         rng=5678,
-        metadata={"beta": 0.0},
+        metadata=metadata,
     )
     first_nonterminal_beta_one = next(
         index
@@ -213,12 +212,14 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
 
     checkpoint_path = tmp_path / "persistent.pkl"
     writer = PickleCheckpointWriter(checkpoint_path, every=1)
-    partial_sampler = make_sampler(checkpoint_writers=[writer])
+    partial_sampler, _, partial_metadata = make_sampler(
+        checkpoint_writers=[writer]
+    )
     partial = partial_sampler.run(
         initial_state,
         num_steps=split_after,
         rng=5678,
-        metadata={"beta": 0.0},
+        metadata=partial_metadata,
     )
     checkpoint = SMCCheckpoint.load_pickle(checkpoint_path)
     partial_persist = partial_sampler._steps[0]  # noqa: SLF001
@@ -251,7 +252,9 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             copy=True,
         )
 
-    resumed_sampler = make_sampler(callbacks=[inspect_first_resumed_archive])
+    resumed_sampler, _, _ = make_sampler(
+        callbacks=[inspect_first_resumed_archive]
+    )
     resumed_persist = resumed_sampler._steps[0]  # noqa: SLF001
     assert isinstance(resumed_persist, PersistParticles)
     resumed_steps["persist"] = resumed_persist
