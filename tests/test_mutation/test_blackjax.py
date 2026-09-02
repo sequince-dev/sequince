@@ -81,6 +81,11 @@ def test_blackjax_mutates_jax_particles(algorithm, algorithm_kwargs) -> None:
     assert 0.0 <= output["acceptance"] <= 1.0
     assert "mutation_chains" not in result.metadata
     assert output["chain"].shape == (2, 4, 2)
+    if algorithm in {"nuts", "hmc"}:
+        assert output["num_integration_steps"].shape == (2, 4)
+        assert np.all(np.asarray(output["num_integration_steps"]) > 0)
+    else:
+        assert output["num_integration_steps"] is None
     assert np.all(np.isfinite(np.asarray(result.particles)))
 
 

@@ -32,7 +32,12 @@ BlackJAXAlgorithmFactory = Callable[..., Any]
 
 
 @pytree_dataclass(
-    data_fields=("acceptance", "divergence", "chain"),
+    data_fields=(
+        "acceptance",
+        "divergence",
+        "chain",
+        "num_integration_steps",
+    ),
     meta_fields=("algorithm", "steps"),
 )
 @dataclass(frozen=True)
@@ -44,6 +49,7 @@ class BlackJAXOutput(Mapping[str, Any]):
     algorithm: str
     steps: int
     chain: Any
+    num_integration_steps: Any = None
 
     def __getitem__(self, key: str) -> Any:
         if key not in {
@@ -52,17 +58,25 @@ class BlackJAXOutput(Mapping[str, Any]):
             "algorithm",
             "steps",
             "chain",
+            "num_integration_steps",
         }:
             raise KeyError(key)
         return getattr(self, key)
 
     def __iter__(self):
         return iter(
-            ("acceptance", "divergence", "algorithm", "steps", "chain")
+            (
+                "acceptance",
+                "divergence",
+                "algorithm",
+                "steps",
+                "chain",
+                "num_integration_steps",
+            )
         )
 
     def __len__(self) -> int:
-        return 5
+        return 6
 
 
 class BlackJAXMutation(MutationStep):
@@ -355,6 +369,7 @@ class BlackJAXMutation(MutationStep):
             algorithm=self.algorithm_name,
             steps=self._n_steps,
             chain=stored_chain,
+            num_integration_steps=integration_steps,
         )
         return (
             state.replace_particles(

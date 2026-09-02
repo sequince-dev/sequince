@@ -148,6 +148,7 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
                 algorithm="hmc",
                 steps=3,
                 chain=None,
+                num_integration_steps=np.array([[2, 3]]),
             ),
             {"nested": [np.array([1, 2]), ("x", None)]},
         ),
