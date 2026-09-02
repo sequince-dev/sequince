@@ -26,7 +26,6 @@ from .steps.base import SMCStep, StepContext
 from .steps.mutation import MutateIfResampled, get_mutation_step
 from .steps.resampling import ResamplingStep
 from .steps.weighting import TargetESSRatio
-from .target import TemperedTarget
 from .transforms import ParticleTransform, get_prebuilt_transform
 
 if TYPE_CHECKING:
@@ -291,10 +290,12 @@ def make_standard_bayesian_smc(
 
 
 def make_persistent_bayesian_smc(
-    target: TemperedTarget,
+    log_prior: Callable[..., Any],
+    log_likelihood: Callable[..., Any],
     *,
+    log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
     n_particles: int = 256,
-    target_ess: float = 512,
+    target_ess: float | None = None,
     target_total_ess: float | None = None,
     weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy | ResamplingStep = "systematic",
@@ -311,20 +312,22 @@ def make_persistent_bayesian_smc(
     ]
     | None = None,
     checkpoint_writers: Sequence[CheckpointWriter] | None = None,
-) -> SequentialMonteCarlo:
+) -> tuple[SequentialMonteCarlo, TemperedPosterior, MetaData]:
     """Return an SMC runner configured for persistent sampling.
 
     ``n_particles`` is the active population size drawn from the complete
-    persistent archive on every iteration. ``target_ess`` and
-    ``target_total_ess`` are absolute effective sample sizes of that archive;
-    they are not fractions of the active population size.
+    persistent archive on every iteration. ``target_ess`` defaults to twice
+    ``n_particles``. ``target_ess`` and ``target_total_ess`` are absolute
+    effective sample sizes of that archive; they are not fractions of the active
+    population size.
 
     The caller should initialize an ordinary :class:`ParticleState` containing
     ``n_particles`` draws from the initial target. The first persistence step
-    archives that state at beta zero, and the adaptive weighting step
-    requests an immediate runner stop once its terminal ESS condition is met.
-    Progress is logged every ``logging_frequency`` iterations and once more for
-    the terminal weighted state. Set ``logging_frequency=0`` to disable it.
+    prepares the target evaluation automatically and archives the state at beta
+    zero. The adaptive weighting step requests an immediate runner stop once its
+    terminal ESS condition is met. Progress is logged every
+    ``logging_frequency`` iterations and once more for the terminal weighted
+    state. Set ``logging_frequency=0`` to disable it.
 
     For more details see https://arxiv.org/abs/2407.20722.
     """
@@ -333,10 +336,18 @@ def make_persistent_bayesian_smc(
     if n_particles <= 0:
         raise ValueError("n_particles must be a positive integer.")
     n_particles = int(n_particles)
+    if target_ess is None:
+        target_ess = 2 * n_particles
 
-    persist_step = PersistParticles()
+    posterior = TemperedPosterior(
+        log_prior=log_prior,
+        log_likelihood=log_likelihood,
+        log_proposal=log_proposal,
+    )
+
+    persist_step = PersistParticles(posterior)
     weighting_step = PersistentAdaptiveTemperedWeighting(
-        target,
+        posterior,
         target_ess=target_ess,
         target_total_ess=target_total_ess,
         **weighting_kwargs or {},
@@ -408,7 +419,7 @@ def make_persistent_bayesian_smc(
 
     mutation_step = get_mutation_step(
         mutation,
-        target=target,
+        target=posterior,
         transform=particle_transform,
         mutation_n_steps=mutation_n_steps,
         mutation_kwargs=mutation_kwargs,
@@ -472,9 +483,10 @@ def make_persistent_bayesian_smc(
 
         configured_callbacks.append(logging_callback)
 
-    return SequentialMonteCarlo(
+    runner = SequentialMonteCarlo(
         steps=steps,
         callbacks=configured_callbacks,
         checkpoint_writers=checkpoint_writers,
         auto_normalize=auto_normalize,
     )
+    return runner, posterior, {}

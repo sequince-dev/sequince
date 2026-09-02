@@ -16,7 +16,7 @@ from ..state import (
     _validate_log_normalizer,
 )
 from ..stats import ess_from_log_weights
-from ..target import TemperedTarget
+from ..target import Target, TemperedTarget
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep
 from .context import StepContext
@@ -136,7 +136,10 @@ def persistent_log_weights(
 class PersistParticles(SMCStep):
     """Retain each completed active particle population in a persistent archive."""
 
-    def __init__(self) -> None:
+    def __init__(self, target: Target | None = None) -> None:
+        if target is not None and not isinstance(target, Target):
+            raise TypeError("target must be a Target instance or None.")
+        self._target = target
         self.persistent_state: PersistentParticleState | None = None
 
     def apply(
@@ -149,6 +152,14 @@ class PersistParticles(SMCStep):
         if isinstance(state, PersistentParticleState):
             raise TypeError(
                 "PersistParticles requires an active ParticleState."
+            )
+        if self._target is not None:
+            state = state.with_updates(
+                evaluation=self._target.prepare_evaluation(
+                    state.particles,
+                    context,
+                    evaluation=state.evaluation,
+                )
             )
 
         # Match BaseTemperedStep: context is authoritative, active-state metadata
@@ -171,16 +182,30 @@ class PersistParticles(SMCStep):
 
     def state_dict(self) -> dict[str, Any]:
         """Return the archive in checkpoint-friendly mapping form."""
-        return {
+        payload: dict[str, Any] = {
             "persistent_state": (
                 None
                 if self.persistent_state is None
                 else self.persistent_state.to_dict()
             )
         }
+        if self._target is not None:
+            payload["target_evaluation_id"] = self._target.evaluation_id
+        return payload
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
         """Restore an archive produced by :meth:`state_dict`."""
+        evaluation_id = state.get("target_evaluation_id")
+        if evaluation_id is not None:
+            if self._target is None:
+                raise ValueError(
+                    "Checkpoint requires PersistParticles to have a target."
+                )
+            if not isinstance(evaluation_id, str):
+                raise TypeError(
+                    "PersistParticles target_evaluation_id must be a string."
+                )
+            object.__setattr__(self._target, "_evaluation_id", evaluation_id)
         payload = state.get("persistent_state")
         if payload is None:
             self.persistent_state = None

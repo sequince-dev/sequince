@@ -276,6 +276,22 @@ def test_persist_particles_creates_and_appends_completed_batches(rng) -> None:
     )
 
 
+def test_persist_particles_prepares_missing_target_evaluation(rng) -> None:
+    target, calls = _linear_target()
+    particles = np.array([[-1.0], [1.0]])
+    state = ParticleState(particles)
+    context = StepContext(t=0, metadata={"beta": 0.0})
+
+    archived, _, _ = PersistParticles(target).apply(state, context, rng)
+
+    assert archived.evaluation is not None
+    assert target.accepts_evaluation(archived.evaluation, context)
+    np.testing.assert_array_equal(
+        archived.evaluation["log_likelihood"], particles[:, 0]
+    )
+    assert calls == {"initial": 1, "increment": 1}
+
+
 def test_first_persistent_weighting_is_direct_and_preserves_history(
     rng,
 ) -> None:

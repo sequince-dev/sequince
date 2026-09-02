@@ -10,11 +10,9 @@ import pytest
 from sequince import (
     ParticleState,
     PersistentParticleState,
-    TemperedPosterior,
     make_persistent_bayesian_smc,
 )
 from sequince.checkpoint import PickleCheckpointWriter, SMCCheckpoint
-from sequince.smc import SequentialMonteCarlo
 from sequince.steps import (
     PersistParticles,
     StepContext,
@@ -27,12 +25,9 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
 ) -> None:
     n_particles = 32
     target_ess = 2 * n_particles
-    target = TemperedPosterior(
-        log_prior=gaussian_log_prior,
-        log_likelihood=gaussian_log_likelihood,
-    )
-    smc = make_persistent_bayesian_smc(
-        target,
+    smc, target, metadata = make_persistent_bayesian_smc(
+        gaussian_log_prior,
+        gaussian_log_likelihood,
         n_particles=n_particles,
         target_ess=target_ess,
         mutation_n_steps=3,
@@ -52,7 +47,7 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
         ),
     )
 
-    result = smc.run(initial_state, rng=5678)
+    result = smc.run(initial_state, metadata=metadata, rng=5678)
 
     betas = [float(outputs[1]["beta"]) for outputs in result.outputs]
     delta_betas = [
@@ -94,12 +89,9 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
     n_particles = 32
     target_ess = 2 * n_particles
     target_total_ess = 5 * n_particles
-    target = TemperedPosterior(
-        log_prior=gaussian_log_prior,
-        log_likelihood=gaussian_log_likelihood,
-    )
-    smc = make_persistent_bayesian_smc(
-        target,
+    smc, target, metadata = make_persistent_bayesian_smc(
+        gaussian_log_prior,
+        gaussian_log_likelihood,
         n_particles=n_particles,
         target_ess=target_ess,
         target_total_ess=target_total_ess,
@@ -125,7 +117,7 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
     result = smc.run(
         initial_state,
         rng=5678,
-        metadata={"beta": 0.0},
+        metadata=metadata,
     )
 
     delta_betas = [
@@ -180,28 +172,20 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
         values = np.asarray(particles)
         return -0.5 * np.sum((values - 1.5) ** 2, axis=1)
 
-    target = TemperedPosterior(log_prior, log_likelihood)
     initial_particles = np.random.default_rng(1234).normal(
         loc=0.0,
         scale=2.0,
         size=(n_particles, 1),
-    )
-    initial_context = StepContext(t=0, metadata={"beta": 0.0})
-    initial_state = ParticleState(
-        initial_particles,
-        evaluation=target.prepare_evaluation(
-            initial_particles,
-            initial_context,
-        ),
     )
 
     def make_sampler(
         *,
         checkpoint_writers=(),
         callbacks=(),
-    ) -> SequentialMonteCarlo:
+    ):
         return make_persistent_bayesian_smc(
-            target,
+            log_prior,
+            log_likelihood,
             n_particles=n_particles,
             target_ess=target_ess,
             target_total_ess=target_total_ess,
@@ -211,10 +195,12 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             callbacks=callbacks,
         )
 
-    reference = make_sampler().run(
+    reference_sampler, _, metadata = make_sampler()
+    initial_state = ParticleState(initial_particles)
+    reference = reference_sampler.run(
         initial_state,
         rng=5678,
-        metadata={"beta": 0.0},
+        metadata=metadata,
     )
     first_nonterminal_beta_one = next(
         index
@@ -226,12 +212,14 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
 
     checkpoint_path = tmp_path / "persistent.pkl"
     writer = PickleCheckpointWriter(checkpoint_path, every=1)
-    partial_sampler = make_sampler(checkpoint_writers=[writer])
+    partial_sampler, _, partial_metadata = make_sampler(
+        checkpoint_writers=[writer]
+    )
     partial = partial_sampler.run(
         initial_state,
         num_steps=split_after,
         rng=5678,
-        metadata={"beta": 0.0},
+        metadata=partial_metadata,
     )
     checkpoint = SMCCheckpoint.load_pickle(checkpoint_path)
     partial_persist = partial_sampler._steps[0]  # noqa: SLF001
@@ -264,7 +252,9 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             copy=True,
         )
 
-    resumed_sampler = make_sampler(callbacks=[inspect_first_resumed_archive])
+    resumed_sampler, _, _ = make_sampler(
+        callbacks=[inspect_first_resumed_archive]
+    )
     resumed_persist = resumed_sampler._steps[0]  # noqa: SLF001
     assert isinstance(resumed_persist, PersistParticles)
     resumed_steps["persist"] = resumed_persist
