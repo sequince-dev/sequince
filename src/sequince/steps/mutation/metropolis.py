@@ -19,6 +19,7 @@ from .kernels import (
     DifferentialEvolutionKernel,
     GammaRandomization,
     MutationKernel,
+    SymmetricComplementaryEnsembleKernel,
     evaluate_log_transition_ratio,
 )
 
@@ -339,7 +340,13 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         transform_auxiliary: Any,
         context: StepContext,
         rng: "RandomGenerator",
-    ) -> tuple[Array, Array, "TargetEvaluation | None", int]:
+    ) -> tuple[
+        Array,
+        Array,
+        "TargetEvaluation | None",
+        EvaluationCounts,
+        int,
+    ]:
         """Apply one red-blue half-update to the active particle group."""
         xp = namespace(current)
         active = current[active_indices]
@@ -354,7 +361,11 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             raise ValueError(
                 "Mutation kernel must return the same shape as its input."
             )
-        proposed_log_prob, proposed_evaluation = self._evaluate_log_prob(
+        (
+            proposed_log_prob,
+            proposed_evaluation,
+            counts,
+        ) = self._evaluate_log_prob(
             proposals,
             transform,
             context,
@@ -366,6 +377,8 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             complementary,
         )
         n_active = active.shape[0]
+        if not isinstance(kernel, SymmetricComplementaryEnsembleKernel):
+            counts = counts + EvaluationCounts(proposal_evaluations=n_active)
         if transition_ratio.shape != (n_active,):
             raise ValueError(
                 "Mutation kernel must return one transition ratio per particle."
@@ -414,6 +427,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             current,
             current_log_prob,
             current_evaluation,
+            counts,
             accepted_count,
         )
 
@@ -441,7 +455,11 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             raise ValueError(
                 "A red-blue update requires at least two particles."
             )
-        current_log_prob, current_evaluation = self._evaluate_log_prob(
+        (
+            current_log_prob,
+            current_evaluation,
+            counts,
+        ) = self._evaluate_log_prob(
             current,
             transform,
             context,
@@ -463,6 +481,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 current,
                 current_log_prob,
                 current_evaluation,
+                counts_a,
                 accepted_a,
             ) = self._apply_half(
                 current,
@@ -476,11 +495,13 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 context,
                 rng,
             )
+            counts = counts + counts_a
             complementary_b = current[group_a]
             (
                 current,
                 current_log_prob,
                 current_evaluation,
+                counts_b,
                 accepted_b,
             ) = self._apply_half(
                 current,
@@ -494,6 +515,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 context,
                 rng,
             )
+            counts = counts + counts_b
             accepted_sweep = accepted_a + accepted_b
             accepted_total += accepted_sweep
             acceptance_by_step.append(accepted_sweep / n_particles)
@@ -522,7 +544,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 auxiliary=transform_auxiliary,
                 like=state.particles,
             )
-        context = context.with_metadata(
+        context = context.add_evaluation_counts(counts).with_metadata(
             metropolis_hastings_acceptance=acceptance
         )
         logger.debug(

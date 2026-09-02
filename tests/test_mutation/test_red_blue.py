@@ -139,7 +139,7 @@ def test_persistent_red_blue_kernel_transition_ratio_is_applied(
         RejectingKernel(),
     )
 
-    updated, _, output = mutation(
+    updated, returned_context, output = mutation(
         ParticleState(particles),
         context_factory(),
         RandomGenerator(backend="numpy", seed=12),
@@ -147,6 +147,8 @@ def test_persistent_red_blue_kernel_transition_ratio_is_applied(
 
     np.testing.assert_array_equal(updated.particles, particles)
     assert output["acceptance"] == 0.0
+    assert returned_context.evaluation_counts.target_evaluations == 0
+    assert returned_context.evaluation_counts.proposal_evaluations == 6
 
 
 def test_fixed_rng_replays_stochastic_red_blue_result(context_factory) -> None:
@@ -194,7 +196,7 @@ def test_only_active_particles_are_evaluated(context_factory) -> None:
         _shift_kernel(),
         n_steps=2,
     )
-    mutation(
+    _, returned_context, _ = mutation(
         ParticleState(np.zeros((5, 2))),
         context_factory(),
         RandomGenerator(backend="numpy", seed=3),
@@ -203,6 +205,8 @@ def test_only_active_particles_are_evaluated(context_factory) -> None:
     assert evaluation_sizes == [5, 2, 3, 2, 3]
     assert sum(evaluation_sizes[1:3]) == 5
     assert sum(evaluation_sizes[3:]) == 5
+    assert returned_context.evaluation_counts.target_evaluations == 0
+    assert returned_context.evaluation_counts.proposal_evaluations == 0
 
 
 def test_acceptance_updates_only_the_active_half(context_factory) -> None:
@@ -280,7 +284,7 @@ def test_cached_target_cost_is_one_population_per_sweep(
         n_steps=2,
     )
 
-    mutation(
+    _, returned_context, _ = mutation(
         state,
         context,
         RandomGenerator(backend="numpy", seed=21),
@@ -290,6 +294,8 @@ def test_cached_target_cost_is_one_population_per_sweep(
     assert calls["likelihood"] == [2, 3, 2, 3]
     assert sum(calls["prior"]) == 2 * state.particles.shape[0]
     assert sum(calls["likelihood"]) == 2 * state.particles.shape[0]
+    assert returned_context.evaluation_counts.target_evaluations == 10
+    assert returned_context.evaluation_counts.proposal_evaluations == 0
 
 
 class StructuredAuxiliaryTransform(ParticleTransform):
