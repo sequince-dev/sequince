@@ -8,8 +8,12 @@ from ...transforms import ParticleTransform
 from ..base import SMCStep
 from .blackjax import BlackJAXMutation
 from .emcee import EmceeMutation
-from .kernels import get_mutation_kernel
-from .metropolis import MetropolisHastingsMutation
+from .kernels import get_complementary_ensemble_kernel, get_mutation_kernel
+from .metropolis import (
+    DifferentialEvolutionMutation,
+    MetropolisHastingsMutation,
+    RedBlueMetropolisHastingsMutation,
+)
 from .minipcn import MiniPCNMutation
 
 
@@ -66,11 +70,46 @@ def get_mutation_step(
             n_steps=mutation_n_steps,
             **kwargs,
         )
+    elif mutation in {
+        "red-blue-metropolis-hastings",
+        "red-blue-mh",
+        "red-blue",
+    }:
+        try:
+            kernel = kwargs.pop("kernel")
+        except KeyError as exc:
+            raise ValueError(
+                "red-blue-metropolis-hastings mutation requires a 'kernel' option."
+            ) from exc
+        kernel_kwargs = dict(kwargs.pop("kernel_kwargs", {}) or {})
+        if isinstance(kernel, str):
+            kernel = get_complementary_ensemble_kernel(
+                kernel,
+                **kernel_kwargs,
+            )
+        elif kernel_kwargs:
+            raise ValueError(
+                "kernel_kwargs can only be used with a named mutation kernel."
+            )
+        mutation_step = RedBlueMetropolisHastingsMutation(
+            target,
+            kernel=kernel,
+            n_steps=mutation_n_steps,
+            **kwargs,
+        )
+    elif mutation == "differential-evolution":
+        mutation_step = DifferentialEvolutionMutation(
+            target,
+            n_steps=mutation_n_steps,
+            **kwargs,
+        )
     elif mutation == "none" or mutation is None:
         mutation_step = None
     else:
         raise ValueError(
             "mutation must be 'blackjax', 'emcee', 'metropolis-hastings', "
-            "'minipcn', 'none', or an SMCStep instance."
+            "'minipcn', 'differential-evolution', "
+            "'red-blue-metropolis-hastings', 'red-blue-mh', 'red-blue', "
+            "'none', or an SMCStep instance."
         )
     return mutation_step

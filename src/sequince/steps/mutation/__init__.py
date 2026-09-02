@@ -19,18 +19,27 @@ from .emcee import (
 )
 from .factory import get_mutation_step
 from .kernels import (
+    COMPLEMENTARY_ENSEMBLE_KERNELS,
     MUTATION_KERNELS,
     AdaptiveMaskedGaussianRandomWalk,
     CallableMutationKernel,
+    ComplementaryEnsembleKernel,
+    DifferentialEvolutionKernel,
     GaussianRandomWalk,
     MaskedGaussianRandomWalk,
     MixtureMutationKernel,
     MutationKernel,
+    SymmetricComplementaryEnsembleKernel,
     SymmetricMutationKernel,
     evaluate_log_transition_ratio,
+    get_complementary_ensemble_kernel,
     get_mutation_kernel,
 )
-from .metropolis import MetropolisHastingsMutation
+from .metropolis import (
+    DifferentialEvolutionMutation,
+    MetropolisHastingsMutation,
+    RedBlueMetropolisHastingsMutation,
+)
 from .minipcn import MiniPCNMutation
 from .rejuvenation import GenerativeProposal, ProposalRejuvenation
 
@@ -40,12 +49,17 @@ __all__ = [
     "BlackJAXAlgorithmFactory",
     "BlackJAXMutation",
     "CallableMutationKernel",
+    "COMPLEMENTARY_ENSEMBLE_KERNELS",
+    "ComplementaryEnsembleKernel",
+    "DifferentialEvolutionKernel",
+    "DifferentialEvolutionMutation",
     "EMCEE_MOVES",
     "EmceeMutation",
     "GaussianRandomWalk",
     "GenerativeProposal",
     "MUTATION_KERNELS",
     "MetropolisHastingsMutation",
+    "RedBlueMetropolisHastingsMutation",
     "MiniPCNMutation",
     "MaskedGaussianRandomWalk",
     "MetropolisBlock",
@@ -55,9 +69,11 @@ __all__ = [
     "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",
     "ProposalRejuvenation",
+    "SymmetricComplementaryEnsembleKernel",
     "SymmetricMutationKernel",
     "TransformRefit",
     "evaluate_log_transition_ratio",
+    "get_complementary_ensemble_kernel",
     "get_emcee_move",
     "get_mutation_kernel",
     "get_mutation_step",

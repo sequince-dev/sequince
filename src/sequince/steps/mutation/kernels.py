@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import math
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
 
 import numpy as np
 from array_api_compat import device as get_device
@@ -36,6 +37,26 @@ class MutationKernel(Protocol):
         """Return ``log q(from | to) - log q(to | from)`` per particle."""
 
 
+def _zero_log_transition_ratio(
+    from_particles: Array,
+    to_particles: Array,
+) -> Array:
+    """Return a zero transition correction after validating particle shapes."""
+    xp = namespace(from_particles, to_particles)
+    start = asarray(from_particles, xp=xp)
+    end = asarray(to_particles, xp=xp)
+    if start.shape != end.shape:
+        raise ValueError(
+            "Particles passed to log_transition_ratio must share shape."
+        )
+    return xp.full(
+        (start.shape[0],),
+        0.0,
+        dtype=start.dtype,
+        device=get_device(start),
+    )
+
+
 class SymmetricMutationKernel:
     """Base class for mutation kernels with symmetric transition densities."""
 
@@ -44,19 +65,42 @@ class SymmetricMutationKernel:
         from_particles: Array,
         to_particles: Array,
     ) -> Array:
-        xp = namespace(from_particles, to_particles)
-        start = asarray(from_particles, xp=xp)
-        end = asarray(to_particles, xp=xp)
-        if start.shape != end.shape:
-            raise ValueError(
-                "Particles passed to log_transition_ratio must share shape."
-            )
-        return xp.full(
-            (start.shape[0],),
-            0.0,
-            dtype=start.dtype,
-            device=get_device(start),
-        )
+        return _zero_log_transition_ratio(from_particles, to_particles)
+
+
+class ComplementaryEnsembleKernel(ABC):
+    """Kernel whose proposals depend on a frozen complementary ensemble."""
+
+    @abstractmethod
+    def sample(
+        self,
+        particles: Array,
+        complementary_particles: Array,
+        rng: RandomGenerator,
+    ) -> Array:
+        """Propose updates using the supplied complementary ensemble."""
+
+    @abstractmethod
+    def log_transition_ratio(
+        self,
+        from_particles: Array,
+        to_particles: Array,
+        complementary_particles: Array,
+    ) -> Array:
+        """Return ``log q(from | to) - log q(to | from)`` per particle."""
+
+
+class SymmetricComplementaryEnsembleKernel(ComplementaryEnsembleKernel):
+    """Base class for symmetric complementary-ensemble kernels."""
+
+    def log_transition_ratio(
+        self,
+        from_particles: Array,
+        to_particles: Array,
+        complementary_particles: Array,
+    ) -> Array:
+        del complementary_particles
+        return _zero_log_transition_ratio(from_particles, to_particles)
 
 
 ProposalFn = Callable[[Array, RandomGenerator], Array]
@@ -190,6 +234,158 @@ class GaussianRandomWalk(SymmetricMutationKernel):
         norm_const = -0.5 * dim * math.log(2.0 * math.pi * var)
         exponent = -0.5 * xp.sum((diff**2) / var, axis=1)
         return exponent + norm_const
+
+
+GammaRandomization = Literal["none", "bilby"]
+_GAMMA_RANDOMIZATIONS = ("none", "bilby")
+
+
+def _sample_donor_indices(
+    n_active: int,
+    n_complementary: int,
+    rng: RandomGenerator,
+) -> tuple[Array, Array]:
+    """Sample uniform ordered pairs of distinct complementary indices."""
+    donor_j = rng.choice(n_complementary, size=(n_active,))
+    donor_k_raw = rng.choice(n_complementary - 1, size=(n_active,))
+    xp = namespace(donor_j, donor_k_raw)
+    donor_k = xp.where(
+        donor_k_raw >= donor_j,
+        donor_k_raw + 1,
+        donor_k_raw,
+    )
+    return donor_j, donor_k
+
+
+def _sample_effective_gamma(
+    n_active: int,
+    gamma_base: float,
+    gamma_one_probability: float,
+    gamma_randomization: GammaRandomization,
+    rng: RandomGenerator,
+    *,
+    like: Array,
+) -> Array:
+    """Sample one DE scale for each active proposal."""
+    xp = namespace(like)
+    shape = (n_active,)
+    if gamma_one_probability == 1.0:
+        return xp.ones(shape, dtype=like.dtype, device=get_device(like))
+
+    if gamma_randomization == "bilby":
+        factors = rng.gamma(
+            shape=4.0,
+            scale=0.25,
+            size=shape,
+            dtype=like.dtype,
+        )
+        ordinary_gamma = gamma_base * factors
+    else:
+        ordinary_gamma = xp.full(
+            shape,
+            gamma_base,
+            dtype=like.dtype,
+            device=get_device(like),
+        )
+
+    if gamma_one_probability == 0.0:
+        return ordinary_gamma
+
+    use_gamma_one = rng.random(shape) < gamma_one_probability
+    return xp.where(use_gamma_one, 1.0, ordinary_gamma)
+
+
+@dataclass(frozen=True)
+class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
+    """Differential-evolution proposals from a frozen complementary ensemble.
+
+    ``"none"`` uses standard fixed-scale DE-MCMC. ``"bilby"`` multiplies the
+    base scale by an independent ``Gamma(shape=4, scale=0.25)`` draw for each
+    proposal, matching Bilby-style dynesty scaling. When ``gamma`` is omitted,
+    the base scale is ``2.38 / sqrt(2 * n_dimensions)``.
+
+    ``gamma_one_probability`` controls occasional unit-scale moves. A
+    :class:`RedBlueMetropolisHastingsMutation` supplies the frozen complementary
+    population for each half-update. Sequince still updates an interacting MCMC
+    population and its complete algorithm is not dynesty.
+    """
+
+    gamma: float | None = None
+    gamma_one_probability: float = 0.1
+    gamma_randomization: GammaRandomization = "none"
+
+    def __post_init__(self) -> None:
+        if self.gamma is not None and (
+            not math.isfinite(self.gamma) or self.gamma <= 0.0
+        ):
+            raise ValueError("gamma must be finite and strictly positive.")
+        if (
+            not math.isfinite(self.gamma_one_probability)
+            or not 0.0 <= self.gamma_one_probability <= 1.0
+        ):
+            raise ValueError(
+                "gamma_one_probability must be finite and between 0 and 1."
+            )
+        if self.gamma_randomization not in _GAMMA_RANDOMIZATIONS:
+            supported = ", ".join(
+                repr(value) for value in _GAMMA_RANDOMIZATIONS
+            )
+            raise ValueError(
+                f"Unknown gamma_randomization {self.gamma_randomization!r}. "
+                f"Supported strategies are: {supported}."
+            )
+
+    def sample(
+        self,
+        particles: Array,
+        complementary_particles: Array,
+        rng: RandomGenerator,
+    ) -> Array:
+        xp = namespace(particles, complementary_particles)
+        current = particles
+        if current.ndim != 2:
+            raise ValueError(
+                "DifferentialEvolutionKernel requires a 2D active particle "
+                "array."
+            )
+        complementary = complementary_particles
+        if complementary.ndim != 2:
+            raise ValueError(
+                "DifferentialEvolutionKernel requires a 2D complementary "
+                "particle array."
+            )
+        if complementary.shape[0] < 2:
+            raise ValueError(
+                "DifferentialEvolutionKernel requires at least two "
+                "complementary particles."
+            )
+        if complementary.shape[1] != current.shape[1]:
+            raise ValueError(
+                "Active and complementary particles must have the same "
+                "parameter dimension."
+            )
+
+        n_active, n_dimensions = current.shape
+        donor_j, donor_k = _sample_donor_indices(
+            n_active,
+            complementary.shape[0],
+            rng,
+        )
+        gamma_base = self.gamma
+        if gamma_base is None:
+            gamma_base = 2.38 / math.sqrt(2.0 * n_dimensions)
+        gamma_effective = _sample_effective_gamma(
+            n_active,
+            gamma_base,
+            self.gamma_one_probability,
+            self.gamma_randomization,
+            rng,
+            like=current,
+        )
+        differences = complementary[donor_j] - complementary[donor_k]
+        return (
+            current + xp.reshape(gamma_effective, (n_active, 1)) * differences
+        )
 
 
 def _selection_matrix(
@@ -466,6 +662,12 @@ MUTATION_KERNELS: dict[str, type] = {
     "mixture": MixtureMutationKernel,
 }
 
+COMPLEMENTARY_ENSEMBLE_KERNELS: dict[
+    str, type[ComplementaryEnsembleKernel]
+] = {
+    "differential-evolution": DifferentialEvolutionKernel,
+}
+
 
 def get_mutation_kernel(name: str, **kwargs: Any) -> MutationKernel:
     """Construct a named mutation kernel."""
@@ -486,6 +688,22 @@ def get_mutation_kernel(name: str, **kwargs: Any) -> MutationKernel:
         kwargs["kernels"] = [
             _resolve_mutation_kernel_spec(spec) for spec in kernel_specs
         ]
+    return kernel_cls(**kwargs)
+
+
+def get_complementary_ensemble_kernel(
+    name: str,
+    **kwargs: Any,
+) -> ComplementaryEnsembleKernel:
+    """Construct a named complementary-ensemble mutation kernel."""
+    try:
+        kernel_cls = COMPLEMENTARY_ENSEMBLE_KERNELS[name]
+    except KeyError as exc:
+        valid = ", ".join(sorted(COMPLEMENTARY_ENSEMBLE_KERNELS))
+        raise ValueError(
+            f"Unknown complementary-ensemble kernel '{name}'. "
+            f"Valid options are: {valid}."
+        ) from exc
     return kernel_cls(**kwargs)
 
 

@@ -8,6 +8,7 @@ from numbers import Real
 from typing import TYPE_CHECKING, Any, Callable, Self, cast
 from uuid import uuid4
 
+import array_api_extra as xpx
 import numpy as np
 
 from ._typing import Array
@@ -128,6 +129,42 @@ class TargetEvaluation:
         return type(self)(
             components={
                 key: value[indices] for key, value in self.components.items()
+            },
+            target_id=self.target_id,
+            evaluation_key=self.evaluation_key,
+        )
+
+    def replace(
+        self,
+        indices: Array,
+        replacement: TargetEvaluation,
+    ) -> TargetEvaluation:
+        """Return an evaluation with indexed particle rows replaced."""
+        if self.components.keys() != replacement.components.keys():
+            raise ValueError("Target evaluations have different components.")
+        if self.target_id != replacement.target_id:
+            raise ValueError("Target evaluations belong to different targets.")
+        if self.evaluation_key != replacement.evaluation_key:
+            raise ValueError(
+                "Target evaluations belong to different target stages."
+            )
+        if indices.ndim != 1:
+            raise ValueError(
+                "Target evaluation indices must be one-dimensional."
+            )
+        if replacement.n_particles != indices.shape[0]:
+            raise ValueError(
+                "Replacement evaluation must contain one entry per index."
+            )
+
+        return type(self)(
+            components={
+                key: xpx.at(value, indices).set(
+                    replacement[key],
+                    copy=True,
+                    xp=namespace(value),
+                )
+                for key, value in self.components.items()
             },
             target_id=self.target_id,
             evaluation_key=self.evaluation_key,
