@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 IncrementFn = Callable[..., Array | float]
-TemperatureSchedule = Callable[..., float]
+BetaSchedule = Callable[..., float]
 TargetESSRatio = float | Callable[..., float]
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def _tempering_diagnostics(
             log_normalizing_constant_increment_variance
         ),
         "ess_before_resampling": ess,
-        "ess_at_max_temperature": terminal_ess,
+        "ess_at_max_beta": terminal_ess,
     }
 
 
@@ -87,25 +87,25 @@ def evolving_target_ess_ratio(
     end: float,
     *,
     rate: float = 1.0,
-    max_temperature: float = 1.0,
+    max_beta: float = 1.0,
 ) -> Callable[[float], float]:
     """Return a power-law schedule for an evolving target ESS ratio.
 
-    The schedule evolves from ``start`` to ``end`` as the temperature moves
-    from zero to ``max_temperature``. Temperatures outside that interval are
+    The schedule evolves from ``start`` to ``end`` as the beta moves
+    from zero to ``max_beta``. Betas outside that interval are
     clipped to the corresponding endpoint. Values of ``rate`` greater than
     one delay the transition, while values below one accelerate it.
 
     Parameters
     ----------
     start:
-        Target ESS ratio at zero temperature; must be in ``(0, 1]``.
+        Target ESS ratio at zero beta; must be in ``(0, 1]``.
     end:
-        Target ESS ratio at ``max_temperature``; must be in ``(0, 1]``.
+        Target ESS ratio at ``max_beta``; must be in ``(0, 1]``.
     rate:
         Positive exponent controlling the rate of transition.
-    max_temperature:
-        Positive temperature at which the schedule reaches ``end``.
+    max_beta:
+        Positive beta at which the schedule reaches ``end``.
     """
     if not 0.0 < start <= 1.0:
         raise ValueError("start must be in (0, 1].")
@@ -113,11 +113,11 @@ def evolving_target_ess_ratio(
         raise ValueError("end must be in (0, 1].")
     if not rate > 0.0:
         raise ValueError("rate must be positive.")
-    if not max_temperature > 0.0:
-        raise ValueError("max_temperature must be positive.")
+    if not max_beta > 0.0:
+        raise ValueError("max_beta must be positive.")
 
-    def schedule(temperature: float) -> float:
-        progress = min(max(temperature / max_temperature, 0.0), 1.0)
+    def schedule(beta: float) -> float:
+        progress = min(max(beta / max_beta, 0.0), 1.0)
         return start + (end - start) * progress**rate
 
     return schedule
@@ -284,9 +284,9 @@ class BaseTemperedStep(SMCStep):
     """Base class for tempered weighting steps.
 
     This provides common functionality for tempering steps that apply log-weight
-    increments scaled by a temperature schedule (e.g. ``TemperedWeighting`` and
+    increments scaled by a beta schedule (e.g. ``TemperedWeighting`` and
     ``AdaptiveTemperedWeighting``). It does not implement the logic for determining
-    the temperature schedule itself, which is left to subclasses.
+    the beta schedule itself, which is left to subclasses.
     """
 
     def __init__(
@@ -363,18 +363,18 @@ class BaseTemperedStep(SMCStep):
         self, state: ParticleState, context: StepContext
     ) -> tuple[ParticleState, StepContext]:
         """Initialize metadata related to tempering."""
-        if "temperature" not in context.metadata:
-            initial_temperature = float(state.metadata.get("temperature", 0.0))
+        if "beta" not in context.metadata:
+            initial_beta = float(state.metadata.get("beta", 0.0))
             logger.debug(
                 "Initializing tempering metadata in context to %.4f.",
-                initial_temperature,
+                initial_beta,
             )
-            context = context.with_metadata(temperature=initial_temperature)
+            context = context.with_metadata(beta=initial_beta)
             state_metadata = dict(state.metadata)
-            state_metadata["temperature"] = initial_temperature
+            state_metadata["beta"] = initial_beta
             state = state.with_updates(metadata=state_metadata)
-        if "temperature_delta" not in context.metadata:
-            context = context.with_metadata(temperature_delta=0.0)
+        if "delta_beta" not in context.metadata:
+            context = context.with_metadata(delta_beta=0.0)
         return state, context
 
     def initialize_functional_metadata(
@@ -385,17 +385,17 @@ class BaseTemperedStep(SMCStep):
         """Initialize fixed-shape tempering metadata on the array backend."""
         xp = namespace(state.log_weights)
         initialized = dict(metadata)
-        temperature = initialized.get(
-            "temperature",
-            state.metadata.get("temperature", 0.0),
+        beta = initialized.get(
+            "beta",
+            state.metadata.get("beta", 0.0),
         )
-        initialized["temperature"] = asarray(
-            temperature,
+        initialized["beta"] = asarray(
+            beta,
             xp=xp,
             like=state.log_weights,
         )
-        initialized["temperature_delta"] = asarray(
-            initialized.get("temperature_delta", 0.0),
+        initialized["delta_beta"] = asarray(
+            initialized.get("delta_beta", 0.0),
             xp=xp,
             like=state.log_weights,
         )
@@ -440,19 +440,19 @@ class BaseTemperedStep(SMCStep):
 
 
 class TemperedWeighting(BaseTemperedStep):
-    """Apply tempering by scaling log-weight increments with a temperature schedule.
+    """Apply tempering by scaling log-weight increments with a beta schedule.
 
-    Both the increment callable and the temperature schedule accept the
+    Both the increment callable and the beta schedule accept the
     current ``StepContext`` when they require it.
     """
 
     def __init__(
         self,
         log_increment_fn: IncrementFn | "TemperedTarget",
-        temperature_schedule: TemperatureSchedule,
+        beta_schedule: BetaSchedule,
         *,
         normalize_after: bool = True,
-        clip_temperature: tuple[float, float] | None = None,
+        clip_beta: tuple[float, float] | None = None,
         refresh_components: Collection[str] = (),
     ):
         super().__init__(
@@ -460,8 +460,8 @@ class TemperedWeighting(BaseTemperedStep):
             normalize_after=normalize_after,
             refresh_components=refresh_components,
         )
-        self._schedule = temperature_schedule
-        self._clip = clip_temperature
+        self._schedule = beta_schedule
+        self._clip = clip_beta
 
     def apply(
         self,
@@ -470,8 +470,8 @@ class TemperedWeighting(BaseTemperedStep):
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         state, context = self.initialize_metadata(state, context)
-        current_temperature = float(context.metadata.get("temperature", 0.0))
-        target_temperature = float(
+        current_beta = float(context.metadata.get("beta", 0.0))
+        target_beta = float(
             call_with_optional_context(
                 self._schedule,
                 (context.t,),
@@ -480,19 +480,18 @@ class TemperedWeighting(BaseTemperedStep):
         )
         if self._clip is not None:
             lo, hi = self._clip
-            target_temperature = float(max(lo, min(hi, target_temperature)))
-        if target_temperature < current_temperature:
+            target_beta = float(max(lo, min(hi, target_beta)))
+        if target_beta < current_beta:
             raise ValueError(
-                "temperature_schedule produced a temperature smaller than the "
-                "current temperature."
+                "beta_schedule produced a beta smaller than the current beta."
             )
-        temperature_delta = target_temperature - current_temperature
+        delta_beta = target_beta - current_beta
 
         log_increments, state = self.evaluate_log_increment(state, context)
         xp = namespace(state.log_weights)
         increments = (
             _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
-            * temperature_delta
+            * delta_beta
         )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
@@ -500,49 +499,50 @@ class TemperedWeighting(BaseTemperedStep):
             )
 
         logger.debug(
-            "TemperedWeighting: temperature %.4f -> %.4f applied; mean increment %.6f.",
-            current_temperature,
-            target_temperature,
+            "TemperedWeighting: beta %.4f -> %.4f applied; mean increment %.6f.",
+            current_beta,
+            target_beta,
             float(to_numpy(xp.sum(increments) / increments.shape[0])),
         )
         metadata = dict(state.metadata)
-        metadata["temperature"] = target_temperature
+        metadata["beta"] = target_beta
+        metadata["delta_beta"] = delta_beta
         updated_state, _ = _apply_log_weight_increment(
             state.with_updates(metadata=metadata),
             increments,
             normalize=self._normalize_after,
         )
         context = context.with_metadata(
-            temperature=target_temperature,
-            temperature_delta=temperature_delta,
+            beta=target_beta,
+            delta_beta=delta_beta,
         )
         output = {
-            "temperature": target_temperature,
-            "temperature_delta": temperature_delta,
+            "beta": target_beta,
+            "delta_beta": delta_beta,
             "log_weight_increment": increments,
         }
         return updated_state, context, output
 
 
 class FixedTemperedWeighting(BaseTemperedStep):
-    """Apply tempering with a fixed temperature increment."""
+    """Apply tempering with a fixed beta increment."""
 
     def __init__(
         self,
         log_increment_fn: IncrementFn | "TemperedTarget",
         *,
-        temperature_increment: float,
+        beta_increment: float,
         normalize_after: bool = True,
         refresh_components: Collection[str] = (),
     ):
-        if temperature_increment < 0.0:
-            raise ValueError("temperature_increment must be non-negative.")
+        if beta_increment < 0.0:
+            raise ValueError("beta_increment must be non-negative.")
         super().__init__(
             log_increment_fn,
             normalize_after=normalize_after,
             refresh_components=refresh_components,
         )
-        self._temperature_increment = temperature_increment
+        self._beta_increment = beta_increment
 
     def apply(
         self,
@@ -553,7 +553,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
         del rng
         state, context = self.initialize_metadata(state, context)
         base_state = state
-        current_temperature = context.metadata.get("temperature", 0.0)
+        current_beta = context.metadata.get("beta", 0.0)
         updated_state, context, output, raw_increments, log_norm = (
             self._transition(state, context)
         )
@@ -564,25 +564,25 @@ class FixedTemperedWeighting(BaseTemperedStep):
             )
 
         metadata = dict(state.metadata)
-        max_temperature = float(context.metadata.get("max_temperature", 1.0))
+        max_beta = float(context.metadata.get("max_beta", 1.0))
         metadata.update(
             _tempering_diagnostics(
                 base_state.log_weights,
                 raw_increments,
-                delta=self._temperature_increment,
+                delta=self._beta_increment,
                 terminal_delta=max(
-                    max_temperature - current_temperature,
+                    max_beta - current_beta,
                     0.0,
                 ),
             )
         )
-        metadata["temperature"] = output["temperature"]
-        metadata["temperature_delta"] = self._temperature_increment
+        metadata["beta"] = output["beta"]
+        metadata["delta_beta"] = self._beta_increment
         updated_state = updated_state.with_updates(metadata=metadata)
         logger.debug(
-            "FixedTemperedWeighting: increment %.4f -> temperature %.4f.",
-            self._temperature_increment,
-            metadata["temperature"],
+            "FixedTemperedWeighting: increment %.4f -> beta %.4f.",
+            self._beta_increment,
+            metadata["beta"],
         )
         return updated_state, context, output
 
@@ -607,40 +607,40 @@ class FixedTemperedWeighting(BaseTemperedStep):
         Array,
         Any | None,
     ]:
-        """Apply the backend-native fixed-temperature transition."""
-        current_temperature = context.metadata.get(
-            "temperature", state.metadata.get("temperature", 0.0)
+        """Apply the backend-native fixed-beta transition."""
+        current_beta = context.metadata.get(
+            "beta", state.metadata.get("beta", 0.0)
         )
         log_increments, state, xp = self._prepare_log_increments(
             state, context
         )
-        increments = log_increments * self._temperature_increment
-        target_temperature = current_temperature + self._temperature_increment
+        increments = log_increments * self._beta_increment
+        target_beta = current_beta + self._beta_increment
         updated_state, log_norm = self._update_log_weights(
             state,
             increments,
         )
         context = context.with_metadata(
-            temperature=target_temperature,
-            temperature_delta=self._temperature_increment,
+            beta=target_beta,
+            delta_beta=self._beta_increment,
         )
         output = {
-            "temperature": target_temperature,
-            "temperature_delta": self._temperature_increment,
+            "beta": target_beta,
+            "delta_beta": self._beta_increment,
             "log_weight_increment": increments,
         }
         return updated_state, context, output, log_increments, log_norm
 
 
 class AdaptiveTemperedWeighting(BaseTemperedStep):
-    """Adaptively choose the next temperature using an ESS-like target.
+    """Adaptively choose the next beta using an ESS-like target.
 
-    The temperature increment is chosen such that the effective sample size
+    The beta increment is chosen such that the effective sample size
     (ESS) ratio after weighting, or the conditional ESS (CESS) ratio implied by
     a proposed increment, reaches the specified target value
-    (``target_ess_ratio``), up to the maximum temperature
-    (``max_temperature``).
-    If the maximum temperature is reached while advancing the schedule, the SMC
+    (``target_ess_ratio``), up to the maximum beta
+    (``max_beta``).
+    If the maximum beta is reached while advancing the schedule, the SMC
     run is requested to stop after the current iteration finishes.
 
     Parameters
@@ -649,30 +649,30 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         A callable or ``TemperedTarget`` providing log-weight increments.
     target_ess_ratio:
         The target ESS ratio (ESS / n) to achieve after weighting, or a
-        callable that returns the target for the current temperature. The
+        callable that returns the target for the current beta. The
         callable may optionally also accept the current ``StepContext``. Each
         resolved target must be in the interval (0, 1].
-    max_temperature:
-        The maximum temperature to reach; once this temperature is reached,
+    max_beta:
+        The maximum beta to reach; once this beta is reached,
         the SMC run is requested to stop after the current iteration.
     min_delta:
-        The minimum temperature increment to apply at each step.
+        The minimum beta increment to apply at each step.
     max_delta:
-        Optional maximum temperature increment to apply at each step.
+        Optional maximum beta increment to apply at each step.
     normalize_after:
         Whether to normalize the particle weights after updating.
     max_bisection_iter:
         The maximum number of bisection iterations to perform when finding
-        the temperature increment.
+        the beta increment.
     criterion:
-        Criterion used when selecting the temperature increment. ``"ess"``
+        Criterion used when selecting the beta increment. ``"ess"``
         targets the ESS ratio after weighting. ``"cess"`` targets the
         conditional ESS ratio induced by the proposed incremental weights.
 
     Notes
     -----
     The returned particle state and current step context record
-    ``temperature``, ``temperature_delta``, ``ess_ratio``, and ``cess_ratio``.
+    ``beta``, ``delta_beta``, ``ess_ratio``, and ``cess_ratio``.
     Active updates also record ``target_ess_ratio``.
     """
 
@@ -681,7 +681,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         target_ess_ratio: TargetESSRatio = 0.7,
-        max_temperature: float = 1.0,
+        max_beta: float = 1.0,
         min_delta: float = 1e-4,
         max_delta: float | None = None,
         normalize_after: bool = True,
@@ -693,8 +693,8 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             0.0 < target_ess_ratio <= 1.0
         ):
             raise ValueError("target_ess_ratio must be in (0, 1].")
-        if max_temperature <= 0.0:
-            raise ValueError("max_temperature must be positive.")
+        if max_beta <= 0.0:
+            raise ValueError("max_beta must be positive.")
         if min_delta < 0.0:
             raise ValueError("min_delta must be non-negative.")
         if max_delta is not None and max_delta <= 0.0:
@@ -713,7 +713,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         )
 
         self._target_ess_ratio = target_ess_ratio
-        self._max_temperature = max_temperature
+        self._max_beta = max_beta
         self._min_delta = min_delta
         self._max_delta = max_delta
         self._max_bisection_iter = max_bisection_iter
@@ -779,13 +779,13 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             _tempering_diagnostics(
                 base_state.log_weights,
                 raw_increments,
-                delta=output["temperature_delta"],
+                delta=output["delta_beta"],
                 terminal_delta=remaining,
             )
         )
         metadata.update(
-            temperature=output["temperature"],
-            temperature_delta=output["temperature_delta"],
+            beta=output["beta"],
+            delta_beta=output["delta_beta"],
             target_ess_ratio=output["target_ess_ratio"],
             ess_ratio=output["ess_ratio"],
             cess_ratio=output["cess_ratio"],
@@ -794,28 +794,28 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         if context.stop_immediately:
             logger.debug(
-                "Iteration %d: AdaptiveTemperedWeighting already at max temperature %.3f; "
+                "Iteration %d: AdaptiveTemperedWeighting already at max beta %.3f; "
                 "requesting immediate stop.",
                 context.t,
-                self._max_temperature,
+                self._max_beta,
             )
         else:
             logger.debug(
-                "Iteration %d: AdaptiveTemperedWeighting: ΔT=%.6f, temperature=%.4f, "
+                "Iteration %d: AdaptiveTemperedWeighting: Δβ=%.6f, beta=%.4f, "
                 "target %s ratio=%.4f, ESS ratio=%.4f.",
                 context.t,
-                output["temperature_delta"],
-                output["temperature"],
+                output["delta_beta"],
+                output["beta"],
                 self._criterion.upper(),
                 output["target_ess_ratio"],
                 output["ess_ratio"],
             )
             if context.stop_requested:
                 logger.debug(
-                    "Iteration %d: AdaptiveTemperedWeighting reached max temperature %.3f; "
+                    "Iteration %d: AdaptiveTemperedWeighting reached max beta %.3f; "
                     "requesting stop after iteration.",
                     context.t,
-                    self._max_temperature,
+                    self._max_beta,
                 )
         return updated_state, context, output
 
@@ -843,23 +843,21 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         Array,
         Any | None,
     ]:
-        """Apply the backend-native adaptive-temperature transition."""
+        """Apply the backend-native adaptive-beta transition."""
         xp = namespace(state.log_weights)
-        current_temperature = asarray(
-            context.metadata.get(
-                "temperature", state.metadata.get("temperature", 0.0)
-            ),
+        current_beta = asarray(
+            context.metadata.get("beta", state.metadata.get("beta", 0.0)),
             xp=xp,
             like=state.log_weights,
         )
         zero = asarray(0.0, xp=xp, like=state.log_weights)
-        max_temperature = asarray(
-            self._max_temperature,
+        max_beta = asarray(
+            self._max_beta,
             xp=xp,
             like=state.log_weights,
         )
         remaining = xp.maximum(
-            max_temperature - current_temperature,
+            max_beta - current_beta,
             zero,
         )
         allowed_delta = remaining
@@ -871,7 +869,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         increments, state, xp = self._prepare_log_increments(state, context)
         target_ess_ratio = self._resolve_target_ess_ratio(
-            current_temperature,
+            current_beta,
             context,
             xp=xp,
             like=state.log_weights,
@@ -903,19 +901,19 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             state.log_weights,
             scaled_increments,
         )
-        new_temperature = xp.minimum(
-            current_temperature + delta,
-            max_temperature,
+        new_beta = xp.minimum(
+            current_beta + delta,
+            max_beta,
         )
-        reached_max = new_temperature >= self._max_temperature - 1e-9
+        reached_max = new_beta >= self._max_beta - 1e-9
 
         updated_state, log_norm = self._update_log_weights(
             state,
             scaled_increments,
         )
         context = context.with_metadata(
-            temperature=new_temperature,
-            temperature_delta=delta,
+            beta=new_beta,
+            delta_beta=delta,
             target_ess_ratio=target_ess_ratio,
             ess_ratio=new_ess_ratio,
             cess_ratio=new_cess_ratio,
@@ -944,8 +942,8 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             ),
         )
         output = {
-            "temperature": new_temperature,
-            "temperature_delta": delta,
+            "beta": new_beta,
+            "delta_beta": delta,
             "target_ess_ratio": target_ess_ratio,
             "ess_ratio": new_ess_ratio,
             "cess_ratio": new_cess_ratio,
@@ -955,7 +953,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
     def _resolve_target_ess_ratio(
         self,
-        current_temperature: Array,
+        current_beta: Array,
         context: StepContext,
         *,
         xp: Any,
@@ -965,7 +963,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         if callable(target):
             target = call_with_optional_context(
                 target,
-                (current_temperature,),
+                (current_beta,),
                 context,
             )
         return asarray(target, xp=xp, like=like)
@@ -978,7 +976,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         *,
         target_ess_ratio: Array,
     ) -> Array:
-        """Find a temperature increment with fixed-count bisection."""
+        """Find a beta increment with fixed-count bisection."""
         xp = namespace(base_log_weights, increments, max_delta)
         low = xp.zeros_like(max_delta)
         high = max_delta

@@ -765,12 +765,8 @@ class SMCResult:
             ),
         }
 
-        temperature_history = self.metadata_history(
-            "temperature", default=math.nan
-        )
-        summary_dict["final_temperature"] = float(
-            to_numpy(temperature_history)[-1]
-        )
+        beta_history = self.metadata_history("beta", default=math.nan)
+        summary_dict["final_beta"] = float(to_numpy(beta_history)[-1])
         return summary_dict
 
     def posterior_samples(

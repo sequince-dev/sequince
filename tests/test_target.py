@@ -166,7 +166,7 @@ def test_target_owns_and_reuses_cached_evaluations(context_factory) -> None:
 def test_sequential_target_does_not_assume_beta(context_factory) -> None:
     target = DiscreteSequentialTarget()
     particles = np.zeros((3, 1))
-    context = context_factory(metadata={"stage": 2, "temperature": 0.75})
+    context = context_factory(metadata={"stage": 2, "beta": 0.75})
 
     evaluation = target.prepare_evaluation(particles, context)
 
@@ -229,7 +229,7 @@ def test_tempered_posterior_exposes_annealed_endpoints(
         log_likelihood=lambda particles: np.full(particles.shape[0], -2.0),
     )
     particles = np.zeros((2, 1))
-    context = context_factory(metadata={"temperature": 0.25})
+    context = context_factory(metadata={"beta": 0.25})
     evaluation = target.evaluate(particles, context)
 
     np.testing.assert_allclose(

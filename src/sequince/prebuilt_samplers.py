@@ -44,7 +44,7 @@ def make_standard_bayesian_smc(
     *,
     log_proposal: Callable[..., Any] | ProposalDistribution | None = None,
     target_ess_ratio: TargetESSRatio = 0.7,
-    max_temperature: float = 1.0,
+    max_beta: float = 1.0,
     min_delta: float = 1e-8,
     max_delta: float | None = None,
     adaptive: bool = True,
@@ -75,7 +75,7 @@ def make_standard_bayesian_smc(
     The returned sampler applies adaptive tempering, ESS-triggered resampling,
     and mutation moves tailored for standard Bayesian inference workflows.
     A ``TemperedPosterior`` instance and a shared context dictionary tracking
-    the current temperature are returned alongside the sampler for convenience.
+    the current beta are returned alongside the sampler for convenience.
 
     Parameters
     ----------
@@ -88,18 +88,18 @@ def make_standard_bayesian_smc(
         importance sampling proposals are used.
     target_ess_ratio:
         Target effective sample size ratio used by adaptive tempering, or a
-        callable of the current temperature and optional ``StepContext`` that
+        callable of the current beta and optional ``StepContext`` that
         returns the target for each iteration.
-    max_temperature:
-        Final tempering temperature; typically ``1.0`` for full posterior.
+    max_beta:
+        Final tempering beta; typically ``1.0`` for full posterior.
     min_delta:
-        Minimum temperature increment allowed in adaptive tempering.
+        Minimum beta increment allowed in adaptive tempering.
     max_delta:
-        Optional maximum temperature increment allowed in adaptive tempering.
+        Optional maximum beta increment allowed in adaptive tempering.
     adaptive:
-        Whether to adapt the temperature schedule using the target ESS.
+        Whether to adapt the beta schedule using the target ESS.
     num_steps:
-        Number of fixed temperature steps. Required when ``adaptive=False``.
+        Number of fixed beta steps. Required when ``adaptive=False``.
     weighting_criterion:
         Criterion for adaptive tempering; one of ``"ess"`` (default) or ``"cess"``.
     weighting_kwargs:
@@ -116,7 +116,7 @@ def make_standard_bayesian_smc(
         ``False`` if ``weighting_criterion=="cess"``.
     resample_at_end:
         If ``True`` (default) will always resample when the inverse
-        temperature reaches 1.0, regardless of ESS.  If ``False``, the final
+        temperature β reaches 1.0, regardless of ESS. If ``False``, the final
         resampling may be skipped if ``always_resample`` is ``False`` and the
         ESS ratio is above ``ess_threshold``.
     resampling_kwargs:
@@ -194,7 +194,7 @@ def make_standard_bayesian_smc(
         weighting_step = AdaptiveTemperedWeighting(
             posterior,
             target_ess_ratio=target_ess_ratio,
-            max_temperature=max_temperature,
+            max_beta=max_beta,
             min_delta=min_delta,
             max_delta=max_delta,
             criterion=weighting_criterion,
@@ -205,7 +205,7 @@ def make_standard_bayesian_smc(
             raise ValueError("num_steps must be positive when adaptive=False.")
         weighting_step = FixedTemperedWeighting(
             posterior,
-            temperature_increment=max_temperature / num_steps,
+            beta_increment=max_beta / num_steps,
             **weighting_kwargs or {},
         )
 
@@ -263,10 +263,10 @@ def make_standard_bayesian_smc(
     if logging_frequency > 0:
 
         def logging_fn(state: ParticleState, context: StepContext) -> str:
-            current_temp = context.metadata.get("temperature", 0.0)
+            current_beta = context.metadata.get("beta", 0.0)
             return (
                 f"SMC iteration {context.t}: "
-                f"Temperature={current_temp:.3g}, "
+                f"Beta={current_beta:.3g}, "
                 f"Log Evidence={state.log_evidence:.3g}, "
                 f"ESS={context.metadata.get('ess', math.nan):.1f}"
             )
@@ -284,7 +284,7 @@ def make_standard_bayesian_smc(
     )
 
     meta_data = dict(
-        max_temperature=max_temperature,
+        max_beta=max_beta,
     )
 
     return sampler, posterior, meta_data
@@ -321,7 +321,7 @@ def make_persistent_bayesian_smc(
 
     The caller should initialize an ordinary :class:`ParticleState` containing
     ``n_particles`` draws from the initial target. The first persistence step
-    archives that state at temperature zero, and the adaptive weighting step
+    archives that state at beta zero, and the adaptive weighting step
     requests an immediate runner stop once its terminal ESS condition is met.
     Progress is logged every ``logging_frequency`` iterations and once more for
     the terminal weighted state. Set ``logging_frequency=0`` to disable it.
@@ -443,16 +443,14 @@ def make_persistent_bayesian_smc(
             else:
                 n_batches = archive.n_batches
                 archive_size = archive.n_particles
-            temperature = float(context.metadata.get("temperature", 0.0))
-            temperature_delta = float(
-                context.metadata.get("temperature_delta", 0.0)
-            )
+            beta = float(context.metadata.get("beta", 0.0))
+            delta_beta = float(context.metadata.get("delta_beta", 0.0))
             outputs = result.outputs[-1]
             weighting_output = outputs[1]
             persistent_ess = float(weighting_output["effective_sample_size"])
             required_ess = (
                 target_total_ess
-                if temperature >= 1.0 and target_total_ess is not None
+                if beta >= 1.0 and target_total_ess is not None
                 else target_ess
             )
             mutation = outputs[3] if len(outputs) > 3 else None
@@ -463,8 +461,8 @@ def make_persistent_bayesian_smc(
             )
             logger.info(
                 f"Persistent SMC iteration {context.t}: "
-                f"Temperature={temperature:.6g} "
-                f"(delta={temperature_delta:.3g}), "
+                f"Beta={beta:.6g} "
+                f"(delta={delta_beta:.3g}), "
                 f"Batches={n_batches}, "
                 f"Archive size={archive_size}, "
                 f"Persistent ESS={persistent_ess:.1f}/{required_ess:.1f}, "

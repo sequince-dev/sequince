@@ -169,28 +169,28 @@ def test_smc_immediate_stop_skips_remaining_steps(
     assert result.outputs == ((None,),)
 
 
-def test_smc_with_adaptive_tempering_stops_at_max_temperature(
+def test_smc_with_adaptive_tempering_stops_at_max_beta(
     particle_state: ParticleState, rng, unit_log_likelihood
 ) -> None:
     adaptive = AdaptiveTemperedWeighting(
         unit_log_likelihood,
         target_ess_ratio=0.8,
-        max_temperature=0.5,
+        max_beta=0.5,
         min_delta=0.05,
         max_bisection_iter=8,
     )
 
-    initial_state = particle_state.with_updates(metadata={"temperature": 0.0})
-    metadata = {"temperature": 0.0}
+    initial_state = particle_state.with_updates(metadata={"beta": 0.0})
+    metadata = {"beta": 0.0}
 
     smc = SequentialMonteCarlo(
         steps=[adaptive, RecordStep("resampling"), RecordStep("mutation")]
     )
     states = smc.run(initial_state, num_steps=None, rng=rng, metadata=metadata)
 
-    assert states[-1].metadata["temperature"] == pytest.approx(0.5, abs=1e-6)
-    assert states.context.metadata["temperature"] == pytest.approx(
-        states[-1].metadata["temperature"]
+    assert states[-1].metadata["beta"] == pytest.approx(0.5, abs=1e-6)
+    assert states.context.metadata["beta"] == pytest.approx(
+        states[-1].metadata["beta"]
     )
     assert states[-1].metadata["executed_steps"] == [
         "resampling",

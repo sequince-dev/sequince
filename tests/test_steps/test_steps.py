@@ -178,7 +178,12 @@ def test_tempered_weighting_scales_log_likelihood(
     assert np.allclose(
         updated.log_weights, particle_state.log_weights + expected_increment
     )
-    assert output["temperature"] == pytest.approx(0.7)
+    assert updated.metadata["beta"] == pytest.approx(0.7)
+    assert updated.metadata["delta_beta"] == pytest.approx(0.7)
+    assert context.metadata["beta"] == pytest.approx(0.7)
+    assert context.metadata["delta_beta"] == pytest.approx(0.7)
+    assert output["beta"] == pytest.approx(0.7)
+    assert output["delta_beta"] == pytest.approx(0.7)
 
 
 def test_fixed_tempered_weighting_updates_metadata_and_context(
@@ -187,18 +192,18 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     rng,
     unit_log_likelihood,
 ) -> None:
-    context = context_factory(metadata={"temperature": 0.0})
+    context = context_factory(metadata={"beta": 0.0})
     step = FixedTemperedWeighting(
         unit_log_likelihood,
-        temperature_increment=0.25,
+        beta_increment=0.25,
         normalize_after=False,
     )
     updated, context, _ = step(particle_state, context, rng)
 
-    assert updated.metadata["temperature"] == pytest.approx(0.25)
-    assert context.metadata["temperature"] == pytest.approx(0.25)
-    assert context.metadata["temperature_delta"] == pytest.approx(0.25)
-    assert updated.metadata["temperature_delta"] == pytest.approx(0.25)
+    assert updated.metadata["beta"] == pytest.approx(0.25)
+    assert context.metadata["beta"] == pytest.approx(0.25)
+    assert context.metadata["delta_beta"] == pytest.approx(0.25)
+    assert updated.metadata["delta_beta"] == pytest.approx(0.25)
     assert updated.metadata[
         "log_normalizing_constant_increment"
     ] == pytest.approx(0.25)
@@ -208,7 +213,7 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     assert updated.metadata["ess_before_resampling"] == pytest.approx(
         particle_state.effective_sample_size()
     )
-    assert updated.metadata["ess_at_max_temperature"] == pytest.approx(
+    assert updated.metadata["ess_at_max_beta"] == pytest.approx(
         particle_state.effective_sample_size()
     )
 
@@ -218,12 +223,10 @@ def test_tempering_diagnostics_support_weighted_particles(
 ) -> None:
     normalized, _ = particle_state.normalize()
     log_increments = np.array([-1.0, 0.0, 0.5, 1.5])
-    context = context_factory(
-        metadata={"temperature": 0.0, "max_temperature": 1.0}
-    )
+    context = context_factory(metadata={"beta": 0.0, "max_beta": 1.0})
     step = FixedTemperedWeighting(
         lambda particles: log_increments,
-        temperature_increment=0.4,
+        beta_increment=0.4,
     )
 
     updated, context, _ = step(normalized, context, rng)
@@ -244,7 +247,7 @@ def test_tempering_diagnostics_support_weighted_particles(
     assert updated.metadata[
         "log_normalizing_constant_increment_variance"
     ] == pytest.approx(expected_variance)
-    assert updated.metadata["ess_at_max_temperature"] == pytest.approx(
+    assert updated.metadata["ess_at_max_beta"] == pytest.approx(
         expected_terminal_ess
     )
 
@@ -263,12 +266,12 @@ def test_tempered_weighting_reuses_attached_evaluation(
         return np.ones(particles.shape[0])
 
     posterior = TemperedPosterior(log_prior, log_likelihood)
-    context = context_factory(metadata={"temperature": 0.0})
+    context = context_factory(metadata={"beta": 0.0})
     evaluation = posterior.evaluate(particle_state.particles, context)
     state = particle_state.with_updates(evaluation=evaluation)
     step = FixedTemperedWeighting(
         posterior,
-        temperature_increment=0.25,
+        beta_increment=0.25,
     )
 
     state, context, _ = step(state, context, rng)
@@ -306,10 +309,10 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
 
         def log_prob(self, particles, context, *, evaluation=None):
             evaluation = evaluation or self.evaluate(particles, context)
-            beta = float(context.metadata.get("temperature", 0.0))
+            beta = float(context.metadata.get("beta", 0.0))
             return evaluation["base"] + beta * evaluation["increment"]
 
-    context = context_factory(metadata={"temperature": 0.0})
+    context = context_factory(metadata={"beta": 0.0})
     initial_log_weights = particle_state.log_weights.copy()
 
     target = LinearTarget()
@@ -317,7 +320,7 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
     with pytest.raises(TypeError, match="log_increment_fn must be callable"):
         FixedTemperedWeighting(
             invalid_tempered_target,
-            temperature_increment=0.25,
+            beta_increment=0.25,
         )
 
     updated, context, _ = IncrementalWeighting(
@@ -373,7 +376,7 @@ def test_tempered_weighting_can_refresh_only_likelihood(
         return np.full(particles.shape[0], context.t + 1.0)
 
     posterior = TemperedPosterior(log_prior, log_likelihood)
-    initial_context = context_factory(t=0, metadata={"temperature": 0.0})
+    initial_context = context_factory(t=0, metadata={"beta": 0.0})
     state = particle_state.with_updates(
         evaluation=posterior.evaluate(
             particle_state.particles,
@@ -382,13 +385,13 @@ def test_tempered_weighting_can_refresh_only_likelihood(
     )
     step = FixedTemperedWeighting(
         posterior,
-        temperature_increment=0.25,
+        beta_increment=0.25,
         refresh_components={"log_likelihood"},
     )
 
     updated, _, _ = step(
         state,
-        context_factory(t=1, metadata={"temperature": 0.0}),
+        context_factory(t=1, metadata={"beta": 0.0}),
         rng,
     )
 
@@ -398,12 +401,12 @@ def test_tempered_weighting_can_refresh_only_likelihood(
     np.testing.assert_allclose(evaluation["log_likelihood"], 2.0)
 
 
-def test_evolving_target_ess_ratio_uses_clipped_temperature_progress() -> None:
+def test_evolving_target_ess_ratio_uses_clipped_beta_progress() -> None:
     schedule = evolving_target_ess_ratio(
         0.2,
         0.8,
         rate=2.0,
-        max_temperature=2.0,
+        max_beta=2.0,
     )
 
     assert schedule(-1.0) == pytest.approx(0.2)
@@ -419,8 +422,8 @@ def test_evolving_target_ess_ratio_uses_clipped_temperature_progress() -> None:
         ({"start": 0.2, "end": 1.1}, "end must be"),
         ({"start": 0.2, "end": 0.8, "rate": 0.0}, "rate must be"),
         (
-            {"start": 0.2, "end": 0.8, "max_temperature": 0.0},
-            "max_temperature must be",
+            {"start": 0.2, "end": 0.8, "max_beta": 0.0},
+            "max_beta must be",
         ),
     ],
 )
@@ -431,7 +434,7 @@ def test_evolving_target_ess_ratio_validates_arguments(
         evolving_target_ess_ratio(**kwargs)
 
 
-def test_adaptive_tempered_weighting_reaches_max_temperature(
+def test_adaptive_tempered_weighting_reaches_max_beta(
     particle_state: ParticleState,
     context_factory,
     rng,
@@ -440,12 +443,12 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
     step = AdaptiveTemperedWeighting(
         unit_log_likelihood,
         target_ess_ratio=0.8,
-        max_temperature=0.6,
+        max_beta=0.6,
         min_delta=0.05,
         max_bisection_iter=10,
     )
 
-    state = particle_state.with_updates(metadata={"temperature": 0.0})
+    state = particle_state.with_updates(metadata={"beta": 0.0})
 
     stop_step = None
     for t in range(20):
@@ -458,11 +461,9 @@ def test_adaptive_tempered_weighting_reaches_max_temperature(
     assert stop_step is not None, (
         "Adaptive tempering did not request stop within 20 iterations."
     )
-    assert state.metadata["temperature"] == pytest.approx(0.6, abs=1e-6)
-    assert context.metadata["temperature"] == pytest.approx(
-        state.metadata["temperature"]
-    )
-    assert "temperature_delta" in context.metadata
+    assert state.metadata["beta"] == pytest.approx(0.6, abs=1e-6)
+    assert context.metadata["beta"] == pytest.approx(state.metadata["beta"])
+    assert "delta_beta" in context.metadata
     assert context.stop_requested
     assert not context.stop_immediately
 
@@ -479,11 +480,11 @@ def test_adaptive_tempered_weighting_supports_evolving_target(
     def log_like(particles: np.ndarray, context: StepContext) -> np.ndarray:
         return np.linspace(-2.0, 2.0, particles.shape[0])
 
-    def target_schedule(temperature: float, context: StepContext) -> float:
-        schedule_calls.append((temperature, context.t))
+    def target_schedule(beta: float, context: StepContext) -> float:
+        schedule_calls.append((beta, context.t))
         return 0.95
 
-    state = particle_state.with_updates(metadata={"temperature": 0.0})
+    state = particle_state.with_updates(metadata={"beta": 0.0})
     fixed_context = context_factory(t=4)
     scheduled_context = context_factory(t=4)
     fixed_step = AdaptiveTemperedWeighting(
@@ -508,14 +509,14 @@ def test_adaptive_tempered_weighting_supports_evolving_target(
 
     assert schedule_calls == [(0.0, 4)]
     assert (
-        scheduled_context.metadata["temperature_delta"]
-        < fixed_context.metadata["temperature_delta"]
+        scheduled_context.metadata["delta_beta"]
+        < fixed_context.metadata["delta_beta"]
     )
     assert updated.metadata["target_ess_ratio"] == pytest.approx(0.95)
     assert scheduled_context.metadata["target_ess_ratio"] == pytest.approx(
         0.95
     )
-    delta = scheduled_context.metadata["temperature_delta"]
+    delta = scheduled_context.metadata["delta_beta"]
     increments = log_like(state.particles, scheduled_context)
     expected_ess_ratio = ess_ratio_from_log_weights(
         state.log_weights + delta * increments
@@ -524,7 +525,7 @@ def test_adaptive_tempered_weighting_supports_evolving_target(
         state.log_weights, delta * increments
     )
     for metadata in (scheduled_context.metadata, updated.metadata):
-        assert metadata["temperature_delta"] == pytest.approx(delta)
+        assert metadata["delta_beta"] == pytest.approx(delta)
         assert metadata["ess_ratio"] == pytest.approx(expected_ess_ratio)
         assert metadata["cess_ratio"] == pytest.approx(expected_cess_ratio)
 
@@ -538,7 +539,7 @@ def test_adaptive_tempered_weighting_validates_scheduled_target(
 ) -> None:
     step = AdaptiveTemperedWeighting(
         lambda particles: np.arange(particles.shape[0], dtype=float),
-        target_ess_ratio=lambda temperature: invalid_target,
+        target_ess_ratio=lambda beta: invalid_target,
     )
 
     with pytest.raises(
@@ -554,23 +555,23 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
     rng,
     unit_log_likelihood,
 ) -> None:
-    step = AdaptiveTemperedWeighting(unit_log_likelihood, max_temperature=1.0)
-    state = particle_state.with_updates(metadata={"temperature": 1.0})
-    context = context_factory(metadata={"temperature": 1.0})
+    step = AdaptiveTemperedWeighting(unit_log_likelihood, max_beta=1.0)
+    state = particle_state.with_updates(metadata={"beta": 1.0})
+    context = context_factory(metadata={"beta": 1.0})
 
     result_state, context, output = step(state, context, rng)
 
     assert np.array_equal(result_state.particles, state.particles)
-    assert result_state.metadata["temperature"] == 1.0
-    assert result_state.metadata["temperature_delta"] == 0.0
+    assert result_state.metadata["beta"] == 1.0
+    assert result_state.metadata["delta_beta"] == 0.0
     assert result_state.metadata["ess_ratio"] == pytest.approx(
         ess_ratio_from_log_weights(state.log_weights)
     )
     assert result_state.metadata["cess_ratio"] == 1.0
     assert context.stop_requested
     assert context.stop_immediately
-    assert context.metadata["temperature"] == 1.0
-    assert context.metadata["temperature_delta"] == 0.0
+    assert context.metadata["beta"] == 1.0
+    assert context.metadata["delta_beta"] == 0.0
     assert context.metadata["ess_ratio"] == pytest.approx(
         ess_ratio_from_log_weights(state.log_weights)
     )
@@ -606,13 +607,13 @@ def test_tempered_posterior_custom_increment_is_used_by_weighting(
 
     context = context_factory(
         metadata={
-            "temperature": 0.0,
+            "beta": 0.0,
             "custom_proposal_override": proposal_override,
         }
     )
     step = FixedTemperedWeighting(
         posterior,
-        temperature_increment=0.25,
+        beta_increment=0.25,
         normalize_after=False,
     )
 
@@ -706,7 +707,7 @@ def test_waste_free_resample_move_returns_uniform_weights(
     rng,
     standard_normal_log_prob,
 ) -> None:
-    context = context_factory(shared={"temperature": 1.0})
+    context = context_factory(shared={"beta": 1.0})
     proposal = GaussianRandomWalk(scale=0.5)
     step = WasteFreeResampleMove(standard_normal_log_prob, proposal)
 
@@ -729,7 +730,7 @@ def test_waste_free_resample_move_handles_one_dimensional_particles(
     state = ParticleState(
         particles=particles,
         log_weights=np.full(n, -np.log(n)),
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
 
     def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
@@ -757,7 +758,7 @@ def test_waste_free_resample_move_multiple_proposals(
     rng,
     standard_normal_log_prob,
 ) -> None:
-    context = context_factory(shared={"temperature": 1.0})
+    context = context_factory(shared={"beta": 1.0})
     step = WasteFreeResampleMove(
         standard_normal_log_prob,
         GaussianRandomWalk(scale=0.4),
@@ -799,7 +800,7 @@ def test_waste_free_resample_move_preserves_array_backend(
     )
     updated, _, output = step(
         case.state(),
-        context_factory(shared={"temperature": 1.0}),
+        context_factory(shared={"beta": 1.0}),
         case.rng(1234),
     )
 
@@ -853,15 +854,15 @@ def test_continue_while_overrides_stop_request(
     predicate_calls: list[tuple[float, int]] = []
 
     def predicate(state: ParticleState, context: StepContext) -> bool:
-        temperature = float(state.metadata.get("temperature", 0.0))
-        predicate_calls.append((temperature, context.t))
-        return temperature < 1.0
+        beta = float(state.metadata.get("beta", 0.0))
+        predicate_calls.append((beta, context.t))
+        return beta < 1.0
 
     step = ContinueWhile(predicate)
 
     context = context_factory(t=0)
     context = context.request_stop_immediately()
-    state = particle_state.with_updates(metadata={"temperature": 0.5})
+    state = particle_state.with_updates(metadata={"beta": 0.5})
 
     result, context, _ = step(state, context, rng)
 
@@ -871,7 +872,7 @@ def test_continue_while_overrides_stop_request(
 
     context_late = context_factory(t=1)
     context_late = context_late.request_stop_immediately()
-    late_state = particle_state.with_updates(metadata={"temperature": 1.0})
+    late_state = particle_state.with_updates(metadata={"beta": 1.0})
 
     final_result, context_late, _ = step(late_state, context_late, rng)
 

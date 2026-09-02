@@ -138,13 +138,13 @@ def main(n_dimensions: int) -> None:
     jax.block_until_ready(result.states[-1].particles)
     end_time = time.time()
     print(
-        f"Completed {len(result)} adaptive temperature steps in "
+        f"Completed {len(result)} adaptive beta steps in "
         f"{end_time - start_time:.3f} seconds"
     )
 
     print(f"Array backend: {jax.default_backend()}")
     print(f"Dimensions: {model.n_dimensions}")
-    print(f"Adaptive temperature steps: {len(result)}")
+    print(f"Adaptive beta steps: {len(result)}")
     mutation_output = result.outputs[-1][-1]
     print(f"Final BlackJAX acceptance: {mutation_output['acceptance']:.3f}")
 

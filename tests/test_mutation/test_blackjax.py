@@ -69,7 +69,7 @@ def test_blackjax_mutates_jax_particles(algorithm, algorithm_kwargs) -> None:
         n_steps=2,
         store_chains=True,
     )
-    context = StepContext(t=0, metadata={"temperature": 0.5})
+    context = StepContext(t=0, metadata={"beta": 0.5})
 
     result, _, output = mutation(_state(), context, resolve_rng(42))
 
@@ -103,7 +103,7 @@ def test_blackjax_selects_particle_aligned_auxiliary() -> None:
     @jax.jit
     def compiled_step(particles, random_state):
         state = ParticleState(particles=particles)
-        context = StepContext(t=0, metadata={"temperature": jnp.asarray(0.5)})
+        context = StepContext(t=0, metadata={"beta": jnp.asarray(0.5)})
         result, _, next_state, _ = mutation.apply_functional(
             state, context, random_state
         )
@@ -193,9 +193,7 @@ def test_blackjax_jax_key_consumption_can_be_jitted() -> None:
     )
 
 
-def test_blackjax_array_boundary_accepts_dynamic_temperature_under_jit() -> (
-    None
-):
+def test_blackjax_array_boundary_accepts_dynamic_beta_under_jit() -> None:
     mutation = BlackJAXMutation(
         _posterior(),
         algorithm="random-walk",
@@ -204,9 +202,9 @@ def test_blackjax_array_boundary_accepts_dynamic_temperature_under_jit() -> (
     )
 
     @jax.jit
-    def compiled_step(particles, temperature, random_state):
+    def compiled_step(particles, beta, random_state):
         state = ParticleState(particles=particles)
-        context = StepContext(t=0, metadata={"temperature": temperature})
+        context = StepContext(t=0, metadata={"beta": beta})
         updated, _, next_state, output = mutation.apply_functional(
             state,
             context,

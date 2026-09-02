@@ -44,7 +44,7 @@ def test_make_standard_bayesian_smc_builds_default_steps() -> None:
     )
 
     assert isinstance(posterior, TemperedPosterior)
-    assert metadata == {"max_temperature": 1.0}
+    assert metadata == {"max_beta": 1.0}
 
     steps = smc._steps  # noqa: SLF001 - inspecting configured steps for testing.
     assert len(steps) == 4
@@ -54,12 +54,12 @@ def test_make_standard_bayesian_smc_builds_default_steps() -> None:
     assert isinstance(steps[3], LoggingStep)
 
 
-def test_make_standard_bayesian_smc_reaches_max_temperature(rng) -> None:
-    max_temperature = 0.5
+def test_make_standard_bayesian_smc_reaches_max_beta(rng) -> None:
+    max_beta = 0.5
     smc, _, metadata = make_standard_bayesian_smc(
         _quadratic_log_prior,
         _zero_log_likelihood,
-        max_temperature=max_temperature,
+        max_beta=max_beta,
         mutation_n_steps=1,
     )
 
@@ -68,39 +68,35 @@ def test_make_standard_bayesian_smc_reaches_max_temperature(rng) -> None:
     initial_state = ParticleState(
         particles=particles,
         log_weights=np.full(n, -np.log(n)),
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
 
     results = smc.run(initial_state, rng=rng, metadata=metadata)
 
-    assert results.states[-1].metadata["temperature"] == pytest.approx(
-        max_temperature
-    )
+    assert results.states[-1].metadata["beta"] == pytest.approx(max_beta)
     assert results.final_state.evaluation is not None
-    assert results.context.metadata["temperature"] == pytest.approx(
-        max_temperature
-    )
+    assert results.context.metadata["beta"] == pytest.approx(max_beta)
 
 
 def test_make_standard_bayesian_smc_accepts_evolving_target(rng) -> None:
     schedule_calls: list[float] = []
 
-    def target_schedule(temperature: float) -> float:
-        schedule_calls.append(temperature)
+    def target_schedule(beta: float) -> float:
+        schedule_calls.append(beta)
         return 0.8
 
     smc, _, metadata = make_standard_bayesian_smc(
         _quadratic_log_prior,
         _zero_log_likelihood,
         target_ess_ratio=target_schedule,
-        max_temperature=0.5,
+        max_beta=0.5,
         mutation="none",
     )
     particles = np.array([[0.0], [1.0], [-1.0], [2.0]], dtype=float)
     initial_state = ParticleState(
         particles=particles,
         log_weights=np.full(particles.shape[0], -np.log(particles.shape[0])),
-        metadata={"temperature": 0.0},
+        metadata={"beta": 0.0},
     )
 
     result = smc.run(initial_state, rng=rng, metadata=metadata)
@@ -130,7 +126,7 @@ def test_make_standard_bayesian_smc_supports_fixed_schedule(rng) -> None:
     )
 
     assert isinstance(smc._steps[0], FixedTemperedWeighting)  # noqa: SLF001
-    assert result.final_state.metadata["temperature"] == pytest.approx(1.0)
+    assert result.final_state.metadata["beta"] == pytest.approx(1.0)
 
 
 def test_make_standard_bayesian_smc_requires_fixed_step_count() -> None:
@@ -230,7 +226,7 @@ def test_make_standard_bayesian_smc_accepts_proposal_distribution(
         log_proposal=analytic_proposal_factory(n_dim=1),
     )
     particles = np.array([[0.0], [1.0]], dtype=float)
-    context = StepContext(t=0, metadata={"temperature": 0.0})
+    context = StepContext(t=0, metadata={"beta": 0.0})
     evaluation = posterior.evaluate(particles, context)
     values = posterior.log_increment(particles, context, evaluation=evaluation)
 
@@ -281,7 +277,7 @@ def test_make_persistent_bayesian_smc_logs_archive_progress(
         mutation="none",
     )
     particles = np.linspace(-1.0, 1.0, n_particles)[:, None]
-    context = StepContext(t=0, metadata={"temperature": 0.0})
+    context = StepContext(t=0, metadata={"beta": 0.0})
     initial_state = ParticleState(
         particles,
         evaluation=target.prepare_evaluation(particles, context),
@@ -293,7 +289,7 @@ def test_make_persistent_bayesian_smc_logs_archive_progress(
     assert "Persistent SMC iteration 0" in caplog.messages[0]
     terminal_message = caplog.messages[-1]
     assert "Persistent SMC iteration 1" in terminal_message
-    assert "Temperature=1" in terminal_message
+    assert "Beta=1" in terminal_message
     assert "Batches=2" in terminal_message
     assert f"Archive size={2 * n_particles}" in terminal_message
     assert (
@@ -317,7 +313,7 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
         mutation="none",
     )
     particles = np.linspace(-1.0, 1.0, n_particles)[:, None]
-    context = StepContext(t=0, metadata={"temperature": 0.0})
+    context = StepContext(t=0, metadata={"beta": 0.0})
     initial_state = ParticleState(
         particles,
         evaluation=target.prepare_evaluation(particles, context),
@@ -327,7 +323,7 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
 
     assert isinstance(result.final_state, PersistentParticleState)
     assert result.final_state.particles.shape == (2 * n_particles, 1)
-    assert result.final_state.metadata["temperature"] == pytest.approx(1.0)
+    assert result.final_state.metadata["beta"] == pytest.approx(1.0)
     np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
     persist = smc._steps[0]  # noqa: SLF001
     assert isinstance(persist, PersistParticles)

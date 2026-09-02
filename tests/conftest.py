@@ -248,7 +248,7 @@ def particle_state(simple_particles: np.ndarray) -> ParticleState:
     """ParticleState with non-uniform log weights for testing."""
     n = simple_particles.shape[0]
     log_weights = np.linspace(-0.1, -0.4, n)
-    metadata = {"temperature": 0.0}
+    metadata = {"beta": 0.0}
     return ParticleState(
         particles=simple_particles, log_weights=log_weights, metadata=metadata
     )

@@ -216,14 +216,14 @@ class GMMExpansionTransformation(SMCTransformation):
         metadata = dict(state.metadata)
         metadata["previous_active_components"] = current_components
         metadata["active_components"] = next_components
-        metadata["temperature"] = 0.0
-        metadata.pop("temperature_delta", None)
+        metadata["beta"] = 0.0
+        metadata.pop("delta_beta", None)
 
         context = context.with_metadata(
             previous_active_components=current_components,
             active_components=next_components,
-            temperature=0.0,
-            temperature_delta=0.0,
+            beta=0.0,
+            delta_beta=0.0,
         )
 
         return (
@@ -432,7 +432,7 @@ class GMMTemperedPosterior(TemperedPosterior):
         if evaluation is None:
             evaluation = self.evaluate(particles, context)
         self.validate_evaluation(evaluation, particles, context)
-        beta = float(context.metadata.get("temperature", 0.0))
+        beta = float(context.metadata.get("beta", 0.0))
         # Mutation follows the same geometric bridge used by the weight update.
         posterior = (
             evaluation["log_prior"]
@@ -478,7 +478,7 @@ def mixture_density(
 
 
 def logging_str_fn(state: ParticleState, context: StepContext) -> str:
-    temperature = context.metadata["temperature"]
+    beta = context.metadata["beta"]
     components = context.metadata["active_components"]
     ess = state.effective_sample_size()
     n_particles = state.log_weights.shape[0]
@@ -486,7 +486,7 @@ def logging_str_fn(state: ParticleState, context: StepContext) -> str:
     log_evidence = state.log_evidence
     return (
         f"it {context.t}:, "
-        f"Temperature: {temperature:.4f}, "
+        f"Beta: {beta:.4f}, "
         f"Components: {components}, "
         f"ESS: {ess:.1f} ({ess_ratio:.3f}), "
         f"Log Evidence: {log_evidence:.1f}"
@@ -570,7 +570,7 @@ def main() -> None:
             AdaptiveTemperedWeighting(
                 posterior,
                 target_ess_ratio=0.6,
-                max_temperature=1.0,
+                max_beta=1.0,
                 min_delta=1e-8,
             ),
             SystematicResampling(always_resample=True),
@@ -630,10 +630,8 @@ def main() -> None:
         s.metadata.get("active_components", s.particles.shape[1] // 2)
         for s in all_states
     ]
-    temperatures = [s.metadata.get("temperature", 0.0) for s in all_states]
-    temperature_deltas = [
-        s.metadata.get("temperature_delta", 0.0) for s in all_states
-    ]
+    betas = [s.metadata.get("beta", 0.0) for s in all_states]
+    delta_betas = [s.metadata.get("delta_beta", 0.0) for s in all_states]
 
     x_grid = np.linspace(mean_bounds[0], mean_bounds[1], 400)
     true_density = mixture_density(
@@ -741,28 +739,28 @@ def main() -> None:
     axes[1].set_ylabel("Components")
     axes[1].legend(loc="upper left")
 
-    ax_temp = axes[2]
-    ax_temp.plot(
+    ax_beta = axes[2]
+    ax_beta.plot(
         iterations,
-        temperatures,
+        betas,
         color="tab:cyan",
         linewidth=2.0,
-        label="Temperature",
+        label="Beta",
     )
-    ax_delta = ax_temp.twinx()
+    ax_delta = ax_beta.twinx()
     ax_delta.step(
         iterations,
-        temperature_deltas,
+        delta_betas,
         where="post",
         color="tab:orange",
         linewidth=1.5,
-        label="Temperature increment",
+        label="Beta increment",
     )
-    ax_temp.set_title("Adaptive annealing")
-    ax_temp.set_xlabel("SMC iteration")
-    ax_temp.set_ylabel("Temperature")
+    ax_beta.set_title("Adaptive annealing")
+    ax_beta.set_xlabel("SMC iteration")
+    ax_beta.set_ylabel("Beta")
     ax_delta.set_ylabel("Increment")
-    ax_temp.legend(loc="upper left")
+    ax_beta.legend(loc="upper left")
     ax_delta.legend(loc="upper right")
 
     fig.tight_layout()

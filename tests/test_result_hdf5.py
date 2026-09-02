@@ -23,7 +23,7 @@ def make_evaluation() -> TargetEvaluation:
     return TargetEvaluation(
         {"log_prior": np.array([-1.0, -2.0])},
         target_id="target",
-        evaluation_key=("temperature", np.float32(0.5), True),
+        evaluation_key=("beta", np.float32(0.5), True),
     )
 
 
@@ -40,7 +40,7 @@ def make_state(*, persistent: bool = False):
         return ParticleState(**kwargs)
     return PersistentParticleState(
         **kwargs,
-        temperatures=np.array([0.5]),
+        betas=np.array([0.5]),
         log_normalizing_constants=np.array([1.0]),
         batch_size=2,
     )
@@ -62,9 +62,7 @@ def assert_state_equal(actual, expected) -> None:
         actual.evaluation["log_prior"], expected.evaluation["log_prior"]
     )
     if isinstance(expected, PersistentParticleState):
-        np.testing.assert_array_equal(
-            actual.temperatures, expected.temperatures
-        )
+        np.testing.assert_array_equal(actual.betas, expected.betas)
         np.testing.assert_array_equal(
             actual.log_normalizing_constants,
             expected.log_normalizing_constants,
@@ -117,7 +115,7 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
         observation=np.array([99]),
         shared={"live": object()},
         metadata={
-            "temperature": 0.5,
+            "beta": 0.5,
             "particle_transform": object(),
             "_functional_particle_transform": object(),
             "smc_transformation": object(),
@@ -172,7 +170,7 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
     assert actual.context.shared == {}
     assert actual.context.observation is None
     assert actual.context.metadata == {
-        "temperature": 0.5,
+        "beta": 0.5,
         "nested": {"particle_transform": "user value"},
     }
     assert isinstance(actual.outputs[0][0], dict)

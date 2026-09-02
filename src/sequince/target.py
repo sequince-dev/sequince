@@ -464,11 +464,11 @@ class TemperedTarget(SequentialTarget):
         *,
         evaluation: TargetEvaluation | None = None,
     ) -> Array | float:
-        """Return the interpolated log density at the current temperature."""
+        """Return the interpolated log density at the current beta."""
         if evaluation is None:
             evaluation = self.evaluate(particles, context)
         self.validate_evaluation(evaluation, particles, context)
-        beta = context.metadata.get("temperature", 0.0)
+        beta = context.metadata.get("beta", 0.0)
         if isinstance(beta, Real):
             if beta == 0.0:
                 return self.log_initial(
@@ -480,7 +480,7 @@ class TemperedTarget(SequentialTarget):
                 )
         initial = self.log_initial(particles, context, evaluation=evaluation)
         terminal = self.log_terminal(particles, context, evaluation=evaluation)
-        return (1.0 - beta) * initial + beta * terminal
+        return initial + beta * (terminal - initial)
 
     def log_increment(
         self,

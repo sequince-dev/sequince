@@ -251,7 +251,7 @@ def draw_additional_samples(
     state:
         Current ParticleState containing particles and weights.
     context:
-        StepContext providing shared information such as temperature.
+        StepContext providing shared information such as beta.
     rng:
         Random number generator.
     n_particles:

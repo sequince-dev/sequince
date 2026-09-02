@@ -29,7 +29,7 @@ def test_mutation_runs_single_step(
     rng,
     standard_normal_log_prob,
 ) -> None:
-    context = context_factory(shared={"temperature": 1.0})
+    context = context_factory(shared={"beta": 1.0})
     mutated, context, output = mutation_type(
         standard_normal_log_prob,
         n_steps=1,
@@ -51,7 +51,7 @@ def test_mutation_evaluates_final_population(
     context_factory,
     rng,
 ) -> None:
-    context = context_factory(metadata={"temperature": 1.0})
+    context = context_factory(metadata={"beta": 1.0})
     mutated, context, output = mutation_type(quadratic_posterior, n_steps=1)(
         particle_state, context, rng
     )
@@ -78,7 +78,7 @@ def test_mutation_with_transform(
     rng,
     standard_normal_log_prob,
 ) -> None:
-    context = context_factory(shared={"temperature": 1.0})
+    context = context_factory(shared={"beta": 1.0})
     transform = AffineTransform(columns=[column]).fit(particle_state.particles)
     mutated, context, output = mutation_type(
         standard_normal_log_prob,

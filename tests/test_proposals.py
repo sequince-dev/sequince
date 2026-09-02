@@ -67,7 +67,7 @@ def test_draw_initial_state_retains_zero_density_points_for_evidence():
         log_likelihood=lambda particles, context: np.array([0.0, -np.inf]),
         log_proposal=proposal,
     )
-    context = StepContext(t=0, metadata={"max_temperature": 1.0})
+    context = StepContext(t=0, metadata={"max_beta": 1.0})
     state = draw_initial_state(
         proposal,
         2,
@@ -77,7 +77,7 @@ def test_draw_initial_state_retains_zero_density_points_for_evidence():
 
     weighted, _, _ = FixedTemperedWeighting(
         posterior,
-        temperature_increment=1.0,
+        beta_increment=1.0,
     )(state, context, np.random.default_rng(123))
 
     assert len(state.particles) == 2

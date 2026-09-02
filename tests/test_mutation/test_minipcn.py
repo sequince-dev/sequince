@@ -66,7 +66,7 @@ def test_functional_step_can_be_jitted(
 
 @pytest.mark.parametrize("step_fn", ["pcn", "tpcn"])
 @pytest.mark.parametrize("jit_compile", [False, True])
-def test_functional_smc_with_minipcn_reaches_max_temperature(
+def test_functional_smc_with_minipcn_reaches_max_beta(
     step_fn: str,
     jit_compile: bool,
 ) -> None:
@@ -110,7 +110,7 @@ def test_functional_smc_with_minipcn_reaches_max_temperature(
         iteration=iteration,
     )
 
-    assert result.context.metadata["temperature"] == pytest.approx(1.0)
+    assert result.context.metadata["beta"] == pytest.approx(1.0)
     assert result.context.stop_requested
     assert len(result) < 20
     assert result.final_state.particles.shape == state.particles.shape
