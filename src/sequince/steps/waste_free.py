@@ -308,6 +308,9 @@ class WasteFreeResampleMove(SMCStep):
         evaluation=None,
     ):
         xp = namespace(particles)
+        log_prob_count = EvaluationCounts(
+            log_target_evaluations=xp.asarray(particles.shape[0])
+        )
         if self._target is None:
             if self._log_prob_fn is None:  # pragma: no cover
                 raise RuntimeError(
@@ -318,7 +321,7 @@ class WasteFreeResampleMove(SMCStep):
                 (particles,),
                 context,
             )
-            counts = EvaluationCounts.zeros(xp=xp)
+            counts = log_prob_count
         else:
             evaluation, counts = self._target.prepare_evaluation(
                 particles,

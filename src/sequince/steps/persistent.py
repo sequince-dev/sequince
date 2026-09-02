@@ -16,7 +16,7 @@ from ..state import (
     _validate_log_normalizer,
 )
 from ..stats import ess_from_log_weights
-from ..target import Target, TemperedTarget
+from ..target import EvaluationCounts, Target, TemperedTarget
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep
 from .context import StepContext
@@ -259,6 +259,9 @@ class BasePersistentTemperedWeighting(SMCStep):
             evaluation=evaluation,
         )
         xp = namespace(state.log_weights)
+        counts = counts + EvaluationCounts(
+            log_increment_evaluations=xp.asarray(state.particles.shape[0])
+        )
         log_increment = asarray(log_increment, xp=xp, like=state.log_weights)
         if log_increment.ndim == 0:
             log_increment = xp.broadcast_to(

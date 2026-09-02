@@ -111,13 +111,18 @@ class MutationStep(SMCStep):
         *,
         evaluation: "TargetEvaluation | None" = None,
     ) -> tuple[Any, "TargetEvaluation | None", EvaluationCounts]:
+        xp = namespace(particles)
+        n_particles = 1 if particles.ndim == 1 else particles.shape[0]
+        log_prob_count = EvaluationCounts(
+            log_target_evaluations=xp.asarray(n_particles)
+        )
         if self._target is None:
             if self._log_prob_fn is None:  # pragma: no cover
                 raise RuntimeError("Mutation target is not configured.")
             return (
                 call_log_prob(self._log_prob_fn, particles, context),
                 None,
-                EvaluationCounts.zeros(xp=namespace(particles)),
+                log_prob_count,
             )
         evaluation, counts = self._target.prepare_evaluation(
             particles,

@@ -14,7 +14,7 @@ from ..stats import (
     ess_from_log_weights,
     ess_ratio_from_log_weights,
 )
-from ..target import SequentialTarget, TemperedTarget
+from ..target import EvaluationCounts, SequentialTarget, TemperedTarget
 from ..utils.callables import call_with_optional_context
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep, StepContext
@@ -238,6 +238,9 @@ class IncrementalWeighting(SMCStep):
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         xp = namespace(state.log_weights)
+        log_increment_counts = EvaluationCounts(
+            log_increment_evaluations=xp.asarray(state.particles.shape[0])
+        )
         if self._target is None:
             if self._log_increment_fn is None:  # pragma: no cover
                 raise RuntimeError("Sequential increment is not configured.")
@@ -261,6 +264,7 @@ class IncrementalWeighting(SMCStep):
             )
             if evaluation is not state.evaluation:
                 state = state.with_updates(evaluation=evaluation)
+        context = context.add_evaluation_counts(log_increment_counts)
         increments = _weights_as_1d_array(
             increment, xp=xp, like=state.log_weights
         )
@@ -341,6 +345,10 @@ class BaseTemperedStep(SMCStep):
         context: StepContext,
     ) -> tuple[Array | float, ParticleState, StepContext]:
         """Return increments and attach a missing target evaluation."""
+        xp = namespace(state.log_weights)
+        log_increment_counts = EvaluationCounts(
+            log_increment_evaluations=xp.asarray(state.particles.shape[0])
+        )
         if self._target is None:
             if self._log_increment_fn is None:  # pragma: no cover
                 raise RuntimeError("Tempering increment is not configured.")
@@ -351,7 +359,7 @@ class BaseTemperedStep(SMCStep):
                     context,
                 ),
                 state,
-                context,
+                context.add_evaluation_counts(log_increment_counts),
             )
         evaluation, counts = self._target.prepare_evaluation(
             state.particles,
@@ -360,7 +368,7 @@ class BaseTemperedStep(SMCStep):
             refresh_components=self._refresh_components,
             return_counts=True,
         )
-        context = context.add_evaluation_counts(counts)
+        context = context.add_evaluation_counts(counts + log_increment_counts)
         if evaluation is not state.evaluation:
             state = state.with_updates(evaluation=evaluation)
         return (

@@ -28,26 +28,38 @@ TargetComponentFn = Callable[..., Array | float]
 
 @pytree_dataclass(
     data_fields=(
-        "target_evaluations",
-        "proposal_evaluations",
+        "log_target_evaluations",
+        "log_proposal_evaluations",
+        "log_increment_evaluations",
     )
 )
 @dataclass(frozen=True)
 class EvaluationCounts:
-    """Backend-compatible counters for probabilistic model evaluations."""
+    """Backend-compatible counters for probabilistic model evaluations.
 
-    target_evaluations: Any = 0
-    proposal_evaluations: Any = 0
+    The three fields count work required to evaluate the log target density,
+    ``log_proposal``, and ``log_increment``, respectively. Log-target work
+    includes decomposed target-density components such as ``log_likelihood``.
+    Reusing cached components does not count again.
+    """
+
+    log_target_evaluations: Any = 0
+    log_proposal_evaluations: Any = 0
+    log_increment_evaluations: Any = 0
 
     def __add__(self, other: EvaluationCounts) -> EvaluationCounts:
         if not isinstance(other, EvaluationCounts):
             return NotImplemented
         return type(self)(
-            target_evaluations=(
-                self.target_evaluations + other.target_evaluations
+            log_target_evaluations=(
+                self.log_target_evaluations + other.log_target_evaluations
             ),
-            proposal_evaluations=(
-                self.proposal_evaluations + other.proposal_evaluations
+            log_proposal_evaluations=(
+                self.log_proposal_evaluations + other.log_proposal_evaluations
+            ),
+            log_increment_evaluations=(
+                self.log_increment_evaluations
+                + other.log_increment_evaluations
             ),
         )
 
@@ -57,7 +69,7 @@ class EvaluationCounts:
         if xp is None:
             return cls()
         zero = xp.asarray(0)
-        return cls(zero, zero)
+        return cls(zero, zero, zero)
 
 
 def _evaluate_component(
@@ -533,9 +545,9 @@ class Target(ABC):
     ) -> tuple[TargetEvaluation, EvaluationCounts]:
         """Evaluate the target and report newly incurred work.
 
-        Custom targets default to one target evaluation per particle. They may
-        override this method when they can classify their component work more
-        precisely.
+        Custom targets default to one ``log_prob`` evaluation per particle.
+        They may override this method when they can classify their component
+        work more precisely.
         """
         if refresh:
             if evaluation is None or components is None:
@@ -558,8 +570,7 @@ class Target(ABC):
         xp = namespace(particles)
         n_particles = 1 if particles.ndim == 1 else particles.shape[0]
         return result, EvaluationCounts(
-            target_evaluations=xp.asarray(n_particles),
-            proposal_evaluations=xp.asarray(0),
+            log_target_evaluations=xp.asarray(n_particles)
         )
 
     @abstractmethod

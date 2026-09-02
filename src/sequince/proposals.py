@@ -226,6 +226,24 @@ def _proposal_batch(
     return particles, log_proposal
 
 
+def _sample_proposal_batch(
+    proposal: ProposalDistribution,
+    n_particles: int,
+    context: StepContext,
+    *,
+    rng: RandomGenerator | int | None = None,
+    xp: Any | None = None,
+) -> Array:
+    """Draw and validate particles without evaluating proposal density."""
+    particles = proposal.sample(
+        n_particles,
+        context=context,
+        rng=rng,
+        xp=xp,
+    )
+    return _validate_proposal_particles(particles, n_particles)
+
+
 def _validate_proposal_particles(
     particles: Array,
     n_particles: int,
@@ -286,20 +304,25 @@ def draw_initial_state(
 
     evaluation_context = context or StepContext(t=0)
     log_proposal_fn = None
+    log_proposal_source = None
     if posterior is not None:
-        log_proposal_fn = posterior.resolve_log_proposal(
-            evaluation_context.metadata.get(
-                posterior.log_proposal_override_key
-            )
+        log_proposal_override = evaluation_context.metadata.get(
+            posterior.log_proposal_override_key
         )
-    if posterior is not None and log_proposal_fn is None:
-        particles = proposal.sample(
+        log_proposal_fn = posterior.resolve_log_proposal(log_proposal_override)
+        log_proposal_source = (
+            log_proposal_override
+            if log_proposal_override is not None
+            else posterior.log_proposal
+        )
+    if log_proposal_fn is None or log_proposal_source is not proposal:
+        particles = _sample_proposal_batch(
+            proposal,
             n_particles,
-            context=evaluation_context,
+            evaluation_context,
             rng=rng,
             xp=xp,
         )
-        particles = _validate_proposal_particles(particles, n_particles)
         log_proposal = None
         counts = EvaluationCounts()
     else:
@@ -311,26 +334,29 @@ def draw_initial_state(
             xp=xp,
         )
         counts = EvaluationCounts(
-            proposal_evaluations=n_particles,
+            log_proposal_evaluations=n_particles,
         )
     xp = namespace(particles)
 
     evaluation = None
     if posterior is not None:
+        components = {"log_prior", "log_likelihood"}
         if log_proposal is not None:
             evaluation = posterior.bind_evaluation(
                 TargetEvaluation(components={"log_proposal": log_proposal}),
                 evaluation_context,
             )
-        evaluation, target_counts = posterior.prepare_evaluation(
+        elif log_proposal_fn is not None:
+            components.add("log_proposal")
+        evaluation, evaluation_counts = posterior.prepare_evaluation(
             particles,
             evaluation_context,
-            components={"log_prior", "log_likelihood"},
+            components=components,
             evaluation=evaluation,
-            refresh_components={"log_prior", "log_likelihood"},
+            refresh_components=components,
             return_counts=True,
         )
-        counts = counts + target_counts
+        counts = counts + evaluation_counts
         if any(
             bool(to_numpy(xp.any(xp.isnan(values) | (values == float("inf")))))
             for values in evaluation.components.values()
@@ -378,7 +404,7 @@ def draw_mcmc_initial_state(
     n_accepted = 0
     counts = EvaluationCounts()
     for _ in range(max_batches):
-        particles, _ = _proposal_batch(
+        particles = _sample_proposal_batch(
             proposal,
             n_particles,
             evaluation_context,
@@ -386,17 +412,14 @@ def draw_mcmc_initial_state(
             xp=xp,
         )
         xp = namespace(particles)
-        counts = counts + EvaluationCounts(
-            proposal_evaluations=n_particles,
-        )
         evaluation = None
         if isinstance(log_prob_fn, Target):
-            evaluation, target_counts = log_prob_fn.prepare_evaluation(
+            evaluation, evaluation_counts = log_prob_fn.prepare_evaluation(
                 particles,
                 evaluation_context,
                 return_counts=True,
             )
-            counts = counts + target_counts
+            counts = counts + evaluation_counts
             log_prob = log_prob_fn.log_prob(
                 particles,
                 evaluation_context,
@@ -407,6 +430,9 @@ def draw_mcmc_initial_state(
                 log_prob_fn,
                 (particles,),
                 evaluation_context,
+            )
+            counts = counts + EvaluationCounts(
+                log_target_evaluations=xp.asarray(n_particles)
             )
         log_prob = _particle_values(
             log_prob,

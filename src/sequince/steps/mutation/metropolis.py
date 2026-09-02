@@ -19,7 +19,6 @@ from .kernels import (
     DifferentialEvolutionKernel,
     GammaRandomization,
     MutationKernel,
-    SymmetricComplementaryEnsembleKernel,
     evaluate_log_transition_ratio,
 )
 
@@ -371,14 +370,15 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             context,
             auxiliary=active_auxiliary,
         )
-        transition_ratio = kernel.log_transition_ratio(
+        transition_ratio, transition_counts = evaluate_log_transition_ratio(
+            kernel,
             active,
             proposals,
             complementary,
+            return_counts=True,
         )
+        counts = counts + transition_counts
         n_active = active.shape[0]
-        if not isinstance(kernel, SymmetricComplementaryEnsembleKernel):
-            counts = counts + EvaluationCounts(proposal_evaluations=n_active)
         if transition_ratio.shape != (n_active,):
             raise ValueError(
                 "Mutation kernel must return one transition ratio per particle."

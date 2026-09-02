@@ -311,12 +311,16 @@ class BlackJAXMutation(MutationStep):
             )
         total_evaluation_points = internal_evaluation_points + n_particles
         counts = EvaluationCounts(
-            target_evaluations=(
-                (final_counts.target_evaluations // n_particles)
+            log_target_evaluations=(
+                (final_counts.log_target_evaluations // n_particles)
                 * total_evaluation_points
             ),
-            proposal_evaluations=(
-                (final_counts.proposal_evaluations // n_particles)
+            log_proposal_evaluations=(
+                (final_counts.log_proposal_evaluations // n_particles)
+                * total_evaluation_points
+            ),
+            log_increment_evaluations=(
+                (final_counts.log_increment_evaluations // n_particles)
                 * total_evaluation_points
             ),
         )

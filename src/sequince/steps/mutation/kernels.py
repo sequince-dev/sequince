@@ -176,6 +176,7 @@ def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
     to_particles: Array,
+    complementary_particles: Array | None = None,
     *,
     return_counts: Literal[False] = False,
 ) -> Array: ...
@@ -186,6 +187,7 @@ def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
     to_particles: Array,
+    complementary_particles: Array | None = None,
     *,
     return_counts: Literal[True],
 ) -> tuple[Array, EvaluationCounts]: ...
@@ -196,6 +198,7 @@ def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
     to_particles: Array,
+    complementary_particles: Array | None = None,
     *,
     return_counts: bool,
 ) -> Array | tuple[Array, EvaluationCounts]: ...
@@ -205,10 +208,11 @@ def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
     to_particles: Array,
+    complementary_particles: Array | None = None,
     *,
     return_counts: bool = False,
 ) -> Array | tuple[Array, EvaluationCounts]:
-    """Evaluate a transition ratio, optionally returning work counts."""
+    """Evaluate a transition ratio."""
     if isinstance(kernel, MixtureMutationKernel):
         selected = kernel.selected_kernel
         if selected is None:
@@ -220,33 +224,37 @@ def evaluate_log_transition_ratio(
             selected,
             from_particles,
             to_particles,
+            complementary_particles,
             return_counts=return_counts,
         )
 
-    n_particles = from_particles.shape[0]
     ratio_fn = getattr(kernel, "log_transition_ratio", None)
     if callable(ratio_fn):
-        values = ratio_fn(from_particles, to_particles)
-        if isinstance(kernel, SymmetricMutationKernel) or (
-            isinstance(kernel, CallableMutationKernel) and kernel.symmetric
-        ):
-            n_evaluations = 0
-        elif (
-            isinstance(kernel, CallableMutationKernel)
-            and kernel.log_density_fn is not None
-        ):
-            n_evaluations = 2 * n_particles
+        if complementary_particles is None:
+            values = ratio_fn(from_particles, to_particles)
         else:
-            n_evaluations = n_particles
-        counts = EvaluationCounts(proposal_evaluations=n_evaluations)
+            values = ratio_fn(
+                from_particles,
+                to_particles,
+                complementary_particles,
+            )
+        counts = EvaluationCounts.zeros(
+            xp=namespace(from_particles, to_particles)
+        )
         return (values, counts) if return_counts else values
 
     density_fn = getattr(kernel, "log_density", None)
     if callable(density_fn):
+        if complementary_particles is not None:
+            raise TypeError(
+                "Complementary kernels must implement log_transition_ratio()."
+            )
         values = density_fn(to_particles, from_particles) - density_fn(
             from_particles, to_particles
         )
-        counts = EvaluationCounts(proposal_evaluations=2 * n_particles)
+        counts = EvaluationCounts.zeros(
+            xp=namespace(from_particles, to_particles)
+        )
         return (values, counts) if return_counts else values
     raise TypeError(
         "Mutation kernel must implement log_transition_ratio() or log_density()."

@@ -7,6 +7,7 @@ from orng import RandomGenerator
 from ..array_api import namespace
 from ..filtering import ImportanceKernel
 from ..state import ParticleState
+from ..target import EvaluationCounts
 from .base import SMCStep
 from .context import StepContext
 from .weighting import _apply_log_weight_increment, _weights_as_1d_array
@@ -67,6 +68,11 @@ class ImportanceTransition(SMCStep):
             context,
         )
         xp = namespace(state.log_weights)
+        context = context.add_evaluation_counts(
+            EvaluationCounts(
+                log_increment_evaluations=xp.asarray(new_particles.shape[0])
+            )
+        )
         increments = _weights_as_1d_array(
             increment,
             xp=xp,

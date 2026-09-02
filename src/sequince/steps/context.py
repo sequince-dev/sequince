@@ -100,11 +100,14 @@ class StepContext:
             "next_observation_index": self.next_observation_index,
             "metadata": metadata,
             "evaluation_counts": {
-                "target_evaluations": (
-                    self.evaluation_counts.target_evaluations
+                "log_target_evaluations": (
+                    self.evaluation_counts.log_target_evaluations
                 ),
-                "proposal_evaluations": (
-                    self.evaluation_counts.proposal_evaluations
+                "log_proposal_evaluations": (
+                    self.evaluation_counts.log_proposal_evaluations
+                ),
+                "log_increment_evaluations": (
+                    self.evaluation_counts.log_increment_evaluations
                 ),
             },
             "stop_requested": self.stop_requested,

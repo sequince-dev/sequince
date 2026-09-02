@@ -235,11 +235,14 @@ class MiniPCNMutation(MutationStep):
             new_particles, context
         )
         counts = EvaluationCounts(
-            target_evaluations=(
-                final_counts.target_evaluations * (self._n_steps + 2)
+            log_target_evaluations=(
+                final_counts.log_target_evaluations * (self._n_steps + 2)
             ),
-            proposal_evaluations=(
-                final_counts.proposal_evaluations * (self._n_steps + 2)
+            log_proposal_evaluations=(
+                final_counts.log_proposal_evaluations * (self._n_steps + 2)
+            ),
+            log_increment_evaluations=(
+                final_counts.log_increment_evaluations * (self._n_steps + 2)
             ),
         )
         context = context.add_evaluation_counts(counts)

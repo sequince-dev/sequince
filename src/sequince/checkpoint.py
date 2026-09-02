@@ -382,11 +382,14 @@ class SMCCheckpoint:
             "outputs": array_safe_copy(self.outputs),
             "step_states": [item.to_dict() for item in self.step_states],
             "evaluation_counts": {
-                "target_evaluations": (
-                    self.evaluation_counts.target_evaluations
+                "log_target_evaluations": (
+                    self.evaluation_counts.log_target_evaluations
                 ),
-                "proposal_evaluations": (
-                    self.evaluation_counts.proposal_evaluations
+                "log_proposal_evaluations": (
+                    self.evaluation_counts.log_proposal_evaluations
+                ),
+                "log_increment_evaluations": (
+                    self.evaluation_counts.log_increment_evaluations
                 ),
             },
             "rng_state": array_safe_copy(self.rng_state),
