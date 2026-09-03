@@ -89,6 +89,39 @@ def test_emcee_accepts_non_particle_aligned_transform_auxiliary(
     assert np.all(np.isfinite(result.particles))
 
 
+@pytest.mark.parametrize("vectorize", [False, True])
+def test_emcee_uses_blobs_for_final_target_evaluation(
+    particle_state,
+    context_factory,
+    standard_normal_posterior,
+    vectorize,
+) -> None:
+    n_steps = 3
+    step = EmceeMutation(
+        standard_normal_posterior,
+        n_steps=n_steps,
+        move="bilby-de",
+        vectorize=vectorize,
+    )
+
+    result, context, _ = step(
+        particle_state,
+        context_factory(metadata={"temperature": 1.0}),
+        ArrayRNG(seed=2468),
+    )
+
+    assert result.evaluation is not None
+    expected = standard_normal_posterior.evaluate(result.particles, context)
+    for component in ("log_prior", "log_likelihood"):
+        np.testing.assert_allclose(
+            result.evaluation[component], expected[component]
+        )
+    n_walkers = particle_state.particles.shape[0]
+    assert context.evaluation_counts.log_target_evaluations == n_walkers * (
+        n_steps + 1
+    )
+
+
 def test_get_emcee_move_constructs_named_move() -> None:
     move = get_emcee_move("de", gamma0=0.75, sigma=2e-5)
 

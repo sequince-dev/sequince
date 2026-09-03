@@ -3,7 +3,7 @@ from __future__ import annotations
 import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
@@ -15,6 +15,7 @@ from .array_api import namespace
 from .result import SMCResult
 from .state import ParticleState
 from .steps.context import StepContext
+from .target import EvaluationCounts
 from .utils.copying import array_safe_copy
 from .utils.random import resolve_rng
 
@@ -298,6 +299,9 @@ class SMCCheckpoint:
     metadata: dict[str, Any]
     outputs: tuple[tuple[Any, ...], ...]
     step_states: tuple[StepState, ...]
+    evaluation_counts: EvaluationCounts = field(
+        default_factory=EvaluationCounts
+    )
     rng_state: dict[str, Any] | None = None
     observation: Any = None
     initial_state: ParticleState | None = None
@@ -350,6 +354,7 @@ class SMCCheckpoint:
                 else tuple(result.outputs)
             ),
             step_states=capture_step_states(steps),
+            evaluation_counts=context.evaluation_counts,
             rng_state=None if rng is None else _rng_state_dict(rng),
             observation=(
                 array_safe_copy(context.observation)
@@ -376,6 +381,20 @@ class SMCCheckpoint:
             "metadata": array_safe_copy(self.metadata),
             "outputs": array_safe_copy(self.outputs),
             "step_states": [item.to_dict() for item in self.step_states],
+            "evaluation_counts": {
+                "log_target_evaluations": (
+                    self.evaluation_counts.log_target_evaluations
+                ),
+                "log_likelihood_evaluations": (
+                    self.evaluation_counts.log_likelihood_evaluations
+                ),
+                "log_proposal_evaluations": (
+                    self.evaluation_counts.log_proposal_evaluations
+                ),
+                "log_increment_evaluations": (
+                    self.evaluation_counts.log_increment_evaluations
+                ),
+            },
             "rng_state": array_safe_copy(self.rng_state),
             "observation": array_safe_copy(self.observation),
             "initial_state": (
@@ -481,6 +500,9 @@ class SMCCheckpoint:
             step_states=tuple(
                 StepState.from_dict(item) for item in step_payload
             ),
+            evaluation_counts=EvaluationCounts(
+                **dict(payload.get("evaluation_counts", {}))
+            ),
             rng_state=(
                 None if rng_state is None else array_safe_copy(dict(rng_state))
             ),
@@ -511,6 +533,7 @@ class SMCCheckpoint:
             observation=array_safe_copy(self.observation),
             shared=dict(shared_context or {}),
             metadata=array_safe_copy(self.metadata),
+            evaluation_counts=array_safe_copy(self.evaluation_counts),
         )
         return SMCResult(
             states=list(self.states),

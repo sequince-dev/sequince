@@ -108,11 +108,15 @@ class ProposalRejuvenation(SMCStep):
                 rng=rng,
             )
         new_particles = asarray(new_particles, xp=xp, like=physical)
-
-        evaluation = self._target.prepare_evaluation(
-            new_particles, context, evaluation=None
-        )
         n_particles = new_particles.shape[0]
+
+        evaluation, counts = self._target.prepare_evaluation(
+            new_particles,
+            context,
+            evaluation=None,
+            return_counts=True,
+        )
+        context = context.add_evaluation_counts(counts)
         log_weights = xp.full(
             (n_particles,),
             -math.log(n_particles),

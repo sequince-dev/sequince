@@ -14,7 +14,7 @@ from ..stats import (
     ess_from_log_weights,
     ess_ratio_from_log_weights,
 )
-from ..target import SequentialTarget, TemperedTarget
+from ..target import EvaluationCounts, SequentialTarget, TemperedTarget
 from ..utils.callables import call_with_optional_context
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep, StepContext
@@ -220,12 +220,16 @@ class IncrementalWeighting(SMCStep):
         """Attach a cached target evaluation before functional compilation."""
         if self._target is None:
             return state, context
-        evaluation = self._target.prepare_evaluation(
+        evaluation, counts = self._target.prepare_evaluation(
             state.particles,
             context,
             evaluation=state.evaluation,
+            return_counts=True,
         )
-        return state.with_updates(evaluation=evaluation), context
+        return (
+            state.with_updates(evaluation=evaluation),
+            context.add_evaluation_counts(counts),
+        )
 
     def apply(
         self,
@@ -234,6 +238,9 @@ class IncrementalWeighting(SMCStep):
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
         xp = namespace(state.log_weights)
+        log_increment_counts = EvaluationCounts(
+            log_increment_evaluations=xp.asarray(state.particles.shape[0])
+        )
         if self._target is None:
             if self._log_increment_fn is None:  # pragma: no cover
                 raise RuntimeError("Sequential increment is not configured.")
@@ -243,11 +250,13 @@ class IncrementalWeighting(SMCStep):
                 context,
             )
         else:
-            evaluation = self._target.prepare_evaluation(
+            evaluation, counts = self._target.prepare_evaluation(
                 state.particles,
                 context,
                 evaluation=state.evaluation,
+                return_counts=True,
             )
+            context = context.add_evaluation_counts(counts)
             increment = self._target.log_increment(
                 state.particles,
                 context,
@@ -255,6 +264,7 @@ class IncrementalWeighting(SMCStep):
             )
             if evaluation is not state.evaluation:
                 state = state.with_updates(evaluation=evaluation)
+        context = context.add_evaluation_counts(log_increment_counts)
         increments = _weights_as_1d_array(
             increment, xp=xp, like=state.log_weights
         )
@@ -317,20 +327,28 @@ class BaseTemperedStep(SMCStep):
         """Attach a cached target evaluation before functional compilation."""
         if self._target is None:
             return state, context
-        evaluation = self._target.prepare_evaluation(
+        evaluation, counts = self._target.prepare_evaluation(
             state.particles,
             context,
             evaluation=state.evaluation,
             refresh_components=self._refresh_components,
+            return_counts=True,
         )
-        return state.with_updates(evaluation=evaluation), context
+        return (
+            state.with_updates(evaluation=evaluation),
+            context.add_evaluation_counts(counts),
+        )
 
     def evaluate_log_increment(
         self,
         state: ParticleState,
         context: StepContext,
-    ) -> tuple[Array | float, ParticleState]:
+    ) -> tuple[Array | float, ParticleState, StepContext]:
         """Return increments and attach a missing target evaluation."""
+        xp = namespace(state.log_weights)
+        log_increment_counts = EvaluationCounts(
+            log_increment_evaluations=xp.asarray(state.particles.shape[0])
+        )
         if self._target is None:
             if self._log_increment_fn is None:  # pragma: no cover
                 raise RuntimeError("Tempering increment is not configured.")
@@ -341,13 +359,16 @@ class BaseTemperedStep(SMCStep):
                     context,
                 ),
                 state,
+                context.add_evaluation_counts(log_increment_counts),
             )
-        evaluation = self._target.prepare_evaluation(
+        evaluation, counts = self._target.prepare_evaluation(
             state.particles,
             context,
             evaluation=state.evaluation,
             refresh_components=self._refresh_components,
+            return_counts=True,
         )
+        context = context.add_evaluation_counts(counts + log_increment_counts)
         if evaluation is not state.evaluation:
             state = state.with_updates(evaluation=evaluation)
         return (
@@ -357,6 +378,7 @@ class BaseTemperedStep(SMCStep):
                 evaluation=evaluation,
             ),
             state,
+            context,
         )
 
     def initialize_metadata(
@@ -405,10 +427,12 @@ class BaseTemperedStep(SMCStep):
         self,
         state: ParticleState,
         context: StepContext,
-    ) -> tuple[Array, ParticleState, Any]:
+    ) -> tuple[Array, ParticleState, StepContext, Any]:
         """Evaluate and validate one log increment per particle."""
         xp = namespace(state.log_weights)
-        log_increments, state = self.evaluate_log_increment(state, context)
+        log_increments, state, context = self.evaluate_log_increment(
+            state, context
+        )
         increments = _weights_as_1d_array(
             log_increments,
             xp=xp,
@@ -418,7 +442,7 @@ class BaseTemperedStep(SMCStep):
             raise ValueError(
                 "Increment function must return one value per particle."
             )
-        return increments, state, xp
+        return increments, state, context, xp
 
     def _update_log_weights(
         self,
@@ -487,7 +511,9 @@ class TemperedWeighting(BaseTemperedStep):
             )
         delta_beta = target_beta - current_beta
 
-        log_increments, state = self.evaluate_log_increment(state, context)
+        log_increments, state, context = self.evaluate_log_increment(
+            state, context
+        )
         xp = namespace(state.log_weights)
         increments = (
             _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
@@ -611,7 +637,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
         current_beta = context.metadata.get(
             "beta", state.metadata.get("beta", 0.0)
         )
-        log_increments, state, xp = self._prepare_log_increments(
+        log_increments, state, context, xp = self._prepare_log_increments(
             state, context
         )
         increments = log_increments * self._beta_increment
@@ -867,7 +893,9 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
                 asarray(self._max_delta, xp=xp, like=state.log_weights),
             )
 
-        increments, state, xp = self._prepare_log_increments(state, context)
+        increments, state, context, xp = self._prepare_log_increments(
+            state, context
+        )
         target_ess_ratio = self._resolve_target_ess_ratio(
             current_beta,
             context,

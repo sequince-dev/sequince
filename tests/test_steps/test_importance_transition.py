@@ -48,7 +48,7 @@ def test_importance_transition_represents_bootstrap_filter(
         expected_increment,
     )
     assert set(output) == {"log_weight_increment"}
-    assert returned_context is context
+    assert returned_context.evaluation_counts.log_increment_evaluations == 3
 
 
 def test_importance_transition_requires_kernel_interface() -> None:
@@ -105,7 +105,7 @@ def test_importance_transition_increment_uses_old_and_new_particles(
         output["log_weight_increment"],
         expected_increment,
     )
-    assert returned_context is context
+    assert returned_context.evaluation_counts.log_increment_evaluations == 3
 
 
 def test_importance_transition_invalidates_evaluation_and_preserves_ancestry(
@@ -140,7 +140,7 @@ def test_importance_transition_invalidates_evaluation_and_preserves_ancestry(
         updated.initial_ancestor_indices,
         ancestors,
     )
-    assert returned_context is context
+    assert returned_context.evaluation_counts.log_increment_evaluations == 3
 
 
 def test_importance_transition_supports_scalar_increment_for_one_particle(

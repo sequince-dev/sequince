@@ -98,6 +98,9 @@ def test_log_likelihood_weighting_updates_log_weights(
         particle_state.log_evidence + expected_log_norm
     )
     np.testing.assert_allclose(output["log_weight_increment"], increments)
+    assert context.evaluation_counts.log_increment_evaluations == len(
+        particle_state.particles
+    )
 
 
 def test_apply_log_weight_increment_accepts_a_scalar() -> None:
@@ -184,6 +187,9 @@ def test_tempered_weighting_scales_log_likelihood(
     assert context.metadata["delta_beta"] == pytest.approx(0.7)
     assert output["beta"] == pytest.approx(0.7)
     assert output["delta_beta"] == pytest.approx(0.7)
+    assert context.evaluation_counts.log_increment_evaluations == len(
+        particle_state.particles
+    )
 
 
 def test_fixed_tempered_weighting_updates_metadata_and_context(
@@ -279,6 +285,10 @@ def test_tempered_weighting_reuses_attached_evaluation(
 
     assert state.evaluation is not None
     assert calls == {"prior": 1, "likelihood": 1}
+    assert context.evaluation_counts.log_target_evaluations == 0
+    assert context.evaluation_counts.log_increment_evaluations == 2 * len(
+        particle_state.particles
+    )
 
 
 def test_incremental_weighting_accepts_a_general_sequential_target(
@@ -335,6 +345,9 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
     assert updated.log_evidence == pytest.approx(particle_state.log_evidence)
     assert updated.evaluation is not None
     assert updated.evaluation.components.keys() == {"base", "increment"}
+    assert context.evaluation_counts.log_increment_evaluations == len(
+        particle_state.particles
+    )
 
 
 def test_incremental_weighting_rejects_nonsequential_target() -> None:

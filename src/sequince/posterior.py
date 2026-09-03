@@ -9,6 +9,7 @@ from .proposals import ProposalDistribution
 from .state import ParticleState
 from .steps.context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
 from .target import (
+    EvaluationCounts,
     TargetComponentFn,
     TargetEvaluation,
     TemperedTarget,
@@ -135,6 +136,25 @@ class TemperedPosterior(TemperedTarget):
         evaluation: TargetEvaluation | None = None,
     ) -> TargetEvaluation:
         """Evaluate or refresh posterior components for a particle population."""
+        evaluation, _ = self._evaluate(
+            particles,
+            context,
+            components=components,
+            evaluation=evaluation,
+        )
+        return evaluation
+
+    def _evaluate(
+        self,
+        particles: Array,
+        context: "StepContext",
+        *,
+        components: Collection[str] | None = None,
+        evaluation: TargetEvaluation | None = None,
+        refresh: bool = False,
+    ) -> tuple[TargetEvaluation, EvaluationCounts]:
+        """Evaluate posterior components and report newly incurred work."""
+        del refresh
         if evaluation is not None:
             self.validate_evaluation(evaluation, particles, context)
         allowed = {"log_prior", "log_likelihood", "log_proposal"}
@@ -148,6 +168,14 @@ class TemperedPosterior(TemperedTarget):
             context.metadata.get(self.log_proposal_override_key)
         )
         values = {} if evaluation is None else dict(evaluation.components)
+        n_particles = 1 if particles.ndim == 1 else particles.shape[0]
+        log_target_evaluations = (
+            n_particles
+            if requested.intersection({"log_prior", "log_likelihood"})
+            else 0
+        )
+        log_likelihood_evaluations = 0
+        log_proposal_evaluations = 0
         if "log_prior" in requested:
             values["log_prior"] = _evaluate_component(
                 self.log_prior, particles, context
@@ -156,6 +184,7 @@ class TemperedPosterior(TemperedTarget):
             values["log_likelihood"] = _evaluate_component(
                 self.log_likelihood, particles, context
             )
+            log_likelihood_evaluations = n_particles
         if "log_proposal" in requested:
             if log_proposal is None:
                 values.pop("log_proposal", None)
@@ -163,8 +192,14 @@ class TemperedPosterior(TemperedTarget):
                 values["log_proposal"] = _evaluate_component(
                     log_proposal, particles, context
                 )
-        return self.bind_evaluation(
-            TargetEvaluation(components=values), context
+                log_proposal_evaluations = n_particles
+        return (
+            self.bind_evaluation(TargetEvaluation(components=values), context),
+            EvaluationCounts(
+                log_target_evaluations=log_target_evaluations,
+                log_likelihood_evaluations=log_likelihood_evaluations,
+                log_proposal_evaluations=log_proposal_evaluations,
+            ),
         )
 
     def freeze_log_prob(
@@ -179,6 +214,7 @@ class TemperedPosterior(TemperedTarget):
             observation=context.observation,
             shared=context.shared,
             metadata=dict(context.metadata),
+            evaluation_counts=context.evaluation_counts,
             stop_requested=context.stop_requested,
             stop_immediately=context.stop_immediately,
         )

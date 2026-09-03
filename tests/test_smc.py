@@ -9,6 +9,7 @@ from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.weighting import AdaptiveTemperedWeighting
+from sequince.target import EvaluationCounts
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -100,6 +101,23 @@ def test_smc_respects_stop_request(particle_state: ParticleState, rng) -> None:
         initial_state.particles,
         particle_state.particles,
     )
+
+
+def test_smc_consumes_initial_evaluation_counts(
+    particle_state: ParticleState, rng
+) -> None:
+    counts = EvaluationCounts(
+        log_target_evaluations=5,
+        log_proposal_evaluations=5,
+    )
+    particle_state.metadata["evaluation_counts"] = counts
+    smc = SequentialMonteCarlo(steps=[StopAfterNStep(limit=1)])
+
+    result = smc.run(particle_state, rng=rng)
+
+    assert result.evaluation_counts == counts
+    assert "evaluation_counts" not in result.initial_state.metadata
+    assert "evaluation_counts" not in result.final_state.metadata
 
 
 def test_smc_processes_observations_in_order(

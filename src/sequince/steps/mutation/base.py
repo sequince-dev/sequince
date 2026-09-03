@@ -6,7 +6,7 @@ import numpy as np
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
-from ...target import Target
+from ...target import EvaluationCounts, Target
 from ...transforms import ParticleTransform, _repeat_transform_auxiliary
 from ..base import SMCStep
 from ..context import StepContext
@@ -110,15 +110,25 @@ class MutationStep(SMCStep):
         context: StepContext,
         *,
         evaluation: "TargetEvaluation | None" = None,
-    ) -> tuple[Any, "TargetEvaluation | None"]:
+    ) -> tuple[Any, "TargetEvaluation | None", EvaluationCounts]:
+        xp = namespace(particles)
+        n_particles = 1 if particles.ndim == 1 else particles.shape[0]
+        log_prob_count = EvaluationCounts(
+            log_target_evaluations=xp.asarray(n_particles)
+        )
         if self._target is None:
             if self._log_prob_fn is None:  # pragma: no cover
                 raise RuntimeError("Mutation target is not configured.")
-            return call_log_prob(self._log_prob_fn, particles, context), None
-        evaluation = self._target.prepare_evaluation(
+            return (
+                call_log_prob(self._log_prob_fn, particles, context),
+                None,
+                log_prob_count,
+            )
+        evaluation, counts = self._target.prepare_evaluation(
             particles,
             context,
             evaluation=evaluation,
+            return_counts=True,
         )
         return (
             self._target.log_prob(
@@ -127,6 +137,7 @@ class MutationStep(SMCStep):
                 evaluation=evaluation,
             ),
             evaluation,
+            counts,
         )
 
     def initialize_functional_state_and_context(
@@ -136,12 +147,14 @@ class MutationStep(SMCStep):
     ) -> tuple["ParticleState", StepContext]:
         """Initialize cached target data and functional transform state."""
         if self._target is not None:
-            evaluation = self._target.prepare_evaluation(
+            evaluation, counts = self._target.prepare_evaluation(
                 state.particles,
                 context,
                 evaluation=state.evaluation,
+                return_counts=True,
             )
             state = state.with_updates(evaluation=evaluation)
+            context = context.add_evaluation_counts(counts)
         return self._initialize_functional_transform(state, context)
 
     def _initialize_functional_transform(

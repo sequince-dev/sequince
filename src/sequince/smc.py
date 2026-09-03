@@ -16,6 +16,8 @@ from .checkpoint import (
 from .result import SMCResult
 from .state import ParticleState, normalize_log_weights
 from .steps.base import StepContext
+from .steps.context import EVALUATION_COUNTS_KEY
+from .target import EvaluationCounts
 from .utils.copying import array_safe_copy
 from .utils.random import resolve_rng
 
@@ -46,6 +48,7 @@ class SMCRuntime:
     next_observation_index: int
     shared_context: Mapping[str, Any]
     metadata: Mapping[str, Any]
+    evaluation_counts: EvaluationCounts
     outputs: list[tuple[Any, ...]]
     rng: Any
 
@@ -352,16 +355,30 @@ class SequentialMonteCarlo:
                 f"{method_name}() requires either initial_state or runtime."
             )
 
+        runtime_metadata = dict(metadata or {})
+        initial_counts = initial_state.metadata.get(
+            EVALUATION_COUNTS_KEY, EvaluationCounts()
+        )
+        if not isinstance(initial_counts, EvaluationCounts):
+            raise TypeError(
+                "Initial state evaluation_counts metadata must be "
+                "EvaluationCounts."
+            )
+
+        runtime_state = initial_state.copy()
+        runtime_state.metadata.pop(EVALUATION_COUNTS_KEY, None)
+
         return SMCRuntime(
-            state=initial_state.copy(),
+            state=runtime_state,
             produced_states=[],
-            initial_state=initial_state.copy(),
+            initial_state=runtime_state.copy(),
             t=0,
             next_observation_index=0,
             shared_context=(
                 shared_context if shared_context is not None else {}
             ),
-            metadata=metadata if metadata is not None else {},
+            metadata=runtime_metadata,
+            evaluation_counts=initial_counts,
             outputs=list(outputs or ()),
             rng=resolved_rng,
         )
@@ -415,6 +432,7 @@ class SequentialMonteCarlo:
         next_observation_index = runtime.next_observation_index
         shared_context = runtime.shared_context
         metadata = runtime.metadata
+        evaluation_counts = runtime.evaluation_counts
         outputs = list(runtime.outputs)
         execution_state = runtime.rng
         context: StepContext | None = None
@@ -448,6 +466,7 @@ class SequentialMonteCarlo:
                 observation=observation,
                 shared=shared_context,
                 metadata=metadata,
+                evaluation_counts=evaluation_counts,
             )
 
             if initialize_functional:
@@ -516,6 +535,7 @@ class SequentialMonteCarlo:
                     writer.write(checkpoint)
 
             metadata = context.metadata
+            evaluation_counts = context.evaluation_counts
             if context.stop_requested:
                 logger.info(
                     "Stop requested after iteration %d; terminating SMC run.",
@@ -688,6 +708,7 @@ class SequentialMonteCarlo:
                 shared_context if shared_context is not None else {}
             ),
             metadata=restored_metadata,
+            evaluation_counts=checkpoint.evaluation_counts,
             outputs=list(array_safe_copy(checkpoint.outputs)),
             rng=rng,
         )

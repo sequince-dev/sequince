@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
+from sequince.steps.context import StepContext
 from sequince.steps.mutation import (
     CallableMutationKernel,
     GaussianRandomWalk,
@@ -24,6 +26,29 @@ class SignFoldingTransform(ParticleTransform):
             raise ValueError("auxiliary signs are required")
         values = np.asarray(values)
         return values * auxiliary, np.zeros(values.shape[0])
+
+
+def test_metropolis_tracks_target_and_proposal_work(rng) -> None:
+    n_particles = 4
+    target = TemperedPosterior(
+        log_prior=lambda values: -np.sum(values**2, axis=1),
+        log_likelihood=lambda values: -np.sum((values - 1.0) ** 2, axis=1),
+    )
+    step = MetropolisHastingsMutation(
+        target,
+        GaussianRandomWalk(scale=0.1),
+        n_steps=2,
+    )
+
+    _, context, _ = step.apply(
+        ParticleState(np.zeros((n_particles, 2))),
+        StepContext(t=0, metadata={"temperature": 0.5}),
+        rng,
+    )
+
+    assert context.evaluation_counts.log_target_evaluations == 12
+    assert context.evaluation_counts.log_likelihood_evaluations == 12
+    assert context.evaluation_counts.log_proposal_evaluations == 0
 
 
 def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
@@ -129,10 +154,11 @@ def test_metropolis_hastings_mutation_applies_transition_ratio(
         kernel,
     )
 
-    updated, _, output = step(particle_state, context_factory(), rng)
+    updated, context, output = step(particle_state, context_factory(), rng)
 
     np.testing.assert_allclose(updated.particles, particle_state.particles)
     assert output["acceptance"] == 0.0
+    assert context.evaluation_counts.log_proposal_evaluations == 0
 
 
 def test_metropolis_hastings_mutation_supports_kernel_factory(

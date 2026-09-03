@@ -4,13 +4,14 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, overload
 
 import numpy as np
 from array_api_compat import device as get_device
 
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
+from ...target import EvaluationCounts
 from ..base import StepContext
 
 if TYPE_CHECKING:
@@ -170,21 +171,91 @@ class CallableMutationKernel:
         return asarray(values, xp=xp, like=start)
 
 
+@overload
 def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
     to_particles: Array,
-) -> Array:
-    """Evaluate a kernel transition ratio, including legacy density kernels."""
+    complementary_particles: Array | None = None,
+    *,
+    return_counts: Literal[False] = False,
+) -> Array: ...
+
+
+@overload
+def evaluate_log_transition_ratio(
+    kernel: object,
+    from_particles: Array,
+    to_particles: Array,
+    complementary_particles: Array | None = None,
+    *,
+    return_counts: Literal[True],
+) -> tuple[Array, EvaluationCounts]: ...
+
+
+@overload
+def evaluate_log_transition_ratio(
+    kernel: object,
+    from_particles: Array,
+    to_particles: Array,
+    complementary_particles: Array | None = None,
+    *,
+    return_counts: bool,
+) -> Array | tuple[Array, EvaluationCounts]: ...
+
+
+def evaluate_log_transition_ratio(
+    kernel: object,
+    from_particles: Array,
+    to_particles: Array,
+    complementary_particles: Array | None = None,
+    *,
+    return_counts: bool = False,
+) -> Array | tuple[Array, EvaluationCounts]:
+    """Evaluate a transition ratio."""
+    if isinstance(kernel, MixtureMutationKernel):
+        selected = kernel.selected_kernel
+        if selected is None:
+            raise RuntimeError(
+                "MixtureMutationKernel.sample() must be called before "
+                "log_transition_ratio()."
+            )
+        return evaluate_log_transition_ratio(
+            selected,
+            from_particles,
+            to_particles,
+            complementary_particles,
+            return_counts=return_counts,
+        )
+
     ratio_fn = getattr(kernel, "log_transition_ratio", None)
     if callable(ratio_fn):
-        return ratio_fn(from_particles, to_particles)
+        if complementary_particles is None:
+            values = ratio_fn(from_particles, to_particles)
+        else:
+            values = ratio_fn(
+                from_particles,
+                to_particles,
+                complementary_particles,
+            )
+        counts = EvaluationCounts.zeros(
+            xp=namespace(from_particles, to_particles)
+        )
+        return (values, counts) if return_counts else values
 
     density_fn = getattr(kernel, "log_density", None)
     if callable(density_fn):
-        return density_fn(to_particles, from_particles) - density_fn(
+        if complementary_particles is not None:
+            raise TypeError(
+                "Complementary kernels must implement log_transition_ratio()."
+            )
+        values = density_fn(to_particles, from_particles) - density_fn(
             from_particles, to_particles
         )
+        counts = EvaluationCounts.zeros(
+            xp=namespace(from_particles, to_particles)
+        )
+        return (values, counts) if return_counts else values
     raise TypeError(
         "Mutation kernel must implement log_transition_ratio() or log_density()."
     )
@@ -645,15 +716,8 @@ class MixtureMutationKernel:
         from_particles: Array,
         to_particles: Array,
     ) -> Array:
-        if self._selected_kernel is None:
-            raise RuntimeError(
-                "MixtureMutationKernel.sample() must be called before "
-                "log_transition_ratio()."
-            )
         return evaluate_log_transition_ratio(
-            self._selected_kernel,
-            from_particles,
-            to_particles,
+            self, from_particles, to_particles
         )
 
 

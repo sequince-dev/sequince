@@ -9,6 +9,7 @@ import numpy as np
 
 from ..._typing import Array
 from ...array_api import asarray, namespace
+from ...target import EvaluationCounts
 from ...transforms import ParticleTransform
 from ...utils.pytrees import pytree_dataclass
 from ..context import StepContext
@@ -190,7 +191,7 @@ class MiniPCNMutation(MutationStep):
                 context,
                 auxiliary=transform_auxiliary,
             )
-            result, _ = self._evaluate_target(original, context)
+            result, _, _ = self._evaluate_target(original, context)
             return self._combine_with_log_det(result, log_det)
 
         dims = latent_particles.shape[1] if latent_particles.ndim > 1 else 1
@@ -230,7 +231,24 @@ class MiniPCNMutation(MutationStep):
             context,
             auxiliary=transform_auxiliary,
         )
-        _, final_evaluation = self._evaluate_target(new_particles, context)
+        _, final_evaluation, final_counts = self._evaluate_target(
+            new_particles, context
+        )
+        counts = EvaluationCounts(
+            log_target_evaluations=(
+                final_counts.log_target_evaluations * (self._n_steps + 2)
+            ),
+            log_likelihood_evaluations=(
+                final_counts.log_likelihood_evaluations * (self._n_steps + 2)
+            ),
+            log_proposal_evaluations=(
+                final_counts.log_proposal_evaluations * (self._n_steps + 2)
+            ),
+            log_increment_evaluations=(
+                final_counts.log_increment_evaluations * (self._n_steps + 2)
+            ),
+        )
+        context = context.add_evaluation_counts(counts)
 
         stored_chain = None
         if latent_chain is not None:

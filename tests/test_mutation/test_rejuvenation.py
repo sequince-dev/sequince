@@ -92,7 +92,9 @@ def test_rejuvenates_with_minimal_generative_proposal(
     rng = RandomGenerator(seed=7)
     updated, returned_context, output = step.apply(state, context, rng)
 
-    assert returned_context is context
+    assert returned_context.metadata == context.metadata
+    assert returned_context.evaluation_counts.log_target_evaluations == 100
+    assert returned_context.evaluation_counts.log_likelihood_evaluations == 100
     assert updated.particles.shape == particles.shape
     assert not np.array_equal(updated.particles, particles)
     assert updated.log_weights == pytest.approx(-np.log(len(particles)))

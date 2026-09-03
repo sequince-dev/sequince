@@ -17,6 +17,7 @@ from sequince.result import SMCResult
 from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState
 from sequince.steps.base import SMCStep, StepContext
+from sequince.target import EvaluationCounts
 from sequince.utils.random import resolve_rng
 
 
@@ -148,6 +149,7 @@ def _assert_results_equal(
     assert left.context.observation == right.context.observation
     assert dict(left.context.shared) == dict(right.context.shared)
     assert left.context.metadata == right.context.metadata
+    assert left.context.evaluation_counts == right.context.evaluation_counts
     assert left.outputs == right.outputs
 
 
@@ -247,6 +249,12 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
         observation={"batch": 2},
         shared={"alpha": 1.5},
         metadata={"notes": ["x"]},
+        evaluation_counts=EvaluationCounts(
+            log_target_evaluations=12,
+            log_likelihood_evaluations=9,
+            log_proposal_evaluations=7,
+            log_increment_evaluations=5,
+        ),
     )
     state = particle_state.with_updates(
         metadata={"beta": 0.5, "nested": {"value": [1, 2, 3]}}

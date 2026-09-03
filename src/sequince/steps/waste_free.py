@@ -10,7 +10,7 @@ from array_api_compat import device as get_device
 
 from .._typing import Array
 from ..array_api import asarray, namespace
-from ..target import Target
+from ..target import EvaluationCounts, Target
 from ..utils.callables import call_with_optional_context
 from .base import SMCStep, StepContext
 from .mutation import (
@@ -138,7 +138,7 @@ class WasteFreeResampleMove(SMCStep):
             else state.evaluation.take(ancestor_indices)
         )
 
-        log_prob_parents, parent_evaluation = self._evaluate_log_prob(
+        log_prob_parents, parent_evaluation, counts = self._evaluate_log_prob(
             parent_particles,
             context,
             parent_evaluation,
@@ -168,14 +168,23 @@ class WasteFreeResampleMove(SMCStep):
                     "Mutation kernel must return the same shape as the input particles."
                 )
 
-            log_prob_proposals, proposal_evaluation = self._evaluate_log_prob(
-                proposals, context
-            )
+            (
+                log_prob_proposals,
+                proposal_evaluation,
+                proposal_counts_delta,
+            ) = self._evaluate_log_prob(proposals, context)
+            counts = counts + proposal_counts_delta
             if proposal_evaluation is not None:
                 candidate_evaluations.append(proposal_evaluation)
-            transition_ratio = evaluate_log_transition_ratio(
-                kernel, parent_particles, proposals
+            transition_ratio, transition_counts = (
+                evaluate_log_transition_ratio(
+                    kernel,
+                    parent_particles,
+                    proposals,
+                    return_counts=True,
+                )
             )
+            counts = counts + transition_counts
             transition_ratio = asarray(
                 transition_ratio,
                 xp=xp,
@@ -258,7 +267,7 @@ class WasteFreeResampleMove(SMCStep):
             count = int(xp.sum((selected >= low) & (selected < high)))
             proposal_counts.append(count)
 
-        context = context.with_metadata(
+        context = context.add_evaluation_counts(counts).with_metadata(
             waste_free_acceptance=mean_acceptance,
         )
 
@@ -299,6 +308,9 @@ class WasteFreeResampleMove(SMCStep):
         evaluation=None,
     ):
         xp = namespace(particles)
+        log_prob_count = EvaluationCounts(
+            log_target_evaluations=xp.asarray(particles.shape[0])
+        )
         if self._target is None:
             if self._log_prob_fn is None:  # pragma: no cover
                 raise RuntimeError(
@@ -309,11 +321,13 @@ class WasteFreeResampleMove(SMCStep):
                 (particles,),
                 context,
             )
+            counts = log_prob_count
         else:
-            evaluation = self._target.prepare_evaluation(
+            evaluation, counts = self._target.prepare_evaluation(
                 particles,
                 context,
                 evaluation=evaluation,
+                return_counts=True,
             )
             values = self._target.log_prob(
                 particles,
@@ -332,7 +346,7 @@ class WasteFreeResampleMove(SMCStep):
             arr = squeezed
         if arr.shape[0] != particles.shape[0]:
             raise ValueError("log_prob_fn must return one value per particle.")
-        return arr, evaluation
+        return arr, evaluation, counts
 
     def _resolve_kernel(
         self,
