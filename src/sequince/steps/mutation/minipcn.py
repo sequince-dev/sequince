@@ -238,6 +238,9 @@ class MiniPCNMutation(MutationStep):
             log_target_evaluations=(
                 final_counts.log_target_evaluations * (self._n_steps + 2)
             ),
+            log_likelihood_evaluations=(
+                final_counts.log_likelihood_evaluations * (self._n_steps + 2)
+            ),
             log_proposal_evaluations=(
                 final_counts.log_proposal_evaluations * (self._n_steps + 2)
             ),

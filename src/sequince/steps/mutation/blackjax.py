@@ -329,6 +329,10 @@ class BlackJAXMutation(MutationStep):
                 (final_counts.log_target_evaluations // n_particles)
                 * total_evaluation_points
             ),
+            log_likelihood_evaluations=(
+                (final_counts.log_likelihood_evaluations // n_particles)
+                * total_evaluation_points
+            ),
             log_proposal_evaluations=(
                 (final_counts.log_proposal_evaluations // n_particles)
                 * total_evaluation_points

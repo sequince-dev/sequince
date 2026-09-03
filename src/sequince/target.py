@@ -29,6 +29,7 @@ TargetComponentFn = Callable[..., Array | float]
 @pytree_dataclass(
     data_fields=(
         "log_target_evaluations",
+        "log_likelihood_evaluations",
         "log_proposal_evaluations",
         "log_increment_evaluations",
     )
@@ -37,13 +38,14 @@ TargetComponentFn = Callable[..., Array | float]
 class EvaluationCounts:
     """Backend-compatible counters for probabilistic model evaluations.
 
-    The three fields count work required to evaluate the log target density,
-    ``log_proposal``, and ``log_increment``, respectively. Log-target work
-    includes decomposed target-density components such as ``log_likelihood``.
-    Reusing cached components does not count again.
+    The fields count work required to evaluate the log target density, log
+    likelihood, log proposal, and log increment. Log-target work includes any
+    refreshed target-density component, while log-likelihood work records only
+    calls to ``log_likelihood``. Reusing cached components does not count again.
     """
 
     log_target_evaluations: Any = 0
+    log_likelihood_evaluations: Any = 0
     log_proposal_evaluations: Any = 0
     log_increment_evaluations: Any = 0
 
@@ -53,6 +55,10 @@ class EvaluationCounts:
         return type(self)(
             log_target_evaluations=(
                 self.log_target_evaluations + other.log_target_evaluations
+            ),
+            log_likelihood_evaluations=(
+                self.log_likelihood_evaluations
+                + other.log_likelihood_evaluations
             ),
             log_proposal_evaluations=(
                 self.log_proposal_evaluations + other.log_proposal_evaluations
@@ -69,7 +75,7 @@ class EvaluationCounts:
         if xp is None:
             return cls()
         zero = xp.asarray(0)
-        return cls(zero, zero, zero)
+        return cls(zero, zero, zero, zero)
 
 
 def _evaluate_component(

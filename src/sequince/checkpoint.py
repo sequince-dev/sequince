@@ -385,6 +385,9 @@ class SMCCheckpoint:
                 "log_target_evaluations": (
                     self.evaluation_counts.log_target_evaluations
                 ),
+                "log_likelihood_evaluations": (
+                    self.evaluation_counts.log_likelihood_evaluations
+                ),
                 "log_proposal_evaluations": (
                     self.evaluation_counts.log_proposal_evaluations
                 ),

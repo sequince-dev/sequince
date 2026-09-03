@@ -169,7 +169,12 @@ class TemperedPosterior(TemperedTarget):
         )
         values = {} if evaluation is None else dict(evaluation.components)
         n_particles = 1 if particles.ndim == 1 else particles.shape[0]
-        log_target_evaluations = 0
+        log_target_evaluations = (
+            n_particles
+            if requested.intersection({"log_prior", "log_likelihood"})
+            else 0
+        )
+        log_likelihood_evaluations = 0
         log_proposal_evaluations = 0
         if "log_prior" in requested:
             values["log_prior"] = _evaluate_component(
@@ -179,7 +184,7 @@ class TemperedPosterior(TemperedTarget):
             values["log_likelihood"] = _evaluate_component(
                 self.log_likelihood, particles, context
             )
-            log_target_evaluations = n_particles
+            log_likelihood_evaluations = n_particles
         if "log_proposal" in requested:
             if log_proposal is None:
                 values.pop("log_proposal", None)
@@ -192,6 +197,7 @@ class TemperedPosterior(TemperedTarget):
             self.bind_evaluation(TargetEvaluation(components=values), context),
             EvaluationCounts(
                 log_target_evaluations=log_target_evaluations,
+                log_likelihood_evaluations=log_likelihood_evaluations,
                 log_proposal_evaluations=log_proposal_evaluations,
             ),
         )
