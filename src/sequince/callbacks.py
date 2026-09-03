@@ -17,7 +17,20 @@ logger = logging.getLogger(__name__)
 
 
 class SMCCallback:
-    """Base class for composable SMC callbacks."""
+    """Base class for composable SMC callbacks.
+
+    Parameters
+    ----------
+    every:
+        Run the callback every `every` iterations. Default is 1 (run every
+        iteration).
+    """
+
+    def __init__(self, every: int = 1):
+        if every < 1:
+            raise ValueError("every must be a positive integer.")
+        self.every = every
+        self._last_called: int | None = None
 
     def __call__(
         self,
@@ -26,7 +39,25 @@ class SMCCallback:
         results: "SMCResult",
     ) -> "StepContext" | None:
         """Run the callback and optionally return an updated context."""
-        return self.apply(state, context, results)
+        if (
+            self._last_called is None
+            or context.iteration - self._last_called >= self.every
+        ):
+            self._last_called = context.iteration
+            logger.debug(
+                "Iteration %d: applying callback %s",
+                context.iteration,
+                self.__class__.__name__,
+            )
+            return self.apply(state, context, results)
+        else:
+            logger.debug(
+                "Iteration %d: skipping callback %s (every=%d)",
+                context.iteration,
+                self.__class__.__name__,
+                self.every,
+            )
+            return None
 
     def apply(
         self,
@@ -52,6 +83,9 @@ class PlotCallback(SMCCallback):
         Filename for the plot.
     plot_kwargs:
         Additional keyword arguments to pass to the plotting method.
+    every:
+        Run the callback every `every` iterations. Default is 1 (run every
+        iteration).
     """
 
     def __init__(
@@ -59,7 +93,9 @@ class PlotCallback(SMCCallback):
         outdir: str | None = None,
         filename: str = "plot.png",
         plot_kwargs: dict[str, Any] | None = None,
+        every: int = 1,
     ):
+        super().__init__(every=every)
         self.outdir = Path(outdir or ".")
         self.filename = Path(filename)
         self.full_path = self.outdir / self.filename
@@ -83,6 +119,9 @@ class TracePlot(PlotCallback):
         Filename for the trace plot.  Default is ``"trace.png"``.
     plot_kwargs:
         Additional keyword arguments to pass to the `SMCResults.plot_trace` method.
+    every:
+        Run the callback every `every` iterations. Default is 1 (run every
+        iteration).
     """
 
     def __init__(
@@ -92,8 +131,9 @@ class TracePlot(PlotCallback):
         outdir: str | None = None,
         filename: str = "trace.png",
         plot_kwargs: dict[str, Any] | None = None,
+        every: int = 1,
     ):
-        super().__init__(outdir, filename, plot_kwargs)
+        super().__init__(outdir, filename, plot_kwargs, every=every)
 
         self.parameter_inds = parameter_inds
         self.parameter_labels = parameter_labels
@@ -133,6 +173,9 @@ class IntermediateParticlesPlot(PlotCallback):
         will be appended to the base filename.  Default is ``"particles"``.
     plot_kwargs:
         Additional keyword arguments to pass to the `plot_corner` function.
+    every:
+        Run the callback every `every` iterations. Default is 1 (run every
+        iteration).
     """
 
     def __init__(
@@ -142,12 +185,13 @@ class IntermediateParticlesPlot(PlotCallback):
         parameter_inds: list[int] | None = None,
         parameter_labels: list[str] | None = None,
         plot_kwargs: dict[str, Any] | None = None,
+        every: int = 1,
     ):
         filename = f"{base_filename}_0.png"
         self.base_filename = base_filename
         self.parameter_labels = parameter_labels
         self.parameter_inds = parameter_inds
-        super().__init__(outdir, filename, plot_kwargs)
+        super().__init__(outdir, filename, plot_kwargs, every=every)
 
     def apply(
         self,
@@ -182,6 +226,9 @@ class StatePlot(PlotCallback):
         Filename for the state plot.  Default is ``"state.png"``.
     plot_kwargs:
         Additional keyword arguments to pass to the `SMCResults.plot_metadata_history` method.
+    every:
+        Run the callback every `every` iterations. Default is 1 (run every
+        iteration).
     """
 
     def __init__(
@@ -190,8 +237,9 @@ class StatePlot(PlotCallback):
         outdir: str | None = None,
         filename: str = "state.png",
         plot_kwargs: dict[str, Any] | None = None,
+        every: int = 1,
     ):
-        super().__init__(outdir, filename, plot_kwargs)
+        super().__init__(outdir, filename, plot_kwargs, every=every)
         if len(metadata_keys) == 0:
             raise ValueError("At least one metadata key must be specified.")
         self.metadata_keys = metadata_keys
@@ -256,6 +304,9 @@ class MutationChainPlot(PlotCallback):
         Index of the mutation step in the current iteration's outputs.
     output_key:
         Key containing the chain in the selected step output.
+    every:
+        Run the callback every `every` iterations. Default is 1 (run every
+        iteration).
     """
 
     def __init__(
@@ -267,12 +318,14 @@ class MutationChainPlot(PlotCallback):
         plot_kwargs: dict[str, Any] | None = None,
         step_index: int = -1,
         output_key: str = "chain",
+        every: int = 1,
     ):
         self.base_filename = base_filename
         self.parameter_labels = parameter_labels
         self.parameter_inds = parameter_inds
         self.step_index = step_index
         self.output_key = output_key
+        self.every = every
         filename = f"{base_filename}_0.png"
         super().__init__(outdir, filename, plot_kwargs)
 
@@ -324,7 +377,7 @@ class MutationChainPlot(PlotCallback):
             )
 
 
-class PlotParticleTransform(PlotCallback):
+class ParticleTransformPlot(PlotCallback):
     """
     Callback to plot the active particle transform at each SMC iteration.
 
@@ -342,6 +395,9 @@ class PlotParticleTransform(PlotCallback):
         Default is :code:``"particle_transform"``.
     plot_kwargs:
         Additional keyword arguments to pass to the `plot_transform` function.
+    every:
+        Run the callback every `every` iterations. Default is 1 (run every
+        iteration).
     """
 
     def __init__(
@@ -352,13 +408,14 @@ class PlotParticleTransform(PlotCallback):
         plot_kwargs: dict[str, Any] | None = None,
         parameter_inds: list[int] | None = None,
         parameter_labels: list[str] | None = None,
+        every: int = 1,
     ):
         self.base_filename = base_filename
         self.metadata_key = metadata_key
         self.parameter_inds = parameter_inds
         self.parameter_labels = parameter_labels
         filename = f"{base_filename}_0.png"
-        super().__init__(outdir, filename, plot_kwargs)
+        super().__init__(outdir, filename, plot_kwargs, every=every)
 
     def apply(
         self,
