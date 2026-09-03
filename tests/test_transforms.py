@@ -15,6 +15,7 @@ from sequince.transforms import (
     LogitMapping,
     PeriodicBoundaryTransform,
     ProbitMapping,
+    WhiteningTransform,
     has_particle_aligned_auxiliary,
     select_transform_auxiliary,
 )
@@ -114,6 +115,72 @@ def test_affine_subset(particles):
     assert not np.allclose(
         to_numpy(latent[..., 0]), to_numpy(particles[..., 0])
     )
+
+
+def test_whitening_round_trip_and_covariance(particles):
+    xp = namespace(particles)
+    particles = xp.asarray(
+        [
+            [-2.0, 0.0, 1.0],
+            [-1.0, 2.0, -1.0],
+            [0.0, -1.0, 3.0],
+            [1.0, 1.0, 0.0],
+            [2.0, -2.0, -2.0],
+            [3.0, 3.0, 2.0],
+        ],
+        dtype=particles.dtype,
+    )
+    transform = WhiteningTransform().fit(particles)
+
+    latent, log_det, auxiliary = transform.forward(particles)
+    restored, restore_log_det = transform.inverse(latent)
+    centered = latent - xp.mean(latent, axis=0)
+    covariance = xp.matmul(xp.permute_dims(centered, (1, 0)), centered)
+    covariance = covariance / particles.shape[0]
+
+    assert auxiliary is None
+    assert_preserves_namespace(latent, particles)
+    assert_allclose(restored, particles, atol=2e-5)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-6)
+    assert_allclose(xp.mean(latent, axis=0), 0.0, atol=2e-5)
+    assert_allclose(covariance, xp.eye(particles.shape[1]), atol=2e-5)
+
+
+@pytest.mark.parametrize(
+    "particles",
+    [
+        np.ones((8, 3)),
+        np.column_stack([np.linspace(-1.0, 1.0, 8), np.zeros(8), np.zeros(8)]),
+        np.column_stack(
+            [
+                np.linspace(-1.0, 1.0, 8),
+                np.linspace(-1.0, 1.0, 8) + 1e-12,
+            ]
+        ),
+    ],
+)
+def test_whitening_handles_degenerate_covariance(particles):
+    transform = WhiteningTransform().fit(particles)
+
+    latent, log_det, _ = transform.forward(particles)
+    restored, restore_log_det = transform.inverse(latent)
+
+    assert np.all(np.isfinite(latent))
+    assert np.all(np.isfinite(log_det))
+    assert np.all(np.isfinite(restore_log_det))
+    assert_allclose(restored, particles, atol=1e-8)
+
+
+def test_whitening_requires_fit():
+    with pytest.raises(RuntimeError, match="must be fitted"):
+        WhiteningTransform().forward(np.zeros((2, 2)))
+
+
+def test_whitening_validates_configuration():
+    with pytest.raises(ValueError, match="strictly positive"):
+        WhiteningTransform(eps=0.0)
+    with pytest.raises(ValueError, match="2D particle array"):
+        WhiteningTransform().fit(np.zeros(2))
 
 
 def test_bounded_to_unbounded_inverse_is_stable_in_extreme_tails():
@@ -262,6 +329,19 @@ def test_composite_transform(particles):
     assert_preserves_namespace(latent, particles)
     assert_allclose(restored, particles, atol=1e-6)
     assert_allclose(log_det + restore_log_det, 0.0, atol=1e-5)
+
+
+def test_whitening_composes_after_folding():
+    particles = np.array([[-3.0, 1.0], [2.0, 2.0], [-1.0, 4.0]])
+    composite = CompositeTransform(
+        [SignFoldingTransform(), WhiteningTransform()]
+    ).fit(particles)
+
+    latent, log_det, auxiliary = composite.forward(particles)
+    restored, restore_log_det = composite.inverse(latent, auxiliary=auxiliary)
+
+    assert_allclose(restored, particles, atol=1e-10)
+    assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
 
 
 def test_auxiliary_interprets_mutated_transformed_values():

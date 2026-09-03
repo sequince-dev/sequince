@@ -542,6 +542,110 @@ class AffineTransform(ParticleTransform):
         return restored, log_det_vec
 
 
+@pytree_dataclass(
+    data_fields=("_mean", "_covariance", "_cholesky"),
+    meta_fields=("eps",),
+)
+@dataclass(frozen=True)
+class WhiteningTransform(ParticleTransform):
+    """Whiten a complete Euclidean particle vector with an affine transform.
+
+    The transform is fitted to a particle population and maps its coordinates
+    according to ``z = L**-1 (x - mean)``, where ``L L.T`` is a regularized
+    estimate of the population covariance.  It is intended to be composed after
+    any problem-specific transforms which unwrap periodic coordinates or
+    otherwise make the representation suitable for Euclidean linear algebra.
+
+    Parameters
+    ----------
+    eps : float, default=1e-6
+        Relative diagonal regularization. Each variance receives ``eps`` times
+        its own scale. Exactly constant directions receive a smaller floor tied
+        to the largest variance and the precision of the array dtype. Values
+        below machine precision are promoted to machine precision.
+    """
+
+    eps: float = 1e-6
+    _mean: object | None = field(default=None, repr=False)
+    _covariance: object | None = field(default=None, repr=False)
+    _cholesky: object | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.eps) or self.eps <= 0.0:
+            raise ValueError("eps must be finite and strictly positive.")
+
+    def fit(self, particles, context=None, *, rng: RNGLike = None):
+        """Return a transform fitted to the unweighted particle population."""
+        del rng
+        xp = namespace(particles)
+        arr = asarray(particles, xp=xp)
+        if arr.ndim != 2:
+            raise ValueError(
+                "WhiteningTransform.fit requires a 2D particle array."
+            )
+
+        mean = xp.mean(arr, axis=0)
+        centered = arr - mean
+        covariance = xp.matmul(xp.permute_dims(centered, (1, 0)), centered)
+        covariance = covariance / xp.asarray(arr.shape[0], dtype=arr.dtype)
+        covariance = 0.5 * (covariance + xp.permute_dims(covariance, (1, 0)))
+
+        variances = xp.linalg.diagonal(covariance)
+        largest_variance = xp.max(variances)
+        unit = xp.asarray(1.0, dtype=arr.dtype)
+        covariance_scale = xp.where(
+            largest_variance > 0, largest_variance, unit
+        )
+        dtype_eps = xp.asarray(xp.finfo(arr.dtype).eps, dtype=arr.dtype)
+        variance_floor = dtype_eps * covariance_scale
+        relative_eps = xp.maximum(
+            xp.asarray(self.eps, dtype=arr.dtype), dtype_eps
+        )
+        regularizer = relative_eps * xp.maximum(variances, variance_floor)
+        covariance = covariance + regularizer * xp.eye(
+            arr.shape[1], dtype=arr.dtype
+        )
+        cholesky = xp.linalg.cholesky(covariance)
+        return replace(
+            self,
+            _mean=mean,
+            _covariance=covariance,
+            _cholesky=cholesky,
+        )
+
+    def _require_fitted(self) -> tuple[object, object]:
+        if self._mean is None or self._cholesky is None:
+            raise RuntimeError(
+                "WhiteningTransform must be fitted before it can be applied."
+            )
+        return self._mean, self._cholesky
+
+    def forward(self, particles, context=None, *, rng: RNGLike = None):
+        del rng
+        mean, cholesky = self._require_fitted()
+        xp = namespace(particles, mean, cholesky)
+        arr = asarray(particles, xp=xp)
+        centered = arr - mean
+        flat = xp.reshape(centered, (-1, centered.shape[-1]))
+        latent_t = xp.linalg.solve(cholesky, xp.permute_dims(flat, (1, 0)))
+        latent = xp.reshape(xp.permute_dims(latent_t, (1, 0)), arr.shape)
+        log_det = -xp.sum(xp.log(xp.linalg.diagonal(cholesky)))
+        return latent, _log_det_entries(log_det, arr, xp), None
+
+    def inverse(
+        self, values, context=None, *, auxiliary=None, rng: RNGLike = None
+    ):
+        del auxiliary, rng
+        mean, cholesky = self._require_fitted()
+        xp = namespace(values, mean, cholesky)
+        arr = asarray(values, xp=xp)
+        flat = xp.reshape(arr, (-1, arr.shape[-1]))
+        restored = xp.matmul(flat, xp.permute_dims(cholesky, (1, 0))) + mean
+        restored = xp.reshape(restored, arr.shape)
+        log_det = xp.sum(xp.log(xp.linalg.diagonal(cholesky)))
+        return restored, _log_det_entries(log_det, arr, xp)
+
+
 @pytree_dataclass(data_fields=(), meta_fields=("bounds",))
 @dataclass(frozen=True)
 class BoundedToUnitHypercubeTransform(ParticleTransform):
@@ -886,6 +990,7 @@ class CompositeTransform(ParticleTransform):
 _transform_registry = {
     "identity": IdentityTransform,
     "affine": AffineTransform,
+    "whitening": WhiteningTransform,
     "bounded_to_unit_hypercube": BoundedToUnitHypercubeTransform,
     "bounded_to_unbounded": BoundedToUnboundedTransform,
     "periodic_boundary": PeriodicBoundaryTransform,
@@ -902,8 +1007,9 @@ def get_prebuilt_transform(
     ----------
     name : str
         Name of the desired transform. Supported options are
-        ``"identity"``, ``"affine"``, ``"bounded_to_unit_hypercube"``,
-        ``"bounded_to_unbounded"``, and ``"periodic_boundary"``.
+        ``"identity"``, ``"affine"``, ``"whitening"``,
+        ``"bounded_to_unit_hypercube"``, ``"bounded_to_unbounded"``, and
+        ``"periodic_boundary"``.
     **kwargs :
         Additional keyword arguments passed to the transform constructor.
 

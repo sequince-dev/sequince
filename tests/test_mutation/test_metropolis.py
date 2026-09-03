@@ -8,7 +8,7 @@ from sequince.steps.mutation import (
     GaussianRandomWalk,
     MetropolisHastingsMutation,
 )
-from sequince.transforms import ParticleTransform
+from sequince.transforms import ParticleTransform, WhiteningTransform
 
 
 class SignFoldingTransform(ParticleTransform):
@@ -77,6 +77,40 @@ def test_metropolis_keeps_forward_auxiliary_through_mutation(
     expected = (np.abs(particle_state.particles) + 0.5) * signs
     np.testing.assert_allclose(updated.particles, expected)
     np.testing.assert_allclose(output["chain"][0], expected)
+
+
+def test_metropolis_whitening_keeps_target_in_particle_coordinates(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    evaluated = []
+
+    def log_prob(particles, context):
+        evaluated.append(np.asarray(particles).copy())
+        return np.zeros(particles.shape[0])
+
+    kernel = CallableMutationKernel(
+        lambda particles, inner_rng: particles + 0.25,
+        symmetric=True,
+    )
+    step = MetropolisHastingsMutation(
+        log_prob,
+        kernel,
+        transform=WhiteningTransform(),
+    )
+
+    updated, _, output = step(particle_state, context_factory(), rng)
+
+    fitted = WhiteningTransform().fit(particle_state.particles)
+    latent, _, _ = fitted.forward(particle_state.particles)
+    expected, _ = fitted.inverse(latent + 0.25)
+    np.testing.assert_allclose(
+        evaluated[0], particle_state.particles, atol=1e-12
+    )
+    np.testing.assert_allclose(evaluated[1], expected, atol=1e-12)
+    np.testing.assert_allclose(updated.particles, expected, atol=1e-12)
+    assert output["acceptance"] == 1.0
 
 
 def test_metropolis_hastings_mutation_applies_transition_ratio(
