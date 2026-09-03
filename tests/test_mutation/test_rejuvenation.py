@@ -94,6 +94,7 @@ def test_rejuvenates_with_minimal_generative_proposal(
 
     assert returned_context.metadata == context.metadata
     assert returned_context.evaluation_counts.log_target_evaluations == 100
+    assert returned_context.evaluation_counts.log_likelihood_evaluations == 100
     assert updated.particles.shape == particles.shape
     assert not np.array_equal(updated.particles, particles)
     assert updated.log_weights == pytest.approx(-np.log(len(particles)))

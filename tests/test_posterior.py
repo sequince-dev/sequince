@@ -45,6 +45,7 @@ def test_tempered_posterior_reports_proposal_component_evaluations() -> None:
 
     assert counts == EvaluationCounts(
         log_target_evaluations=5,
+        log_likelihood_evaluations=5,
         log_proposal_evaluations=5,
     )
 
@@ -64,7 +65,28 @@ def test_tempered_posterior_reports_proposal_component_evaluations() -> None:
         refresh_components={"log_likelihood"},
         return_counts=True,
     )
-    assert refreshed_counts == EvaluationCounts(log_target_evaluations=5)
+    assert refreshed_counts == EvaluationCounts(
+        log_target_evaluations=5,
+        log_likelihood_evaluations=5,
+    )
+
+    _, prior_counts = target.prepare_evaluation(
+        particles,
+        context,
+        evaluation=evaluation,
+        refresh_components={"log_prior"},
+        return_counts=True,
+    )
+    assert prior_counts == EvaluationCounts(log_target_evaluations=5)
+
+    _, proposal_counts = target.prepare_evaluation(
+        particles,
+        context,
+        evaluation=evaluation,
+        refresh_components={"log_proposal"},
+        return_counts=True,
+    )
+    assert proposal_counts == EvaluationCounts(log_proposal_evaluations=5)
 
 
 def test_targets_receive_distinct_automatic_evaluation_ids() -> None:

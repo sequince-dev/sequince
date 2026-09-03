@@ -62,6 +62,7 @@ def test_draw_initial_state_retains_evaluation_without_recomputing_proposal():
     )
     np.testing.assert_allclose(state.evaluation["log_proposal"], 0.0)
     assert state.metadata["evaluation_counts"].log_target_evaluations == 3
+    assert state.metadata["evaluation_counts"].log_likelihood_evaluations == 3
     assert state.metadata["evaluation_counts"].log_proposal_evaluations == 3
 
 
@@ -118,6 +119,7 @@ def test_draw_initial_state_evaluates_the_targets_distinct_log_proposal():
         state.evaluation["log_proposal"], [0.0, -1.0, -2.0]
     )
     assert state.metadata["evaluation_counts"].log_target_evaluations == 3
+    assert state.metadata["evaluation_counts"].log_likelihood_evaluations == 3
     assert state.metadata["evaluation_counts"].log_proposal_evaluations == 3
 
 

@@ -295,6 +295,7 @@ def test_cached_target_cost_is_one_population_per_sweep(
     assert sum(calls["prior"]) == 2 * state.particles.shape[0]
     assert sum(calls["likelihood"]) == 2 * state.particles.shape[0]
     assert returned_context.evaluation_counts.log_target_evaluations == 10
+    assert returned_context.evaluation_counts.log_likelihood_evaluations == 10
     assert returned_context.evaluation_counts.log_proposal_evaluations == 0
 
 

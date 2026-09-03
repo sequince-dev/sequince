@@ -124,6 +124,7 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
         },
         evaluation_counts=EvaluationCounts(
             log_target_evaluations=12,
+            log_likelihood_evaluations=9,
             log_proposal_evaluations=7,
             log_increment_evaluations=5,
         ),

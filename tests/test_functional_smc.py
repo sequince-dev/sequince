@@ -293,6 +293,7 @@ def test_functional_iteration_can_be_jitted() -> None:
     assert "ancestors" not in updated.metadata
     assert outputs[-1]["algorithm"] == "random-walk"
     assert context.evaluation_counts.log_target_evaluations == 16
+    assert context.evaluation_counts.log_likelihood_evaluations == 16
     assert context.evaluation_counts.log_proposal_evaluations == 0
     assert context.evaluation_counts.log_increment_evaluations == 4
     assert not np.array_equal(

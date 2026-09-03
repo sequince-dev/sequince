@@ -47,6 +47,7 @@ def test_metropolis_tracks_target_and_proposal_work(rng) -> None:
     )
 
     assert context.evaluation_counts.log_target_evaluations == 12
+    assert context.evaluation_counts.log_likelihood_evaluations == 12
     assert context.evaluation_counts.log_proposal_evaluations == 0
 
 

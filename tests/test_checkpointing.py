@@ -251,6 +251,7 @@ def test_checkpoint_round_trip_preserves_runtime_objects(
         metadata={"notes": ["x"]},
         evaluation_counts=EvaluationCounts(
             log_target_evaluations=12,
+            log_likelihood_evaluations=9,
             log_proposal_evaluations=7,
             log_increment_evaluations=5,
         ),
