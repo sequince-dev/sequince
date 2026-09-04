@@ -1,6 +1,9 @@
 """Mutation steps, kernels, and configuration helpers."""
 
 from ..base import FixedLengthMutation
+from ..mutation_diagnostics import (
+    MutationDiagnostics,
+)
 from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
 from .blackjax import BlackJAXAlgorithmFactory, BlackJAXMutation
 from .blocked import (
@@ -63,6 +66,7 @@ __all__ = [
     "MetropolisBlock",
     "MixtureMutationKernel",
     "MutationKernel",
+    "MutationDiagnostics",
     "MutationStep",
     "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",

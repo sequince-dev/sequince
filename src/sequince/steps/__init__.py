@@ -22,6 +22,7 @@ from .mutation import (
     MetropolisHastingsMutation,
     MiniPCNMutation,
     MutateIfResampled,
+    MutationDiagnostics,
     ProposalRejuvenation,
     RedBlueMetropolisHastingsMutation,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "RedBlueMetropolisHastingsMutation",
     "MetropolisBlock",
     "MiniPCNMutation",
+    "MutationDiagnostics",
     "MutateIfResampled",
     "ProposalRejuvenation",
     "PersistParticles",

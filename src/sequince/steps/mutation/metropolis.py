@@ -11,6 +11,11 @@ from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
 from ..base import validate_n_steps
 from ..context import StepContext
+from ..mutation_diagnostics import (
+    empty_mutation_diagnostics,
+    finish_mutation_diagnostics,
+    prepare_mutation_diagnostics,
+)
 from .base import (
     MutationStep,
     TransformRefit,
@@ -148,6 +153,9 @@ class MetropolisHastingsMutation(MutationStep):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
+            diagnostics, context = empty_mutation_diagnostics(
+                state.particles, state.log_weights, context
+            )
             empty_chain = (
                 xp.empty(
                     (0, *state.particles.shape), dtype=state.particles.dtype
@@ -163,6 +171,7 @@ class MetropolisHastingsMutation(MutationStep):
                     "acceptance_by_step": (),
                     "steps": 0,
                     "chain": empty_chain,
+                    "diagnostics": diagnostics,
                 },
             )
         xp = namespace(state.particles)
@@ -178,6 +187,9 @@ class MetropolisHastingsMutation(MutationStep):
             like=state.particles,
         )
         n_particles = current.shape[0]
+        movement, context, owns_accumulator = prepare_mutation_diagnostics(
+            current, state.log_weights, context
+        )
         kernel = self._resolve_kernel(current, context)
         current_log_prob, current_evaluation, counts = self._evaluate_log_prob(
             current,
@@ -257,6 +269,7 @@ class MetropolisHastingsMutation(MutationStep):
                 )
 
             accepted_count = int(to_numpy(xp.sum(accepted)))
+            movement.add_transition(current, accepted)
             accepted_total += accepted_count
             acceptance_by_step.append(accepted_count / n_particles)
             if self._store_chains:
@@ -288,11 +301,15 @@ class MetropolisHastingsMutation(MutationStep):
             acceptance,
             n_steps,
         )
+        diagnostics, context = finish_mutation_diagnostics(
+            movement, context, owns_accumulator=owns_accumulator
+        )
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": tuple(acceptance_by_step),
             "steps": n_steps,
             "chain": stored_chain,
+            "diagnostics": diagnostics,
         }
         return (
             state.replace_particles(
@@ -378,6 +395,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         "TargetEvaluation | None",
         EvaluationCounts,
         int,
+        Array,
     ]:
         """Apply one red-blue half-update to the active particle group."""
         xp = namespace(current)
@@ -462,6 +480,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             current_evaluation,
             counts,
             accepted_count,
+            accepted,
         )
 
     def apply(
@@ -485,6 +504,9 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
+            diagnostics, context = empty_mutation_diagnostics(
+                state.particles, state.log_weights, context
+            )
             empty_chain = (
                 xp.empty(
                     (0, *state.particles.shape), dtype=state.particles.dtype
@@ -501,6 +523,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                     "acceptance_by_half": (),
                     "steps": 0,
                     "chain": empty_chain,
+                    "diagnostics": diagnostics,
                 },
             )
         xp = namespace(state.particles)
@@ -517,6 +540,9 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         )
         current = asarray(current, xp=xp, like=state.particles)
         n_particles = current.shape[0]
+        movement, context, owns_accumulator = prepare_mutation_diagnostics(
+            current, state.log_weights, context
+        )
         if n_particles < 2:
             raise ValueError(
                 "A red-blue update requires at least two particles."
@@ -538,6 +564,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         acceptance_by_half: list[tuple[float, float]] = []
         chain: list[Array] = []
         for _ in range(n_steps):
+            accepted_population = xp.zeros((n_particles,), dtype=bool)
             group_a, group_b = self._split_indices(
                 n_particles,
                 rng,
@@ -549,6 +576,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 current_evaluation,
                 counts_a,
                 accepted_a,
+                accepted_mask_a,
             ) = self._apply_half(
                 current,
                 current_log_prob,
@@ -562,6 +590,9 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 rng,
             )
             counts = counts + counts_a
+            accepted_population = xpx.at(accepted_population, group_a).set(
+                accepted_mask_a, copy=True, xp=xp
+            )
             complementary_b = current[group_a]
             (
                 current,
@@ -569,6 +600,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 current_evaluation,
                 counts_b,
                 accepted_b,
+                accepted_mask_b,
             ) = self._apply_half(
                 current,
                 current_log_prob,
@@ -582,6 +614,9 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 rng,
             )
             counts = counts + counts_b
+            accepted_population = xpx.at(accepted_population, group_b).set(
+                accepted_mask_b, copy=True, xp=xp
+            )
             accepted_sweep = accepted_a + accepted_b
             accepted_total += accepted_sweep
             acceptance_by_step.append(accepted_sweep / n_particles)
@@ -591,6 +626,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                     accepted_b / group_b.shape[0],
                 )
             )
+            movement.add_transition(current, accepted_population)
             if self._store_chains:
                 chain.append(current)
 
@@ -619,12 +655,16 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             acceptance,
             n_steps,
         )
+        diagnostics, context = finish_mutation_diagnostics(
+            movement, context, owns_accumulator=owns_accumulator
+        )
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": tuple(acceptance_by_step),
             "acceptance_by_half": tuple(acceptance_by_half),
             "steps": n_steps,
             "chain": stored_chain,
+            "diagnostics": diagnostics,
         }
         return (
             state.replace_particles(

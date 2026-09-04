@@ -6,6 +6,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
 
 from .base import FixedLengthMutation, SMCStep, StepContext, validate_n_steps
+from .mutation_diagnostics import (
+    MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY,
+    MutationDiagnostics,
+    begin_mutation_diagnostics,
+    finish_mutation_diagnostics,
+    request_mutation_diagnostics_reference_reset,
+)
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -21,6 +28,32 @@ class ConditionalStepOutput:
 
     executed: bool
     child_output: Any = None
+
+
+class RepeatStepOutput(tuple):
+    """Tuple-compatible round outputs plus authoritative block diagnostics."""
+
+    diagnostics: MutationDiagnostics | None
+
+    def __new__(
+        cls,
+        outputs: Sequence[Any],
+        diagnostics: MutationDiagnostics | None,
+    ) -> RepeatStepOutput:
+        instance = super().__new__(cls, outputs)
+        instance.diagnostics = diagnostics
+        return instance
+
+    @property
+    def round_outputs(self) -> tuple[Any, ...]:
+        """The individual child outputs, retained for tuple compatibility."""
+        return tuple(self)
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(round_outputs={tuple(self)!r}, "
+            f"diagnostics={self.diagnostics!r})"
+        )
 
 
 class ContinueWhile(SMCStep):
@@ -198,6 +231,7 @@ class RepeatStep(SMCStep):
             raise TypeError(
                 "RepeatStep's child does not support fixed-length mutation."
             )
+        context, owns_accumulator = begin_mutation_diagnostics(context)
         quotient, remainder = divmod(n_steps, self.n)
         outputs = []
         for round_index in range(self.n):
@@ -206,7 +240,21 @@ class RepeatStep(SMCStep):
                 state, context, rng, n_steps=round_steps
             )
             outputs.append(output)
-        return state, context, tuple(outputs)
+        accumulator = context.metadata.get(
+            MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY
+        )
+        diagnostics = None
+        if accumulator is not None and accumulator.initialized:
+            diagnostics, context = finish_mutation_diagnostics(
+                accumulator,
+                context,
+                owns_accumulator=owns_accumulator,
+            )
+        elif owns_accumulator:
+            context = context.without_metadata(
+                MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY
+            )
+        return state, context, RepeatStepOutput(outputs, diagnostics)
 
 
 class SequentialStep(SMCStep):
@@ -256,4 +304,6 @@ class SequentialStep(SMCStep):
                 output_state = step(state, context, rng)
             state, context, output = output_state
             outputs.append(output)
+            if index != mutation_index:
+                context = request_mutation_diagnostics_reference_reset(context)
         return state, context, tuple(outputs)

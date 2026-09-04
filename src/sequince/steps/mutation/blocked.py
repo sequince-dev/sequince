@@ -9,6 +9,11 @@ from ..._typing import Array
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from ..context import StepContext
+from ..mutation_diagnostics import (
+    MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY,
+    begin_mutation_diagnostics,
+    finish_mutation_diagnostics,
+)
 from .base import TransformRefit
 from .kernels import MutationKernel
 from .metropolis import MetropolisHastingsMutation, MutationKernelFactory
@@ -116,6 +121,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         acceptance: dict[str, float] = {}
         acceptance_by_step: dict[str, list[float]] = {}
         chains: dict[str, Array] = {}
+        context, owns_accumulator = begin_mutation_diagnostics(context)
 
         for block, step in zip(self._blocks, self._steps, strict=True):
             updated, context, block_output = step(updated, context, rng)
@@ -128,10 +134,17 @@ class BlockedMetropolisHastingsMutation(SMCStep):
 
         steps = {block.name: block.n_steps for block in self._blocks}
 
+        accumulator = context.metadata[MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY]
+        diagnostics, context = finish_mutation_diagnostics(
+            accumulator,
+            context,
+            owns_accumulator=owns_accumulator,
+        )
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": acceptance_by_step,
             "steps": steps,
             "chain": chains if self._store_chains else None,
+            "diagnostics": diagnostics,
         }
         return updated, context, output

@@ -17,6 +17,11 @@ from ...transforms import (
 )
 from ..base import validate_n_steps
 from ..context import StepContext
+from ..mutation_diagnostics import (
+    empty_mutation_diagnostics,
+    finish_mutation_diagnostics,
+    prepare_mutation_diagnostics,
+)
 from .base import (
     MutationStep,
     TransformRefit,
@@ -241,6 +246,9 @@ class EmceeMutation(MutationStep):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
+            diagnostics, context = empty_mutation_diagnostics(
+                state.particles, state.log_weights, context
+            )
             chain = (
                 xp.empty(
                     (0, *state.particles.shape), dtype=state.particles.dtype
@@ -255,6 +263,7 @@ class EmceeMutation(MutationStep):
                     "acceptance": 0.0,
                     "steps": 0,
                     "chain": chain,
+                    "diagnostics": diagnostics,
                 },
             )
         import emcee
@@ -287,6 +296,9 @@ class EmceeMutation(MutationStep):
             squeeze_last = False
 
         n_walkers, ndim = initial_positions.shape
+        movement, context, owns_accumulator = prepare_mutation_diagnostics(
+            initial_positions, state.log_weights, context
+        )
         logger.debug(
             "EmceeMutation starting: %d walkers, %d dimensions, %d steps.",
             n_walkers,
@@ -407,11 +419,19 @@ class EmceeMutation(MutationStep):
         context = context.add_evaluation_counts(counts)
 
         acceptance = float(np.mean(sampler.acceptance_fraction))
+        diagnostic_chain = sampler.get_chain(flat=False, discard=0, thin=1)
+        previous = initial_positions
+        for positions in diagnostic_chain:
+            accepted_step = np.any(positions != previous, axis=1)
+            movement.add_transition(positions, accepted_step)
+            previous = positions
+        diagnostics, context = finish_mutation_diagnostics(
+            movement, context, owns_accumulator=owns_accumulator
+        )
         stored_chain = None
         if self._store_chains:
-            chains = sampler.get_chain(flat=False, discard=0, thin=1)
             stored_chain = self._inverse_chain(
-                chains,
+                diagnostic_chain,
                 transform,
                 context,
                 auxiliary=transform_auxiliary,
@@ -427,6 +447,7 @@ class EmceeMutation(MutationStep):
             "acceptance": acceptance,
             "steps": n_steps,
             "chain": stored_chain,
+            "diagnostics": diagnostics,
         }
         return (
             state.replace_particles(

@@ -14,6 +14,11 @@ from ...transforms import ParticleTransform
 from ...utils.pytrees import pytree_dataclass
 from ..base import validate_n_steps
 from ..context import StepContext
+from ..mutation_diagnostics import (
+    empty_mutation_diagnostics,
+    finish_mutation_diagnostics,
+    prepare_mutation_diagnostics,
+)
 from .base import (
     MutationStep,
     TransformRefit,
@@ -29,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytree_dataclass(
-    data_fields=("acceptance", "chain"),
+    data_fields=("acceptance", "chain", "diagnostics"),
     meta_fields=("step_fn", "steps"),
 )
 @dataclass(frozen=True)
@@ -40,17 +45,24 @@ class MiniPCNOutput(Mapping[str, Any]):
     step_fn: str
     steps: int
     chain: Any
+    diagnostics: Any = None
 
     def __getitem__(self, key: str) -> Any:
-        if key not in {"acceptance", "step_fn", "steps", "chain"}:
+        if key not in {
+            "acceptance",
+            "step_fn",
+            "steps",
+            "chain",
+            "diagnostics",
+        }:
             raise KeyError(key)
         return getattr(self, key)
 
     def __iter__(self):
-        return iter(("acceptance", "step_fn", "steps", "chain"))
+        return iter(("acceptance", "step_fn", "steps", "chain", "diagnostics"))
 
     def __len__(self) -> int:
-        return 4
+        return 5
 
 
 class MiniPCNMutation(MutationStep):
@@ -108,6 +120,9 @@ class MiniPCNMutation(MutationStep):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
+            diagnostics, context = empty_mutation_diagnostics(
+                state.particles, state.log_weights, context
+            )
             chain = (
                 xp.empty(
                     (0, *state.particles.shape), dtype=state.particles.dtype
@@ -123,6 +138,7 @@ class MiniPCNMutation(MutationStep):
                     step_fn=self._step_fn,
                     steps=0,
                     chain=chain,
+                    diagnostics=diagnostics,
                 ),
             )
         (
@@ -146,6 +162,7 @@ class MiniPCNMutation(MutationStep):
             context,
             latent_last=chain[-1],
             latent_chain=chain[-n_steps:] if self._store_chains else None,
+            diagnostic_chain=chain[-n_steps:],
             latent_particles=latent_particles,
             transform=transform,
             transform_auxiliary=transform_auxiliary,
@@ -191,6 +208,7 @@ class MiniPCNMutation(MutationStep):
             context,
             latent_last=latent_last,
             latent_chain=latent_chain,
+            diagnostic_chain=None,
             latent_particles=latent_particles,
             transform=transform,
             transform_auxiliary=transform_auxiliary,
@@ -251,6 +269,7 @@ class MiniPCNMutation(MutationStep):
         *,
         latent_last: Array,
         latent_chain: Array | None,
+        diagnostic_chain: Array | None,
         latent_particles: Array,
         transform: ParticleTransform | None,
         transform_auxiliary: Any,
@@ -295,6 +314,29 @@ class MiniPCNMutation(MutationStep):
                 like=latent_particles,
             )
 
+        diagnostics = None
+        if diagnostic_chain is not None:
+            movement, context, owns_accumulator = prepare_mutation_diagnostics(
+                latent_particles, state.log_weights, context
+            )
+            previous = latent_particles
+            for positions in diagnostic_chain:
+                position_matrix = (
+                    positions[:, None] if positions.ndim == 1 else positions
+                )
+                previous_matrix = (
+                    previous[:, None] if previous.ndim == 1 else previous
+                )
+                accepted = xp.any(
+                    position_matrix != previous_matrix,
+                    axis=tuple(range(1, position_matrix.ndim)),
+                )
+                movement.add_transition(positions, accepted)
+                previous = positions
+            diagnostics, context = finish_mutation_diagnostics(
+                movement, context, owns_accumulator=owns_accumulator
+            )
+
         logger.debug(
             "Iteration %d: MiniPCNMutation completed after %d steps.",
             context.t,
@@ -305,6 +347,7 @@ class MiniPCNMutation(MutationStep):
             step_fn=self._step_fn,
             steps=n_steps,
             chain=stored_chain,
+            diagnostics=diagnostics,
         )
         return (
             state.replace_particles(
