@@ -259,6 +259,8 @@ class StatePlot(PlotCallback):
             sharex=True,
             figsize=(5, 3 * len(self.metadata_keys)),
         )
+        if len(self.metadata_keys) == 1:
+            ax = [ax]
 
         plotting_fn = {
             "log_normalizing_constant": results.plot_log_normalizing_constant,
