@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -305,7 +305,9 @@ class MutationChainPlot(PlotCallback):
     plot_kwargs:
         Additional keyword arguments to pass to the `plot_chain` function.
     step_index:
-        Index of the mutation step in the current iteration's outputs.
+        Index of the mutation step in the current iteration's outputs. If
+        ``None`` (default), search all outputs from the current iteration.
+        Nested outputs produced by control steps are searched recursively.
     output_key:
         Key containing the chain in the selected step output.
     every:
@@ -320,7 +322,7 @@ class MutationChainPlot(PlotCallback):
         parameter_inds: list[int] | None = None,
         parameter_labels: list[str] | None = None,
         plot_kwargs: dict[str, Any] | None = None,
-        step_index: int = -1,
+        step_index: int | None = None,
         output_key: str = "chain",
         every: int = 1,
     ):
@@ -329,9 +331,34 @@ class MutationChainPlot(PlotCallback):
         self.parameter_inds = parameter_inds
         self.step_index = step_index
         self.output_key = output_key
-        self.every = every
         filename = f"{base_filename}_0.png"
-        super().__init__(outdir, filename, plot_kwargs)
+        super().__init__(outdir, filename, plot_kwargs, every=every)
+
+    def _find_chains(self, output: Any) -> Iterator[Any]:
+        """Yield chains from nested step outputs in execution order."""
+        if isinstance(output, Mapping):
+            chain = output.get(self.output_key)
+            if chain is not None:
+                yield chain
+                return
+            for value in output.values():
+                yield from self._find_chains(value)
+            return
+
+        if hasattr(output, "child_output"):
+            yield from self._find_chains(output.child_output)
+            return
+
+        if isinstance(output, (tuple, list)):
+            for value in output:
+                yield from self._find_chains(value)
+
+    @staticmethod
+    def _flatten_block_chains(chains: Any) -> list[Any]:
+        """Convert one mutation output into a list of chain arrays."""
+        if isinstance(chains, Mapping):
+            return [chain for chain in chains.values() if chain is not None]
+        return [chains]
 
     def apply(
         self,
@@ -340,40 +367,52 @@ class MutationChainPlot(PlotCallback):
         results: "SMCResult",
     ) -> None:
         del state
-        chains = None
+        chain_parts = []
         if results.outputs:
             iteration_outputs = results.outputs[-1]
-            try:
-                output = iteration_outputs[self.step_index]
-            except IndexError:
-                output = None
-            if isinstance(output, Mapping):
-                chains = output.get(self.output_key)
-        if isinstance(chains, Mapping):
+            if self.step_index is None:
+                output = iteration_outputs
+            else:
+                try:
+                    output = iteration_outputs[self.step_index]
+                except IndexError:
+                    output = None
+            for nested_chains in self._find_chains(output):
+                chain_parts.extend(self._flatten_block_chains(nested_chains))
+        if chain_parts:
             from .array_api import asarray, namespace
 
-            chain_values = list(chains.values())
-            if chain_values:
-                xp = namespace(*chain_values)
+            split_indices = []
+            chain_length = 0
+            for chain in chain_parts[:-1]:
+                chain_length += chain.shape[0]
+                split_indices.append(chain_length)
+
+            if len(chain_parts) == 1:
+                chains = chain_parts[0]
+            else:
+                xp = namespace(*chain_parts)
                 chains = xp.concat(
                     [
-                        asarray(chain, xp=xp, like=chain_values[0])
-                        for chain in chain_values
+                        asarray(chain, xp=xp, like=chain_parts[0])
+                        for chain in chain_parts
                     ],
                     axis=0,
                 )
-        if chains is not None:
             filename = f"{self.base_filename}_{context.iteration}.png"
             self.full_path = self.outdir / filename
             logger.debug(f"Plotting mutation chains to {self.full_path}")
             from .plot import plot_chains
 
+            plot_kwargs = dict(self.plot_kwargs)
+            if split_indices:
+                plot_kwargs.setdefault("split_indices", split_indices)
             plot_chains(
                 chains,
                 filename=self.full_path,
                 parameter_labels=self.parameter_labels,
                 parameter_inds=self.parameter_inds,
-                **self.plot_kwargs,
+                **plot_kwargs,
             )
         else:
             logger.debug(
