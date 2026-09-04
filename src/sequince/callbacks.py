@@ -207,6 +207,8 @@ class IntermediateParticlesPlot(PlotCallback):
         plot_corner(
             state.particles,
             filename=self.full_path,
+            parameter_inds=self.parameter_inds,
+            parameter_labels=self.parameter_labels,
             **self.plot_kwargs,
         )
 
