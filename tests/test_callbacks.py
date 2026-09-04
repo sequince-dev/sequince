@@ -15,6 +15,7 @@ from sequince.callbacks import (
 from sequince.result import SMCResult
 from sequince.state import ParticleState
 from sequince.steps.context import StepContext
+from sequince.steps.control import ConditionalStepOutput
 
 
 def test_smc_callback_every(monkeypatch) -> None:
@@ -60,6 +61,85 @@ def test_mutation_chain_plot_reads_chain_from_step_output(
 
     assert plotted["chain"] is chain
     assert plotted["filename"] == tmp_path / "chain_0.png"
+
+
+def test_mutation_chain_plot_reads_repeated_sequential_step_outputs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    first_chain = np.zeros((2, 4, 3))
+    second_chain = np.ones((2, 4, 3))
+    repeated_output = (
+        ({"chain": first_chain}, {"symmetry_mode": 1}),
+        ({"chain": second_chain}, {"symmetry_mode": 2}),
+    )
+    state = ParticleState(np.zeros((4, 3)))
+    context = StepContext(t=3)
+    result = SMCResult(
+        states=[state],
+        context=context,
+        outputs=((repeated_output,),),
+    )
+    plotted = {}
+
+    monkeypatch.setattr(
+        "sequince.plot.plot_chains",
+        lambda values, **kwargs: plotted.update(chain=values, **kwargs),
+    )
+
+    MutationChainPlot(outdir=tmp_path)(state, context, result)
+
+    np.testing.assert_array_equal(
+        plotted["chain"], np.concatenate([first_chain, second_chain])
+    )
+    assert plotted["split_indices"] == [2]
+    assert plotted["filename"] == tmp_path / "chain_3.png"
+
+
+def test_mutation_chain_plot_reads_conditional_output_before_later_steps(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    chain = np.ones((2, 4, 3))
+    mutation_output = ConditionalStepOutput(
+        executed=True,
+        child_output=((({"chain": chain}, {"symmetry_mode": 1}),),),
+    )
+    state = ParticleState(np.zeros((4, 3)))
+    context = StepContext(t=2)
+    result = SMCResult(
+        states=[state],
+        context=context,
+        outputs=((mutation_output, None),),
+    )
+    plotted = {}
+
+    monkeypatch.setattr(
+        "sequince.plot.plot_chains",
+        lambda values, **kwargs: plotted.update(chain=values, **kwargs),
+    )
+
+    MutationChainPlot(outdir=tmp_path)(state, context, result)
+
+    np.testing.assert_array_equal(plotted["chain"], chain)
+
+
+def test_mutation_chain_plot_respects_every(tmp_path, monkeypatch) -> None:
+    chain = np.zeros((2, 4, 3))
+    state = ParticleState(np.zeros((4, 3)))
+    result = SMCResult(
+        states=[state],
+        context=StepContext(t=0),
+        outputs=(({"chain": chain},),),
+    )
+    plot_chains = MagicMock()
+    monkeypatch.setattr("sequince.plot.plot_chains", plot_chains)
+    callback = MutationChainPlot(outdir=tmp_path, every=2)
+
+    for iteration in range(4):
+        callback(state, StepContext(t=iteration), result)
+
+    assert plot_chains.call_count == 2
 
 
 def test_trace_plot(tmp_path) -> None:

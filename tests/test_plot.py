@@ -73,6 +73,24 @@ def test_plot_chains_saves_figure(chain: np.ndarray, tmp_path) -> None:
     assert filename.exists()
 
 
+def test_plot_chains_marks_chain_splits(chain: np.ndarray) -> None:
+    fig = plot_chains(
+        chain,
+        n_chains=1,
+        split_indices=[2],
+        split_kwargs={"color": "red"},
+    )
+
+    assert fig is not None
+    for axis in fig.axes:
+        assert len(axis.lines) == 2
+        split_line = axis.lines[1]
+        np.testing.assert_array_equal(split_line.get_xdata(), [1.5, 1.5])
+        assert split_line.get_color() == "red"
+
+    plt.close(fig)
+
+
 def test_plot_corner_passes_selected_particles_and_labels(
     simple_particles: np.ndarray,
     weights: np.ndarray,
