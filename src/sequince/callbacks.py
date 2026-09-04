@@ -360,6 +360,15 @@ class MutationChainPlot(PlotCallback):
             return [chain for chain in chains.values() if chain is not None]
         return [chains]
 
+    def _prepare_chain_parts(
+        self,
+        chain_parts: list[Any],
+        context: "StepContext",
+    ) -> list[Any]:
+        """Prepare discovered chain parts before plotting."""
+        del context
+        return chain_parts
+
     def apply(
         self,
         state: "ParticleState",
@@ -379,6 +388,7 @@ class MutationChainPlot(PlotCallback):
                     output = None
             for nested_chains in self._find_chains(output):
                 chain_parts.extend(self._flatten_block_chains(nested_chains))
+        chain_parts = self._prepare_chain_parts(chain_parts, context)
         if chain_parts:
             from .array_api import asarray, namespace
 
@@ -418,6 +428,80 @@ class MutationChainPlot(PlotCallback):
             logger.debug(
                 "No mutation chain found in the selected step output."
             )
+
+
+class TransformedMutationChainPlot(MutationChainPlot):
+    """Plot mutation chains in the active particle-transform coordinates.
+
+    Parameters
+    ----------
+    metadata_key:
+        Key in the context metadata containing the fitted particle transform.
+    """
+
+    def __init__(
+        self,
+        outdir: str | None = None,
+        base_filename: str = "transformed_chain",
+        parameter_inds: list[int] | None = None,
+        parameter_labels: list[str] | None = None,
+        plot_kwargs: dict[str, Any] | None = None,
+        step_index: int | None = None,
+        output_key: str = "chain",
+        metadata_key: str = PARTICLE_TRANSFORM_KEY,
+        every: int = 1,
+    ):
+        self.metadata_key = metadata_key
+        super().__init__(
+            outdir=outdir,
+            base_filename=base_filename,
+            parameter_inds=parameter_inds,
+            parameter_labels=parameter_labels,
+            plot_kwargs=plot_kwargs,
+            step_index=step_index,
+            output_key=output_key,
+            every=every,
+        )
+
+    def _prepare_chain_parts(
+        self,
+        chain_parts: list[Any],
+        context: "StepContext",
+    ) -> list[Any]:
+        if not chain_parts:
+            return chain_parts
+
+        transform = context.metadata.get(self.metadata_key)
+        if transform is None:
+            logger.debug(
+                "No particle transform found for transformed mutation chains."
+            )
+            return []
+
+        from .array_api import asarray, namespace
+
+        transformed_parts = []
+        for chain in chain_parts:
+            xp = namespace(chain)
+            chain = asarray(chain, xp=xp)
+            n_steps, n_particles = chain.shape[:2]
+            flat_chain = xp.reshape(
+                chain,
+                (n_steps * n_particles, *chain.shape[2:]),
+            )
+            transformed, _, _ = transform.forward(
+                flat_chain,
+                context=context,
+            )
+            transformed_xp = namespace(transformed)
+            transformed = asarray(transformed, xp=transformed_xp)
+            transformed_parts.append(
+                transformed_xp.reshape(
+                    transformed,
+                    (n_steps, n_particles, *transformed.shape[1:]),
+                )
+            )
+        return transformed_parts
 
 
 class ParticleTransformPlot(PlotCallback):

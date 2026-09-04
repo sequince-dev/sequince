@@ -11,6 +11,7 @@ from sequince.callbacks import (
     SMCCallback,
     StatePlot,
     TracePlot,
+    TransformedMutationChainPlot,
 )
 from sequince.result import SMCResult
 from sequince.state import ParticleState
@@ -140,6 +141,69 @@ def test_mutation_chain_plot_respects_every(tmp_path, monkeypatch) -> None:
         callback(state, StepContext(t=iteration), result)
 
     assert plot_chains.call_count == 2
+
+
+def test_transformed_mutation_chain_plot_transforms_repeated_chains(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    first_chain = np.zeros((2, 4, 3))
+    second_chain = np.ones((3, 4, 3))
+    repeated_output = (
+        ({"chain": first_chain}, {"symmetry_mode": 1}),
+        ({"chain": second_chain}, {"symmetry_mode": 2}),
+    )
+    transform = MagicMock()
+    transform.forward.side_effect = lambda values, **kwargs: (
+        values + 2.0,
+        np.zeros(len(values)),
+        None,
+    )
+    state = ParticleState(np.zeros((4, 3)))
+    context = StepContext(t=3, metadata={"particle_transform": transform})
+    result = SMCResult(
+        states=[state],
+        context=context,
+        outputs=((repeated_output,),),
+    )
+    plotted = {}
+    monkeypatch.setattr(
+        "sequince.plot.plot_chains",
+        lambda values, **kwargs: plotted.update(chain=values, **kwargs),
+    )
+
+    TransformedMutationChainPlot(outdir=tmp_path)(state, context, result)
+
+    expected = np.concatenate([first_chain + 2.0, second_chain + 2.0])
+    np.testing.assert_array_equal(plotted["chain"], expected)
+    assert plotted["split_indices"] == [2]
+    assert plotted["filename"] == tmp_path / "transformed_chain_3.png"
+    assert [
+        call.args[0].shape for call in transform.forward.call_args_list
+    ] == [
+        (8, 3),
+        (12, 3),
+    ]
+
+
+def test_transformed_mutation_chain_plot_skips_without_transform(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    chain = np.zeros((2, 4, 3))
+    state = ParticleState(np.zeros((4, 3)))
+    context = StepContext(t=0)
+    result = SMCResult(
+        states=[state],
+        context=context,
+        outputs=(({"chain": chain},),),
+    )
+    plot_chains = MagicMock()
+    monkeypatch.setattr("sequince.plot.plot_chains", plot_chains)
+
+    TransformedMutationChainPlot(outdir=tmp_path)(state, context, result)
+
+    plot_chains.assert_not_called()
 
 
 def test_trace_plot(tmp_path) -> None:
