@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import SMCStep
+from ..base import FixedLengthMutation, SMCStep, validate_n_steps
 from ..context import StepContext
 from ..control import ConditionalStepOutput
 
@@ -56,3 +56,23 @@ class MutateIfResampled(SMCStep):
             context,
             ConditionalStepOutput(not mutation_skipped, child_output),
         )
+
+    def apply_with_n_steps(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+    ) -> tuple[ParticleState, StepContext, ConditionalStepOutput]:
+        n_steps = validate_n_steps(n_steps)
+        if not isinstance(self.mutation, FixedLengthMutation):
+            raise TypeError(
+                "MutateIfResampled's child does not support fixed-length mutation."
+            )
+        if not bool(context.metadata.get("resampled", False)):
+            return state, context, ConditionalStepOutput(False)
+        updated, context, output = self.mutation.apply_with_n_steps(
+            state, context, rng, n_steps=n_steps
+        )
+        return updated, context, ConditionalStepOutput(True, output)

@@ -9,6 +9,7 @@ from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
+from ..base import validate_n_steps
 from ..context import StepContext
 from .base import (
     MutationStep,
@@ -132,6 +133,38 @@ class MetropolisHastingsMutation(MutationStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        return self.apply_with_n_steps(
+            state, context, rng, n_steps=self._n_steps
+        )
+
+    def apply_with_n_steps(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        n_steps = validate_n_steps(n_steps)
+        if n_steps == 0:
+            xp = namespace(state.particles)
+            empty_chain = (
+                xp.empty(
+                    (0, *state.particles.shape), dtype=state.particles.dtype
+                )
+                if self._store_chains
+                else None
+            )
+            return (
+                state,
+                context,
+                {
+                    "acceptance": 0.0,
+                    "acceptance_by_step": (),
+                    "steps": 0,
+                    "chain": empty_chain,
+                },
+            )
         xp = namespace(state.particles)
         transform, context = self._prepare_transform(
             state.particles, context, rng=rng
@@ -157,7 +190,7 @@ class MetropolisHastingsMutation(MutationStep):
         accepted_total = 0
         acceptance_by_step: list[float] = []
         chain: list[Array] = []
-        for _ in range(self._n_steps):
+        for _ in range(n_steps):
             proposals = asarray(
                 kernel.sample(current, rng), xp=xp, like=current
             )
@@ -235,7 +268,7 @@ class MetropolisHastingsMutation(MutationStep):
             context,
             auxiliary=transform_auxiliary,
         )
-        acceptance = accepted_total / (n_particles * self._n_steps)
+        acceptance = accepted_total / (n_particles * n_steps)
         stored_chain = None
         if self._store_chains:
             stored_chain = self._inverse_chain(
@@ -253,12 +286,12 @@ class MetropolisHastingsMutation(MutationStep):
             "MetropolisHastingsMutation completed: acceptance=%.3f after %d "
             "steps.",
             acceptance,
-            self._n_steps,
+            n_steps,
         )
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": tuple(acceptance_by_step),
-            "steps": self._n_steps,
+            "steps": n_steps,
             "chain": stored_chain,
         }
         return (
@@ -437,6 +470,39 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        return self.apply_with_n_steps(
+            state, context, rng, n_steps=self._n_steps
+        )
+
+    def apply_with_n_steps(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+    ) -> tuple[ParticleState, StepContext, dict[str, Any]]:
+        n_steps = validate_n_steps(n_steps)
+        if n_steps == 0:
+            xp = namespace(state.particles)
+            empty_chain = (
+                xp.empty(
+                    (0, *state.particles.shape), dtype=state.particles.dtype
+                )
+                if self._store_chains
+                else None
+            )
+            return (
+                state,
+                context,
+                {
+                    "acceptance": 0.0,
+                    "acceptance_by_step": (),
+                    "acceptance_by_half": (),
+                    "steps": 0,
+                    "chain": empty_chain,
+                },
+            )
         xp = namespace(state.particles)
         transform, context = self._prepare_transform(
             state.particles,
@@ -471,7 +537,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         acceptance_by_step: list[float] = []
         acceptance_by_half: list[tuple[float, float]] = []
         chain: list[Array] = []
-        for _ in range(self._n_steps):
+        for _ in range(n_steps):
             group_a, group_b = self._split_indices(
                 n_particles,
                 rng,
@@ -534,7 +600,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             context,
             auxiliary=transform_auxiliary,
         )
-        acceptance = accepted_total / (n_particles * self._n_steps)
+        acceptance = accepted_total / (n_particles * n_steps)
         stored_chain = None
         if self._store_chains:
             stored_chain = self._inverse_chain(
@@ -551,13 +617,13 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             "RedBlueMetropolisHastingsMutation completed: acceptance=%.3f "
             "after %d sweeps.",
             acceptance,
-            self._n_steps,
+            n_steps,
         )
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": tuple(acceptance_by_step),
             "acceptance_by_half": tuple(acceptance_by_half),
-            "steps": self._n_steps,
+            "steps": n_steps,
             "chain": stored_chain,
         }
         return (

@@ -1,10 +1,7 @@
 """Mutation steps, kernels, and configuration helpers."""
 
-from .base import (
-    PARTICLE_TRANSFORM_KEY,
-    MutationStep,
-    TransformRefit,
-)
+from ..base import FixedLengthMutation
+from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
 from .blackjax import BlackJAXAlgorithmFactory, BlackJAXMutation
 from .blocked import (
     BlockedMetropolisHastingsMutation,
@@ -55,6 +52,7 @@ __all__ = [
     "DifferentialEvolutionMutation",
     "EMCEE_MOVES",
     "EmceeMutation",
+    "FixedLengthMutation",
     "GaussianRandomWalk",
     "GenerativeProposal",
     "MUTATION_KERNELS",

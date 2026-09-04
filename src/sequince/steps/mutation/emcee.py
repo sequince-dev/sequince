@@ -15,6 +15,7 @@ from ...transforms import (
     ParticleTransform,
     has_particle_aligned_auxiliary,
 )
+from ..base import validate_n_steps
 from ..context import StepContext
 from .base import (
     MutationStep,
@@ -225,6 +226,37 @@ class EmceeMutation(MutationStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, object]]:
+        return self.apply_with_n_steps(
+            state, context, rng, n_steps=self._n_steps
+        )
+
+    def apply_with_n_steps(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+    ) -> tuple[ParticleState, StepContext, dict[str, object]]:
+        n_steps = validate_n_steps(n_steps)
+        if n_steps == 0:
+            xp = namespace(state.particles)
+            chain = (
+                xp.empty(
+                    (0, *state.particles.shape), dtype=state.particles.dtype
+                )
+                if self._store_chains
+                else None
+            )
+            return (
+                state,
+                context,
+                {
+                    "acceptance": 0.0,
+                    "steps": 0,
+                    "chain": chain,
+                },
+            )
         import emcee
 
         xp = namespace(state.particles)
@@ -259,7 +291,7 @@ class EmceeMutation(MutationStep):
             "EmceeMutation starting: %d walkers, %d dimensions, %d steps.",
             n_walkers,
             ndim,
-            self._n_steps,
+            n_steps,
         )
 
         vectorized = bool(self._kwargs.get("vectorize", False))
@@ -347,7 +379,7 @@ class EmceeMutation(MutationStep):
 
         state_result = sampler.run_mcmc(
             initial_positions,
-            self._n_steps,
+            n_steps,
             **self._run_kwargs,
         )
         new_positions = state_result.coords
@@ -389,11 +421,11 @@ class EmceeMutation(MutationStep):
         logger.debug(
             "EmceeMutation completed: acceptance=%.3f after %d steps.",
             acceptance,
-            self._n_steps,
+            n_steps,
         )
         output = {
             "acceptance": acceptance,
-            "steps": self._n_steps,
+            "steps": n_steps,
             "chain": stored_chain,
         }
         return (

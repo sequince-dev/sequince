@@ -17,6 +17,7 @@ from ...transforms import (
     select_transform_auxiliary,
 )
 from ...utils.pytrees import pytree_dataclass
+from ..base import validate_n_steps
 from ..context import StepContext
 from .base import MutationStep, TransformRefit
 
@@ -212,6 +213,40 @@ class BlackJAXMutation(MutationStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple["ParticleState", StepContext, BlackJAXOutput]:
+        return self.apply_with_n_steps(
+            state, context, rng, n_steps=self._n_steps
+        )
+
+    def apply_with_n_steps(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+    ) -> tuple["ParticleState", StepContext, BlackJAXOutput]:
+        n_steps = validate_n_steps(n_steps)
+        if n_steps == 0:
+            xp = namespace(state.particles)
+            chain = (
+                xp.empty(
+                    (0, *state.particles.shape), dtype=state.particles.dtype
+                )
+                if self._store_chains
+                else None
+            )
+            return (
+                state,
+                context,
+                BlackJAXOutput(
+                    acceptance=None,
+                    divergence=None,
+                    algorithm=self.algorithm_name,
+                    steps=0,
+                    chain=chain,
+                    num_integration_steps=None,
+                ),
+            )
         import jax
         import jax.numpy as jnp
 
@@ -274,7 +309,7 @@ class BlackJAXMutation(MutationStep):
                 dimensions,
             )
             states = jax.vmap(shared_algorithm.init)(initial_positions)
-        step_keys = jax.random.split(self._jax_key(rng), self._n_steps)
+        step_keys = jax.random.split(self._jax_key(rng), n_steps)
 
         def one_step(states: Any, key: Any) -> tuple[Any, tuple[Any, Any]]:
             chain_keys = jax.random.split(key, n_particles)
@@ -318,7 +353,7 @@ class BlackJAXMutation(MutationStep):
 
         integration_steps = getattr(infos, "num_integration_steps", None)
         if integration_steps is None:
-            internal_evaluation_points = n_particles * (self._n_steps + 1)
+            internal_evaluation_points = n_particles * (n_steps + 1)
         else:
             internal_evaluation_points = n_particles + jnp.sum(
                 integration_steps
@@ -365,13 +400,13 @@ class BlackJAXMutation(MutationStep):
         logger.debug(
             "BlackJAXMutation completed with %s after %d steps.",
             self.algorithm_name,
-            self._n_steps,
+            n_steps,
         )
         output = BlackJAXOutput(
             acceptance=acceptance,
             divergence=divergence,
             algorithm=self.algorithm_name,
-            steps=self._n_steps,
+            steps=n_steps,
             chain=stored_chain,
             num_integration_steps=integration_steps,
         )

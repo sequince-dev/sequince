@@ -669,6 +669,38 @@ def test_mutate_if_resampled(
     assert np.array_equal(updated.particles, expected_particles)
 
 
+@pytest.mark.parametrize("resampled", [False, True])
+def test_mutate_if_resampled_forwards_fixed_length_only_when_executed(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    resampled: bool,
+) -> None:
+    class FixedMutation(SMCStep):
+        def __init__(self):
+            self.lengths = []
+
+        def apply(self, state, context, rng):
+            return self.apply_with_n_steps(state, context, rng, n_steps=1)
+
+        def apply_with_n_steps(self, state, context, rng, *, n_steps):
+            self.lengths.append(n_steps)
+            return state, context, {"steps": n_steps}
+
+    mutation = FixedMutation()
+    step = MutateIfResampled(mutation)
+    context = context_factory(metadata={"resampled": resampled})
+
+    _, _, output = step.apply_with_n_steps(
+        particle_state, context, rng, n_steps=5
+    )
+
+    assert mutation.lengths == ([5] if resampled else [])
+    assert output.executed is resampled
+    if resampled:
+        assert output.child_output["steps"] == 5
+
+
 def test_adapt_gaussian_proposal_updates_scale(
     particle_state: ParticleState,
     context_factory,

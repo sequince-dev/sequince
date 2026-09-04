@@ -72,6 +72,18 @@ class CountingGibbsStep(SMCStep):
         return state, context, None
 
 
+class RecordingFixedMutation(SMCStep):
+    def __init__(self):
+        self.lengths: list[int] = []
+
+    def apply(self, state, context, rng):
+        return self.apply_with_n_steps(state, context, rng, n_steps=1)
+
+    def apply_with_n_steps(self, state, context, rng, *, n_steps):
+        self.lengths.append(n_steps)
+        return state, context, {"steps": n_steps}
+
+
 def _mutation(refit, fits):
     return PreparingMutation(
         lambda particles, context: np.zeros(particles.shape[0]),
@@ -173,6 +185,53 @@ def test_per_context_refit_reuses_transform_across_alternating_rounds(
     mutation(particle_state, context_factory(t=1), rng)
 
     assert len(fits) == 2
+
+
+def test_repeat_sequence_distributes_total_budget_and_keeps_rounds_fixed(
+    particle_state, context_factory, rng
+) -> None:
+    mutation = RecordingFixedMutation()
+    rounds = RepeatStep(
+        SequentialStep([mutation, CountingGibbsStep()]),
+        n=4,
+    )
+
+    _, context, outputs = rounds.apply_with_n_steps(
+        particle_state, context_factory(), rng, n_steps=10
+    )
+
+    assert mutation.lengths == [3, 3, 2, 2]
+    assert context.metadata["gibbs_updates"] == 4
+    assert len(outputs) == 4
+
+
+def test_repeat_sequence_zero_budget_still_runs_nonmutation_round_steps(
+    particle_state, context_factory, rng
+) -> None:
+    mutation = RecordingFixedMutation()
+    rounds = RepeatStep(
+        SequentialStep([mutation, CountingGibbsStep()]),
+        n=3,
+    )
+
+    _, context, _ = rounds.apply_with_n_steps(
+        particle_state, context_factory(), rng, n_steps=0
+    )
+
+    assert mutation.lengths == [0, 0, 0]
+    assert context.metadata["gibbs_updates"] == 3
+
+
+def test_sequential_fixed_length_rejects_ambiguous_children(
+    particle_state, context_factory, rng
+) -> None:
+    sequence = SequentialStep(
+        [RecordingFixedMutation(), RecordingFixedMutation()]
+    )
+    with pytest.raises(TypeError, match="exactly one"):
+        sequence.apply_with_n_steps(
+            particle_state, context_factory(), rng, n_steps=2
+        )
 
 
 def test_once_refit_reuses_transform_across_contexts(

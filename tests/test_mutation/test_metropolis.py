@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
@@ -26,6 +27,86 @@ class SignFoldingTransform(ParticleTransform):
             raise ValueError("auxiliary signs are required")
         values = np.asarray(values)
         return values * auxiliary, np.zeros(values.shape[0])
+
+
+def test_fixed_length_override_is_per_call_and_keeps_default(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    attempts = 0
+
+    def proposal(particles, inner_rng):
+        nonlocal attempts
+        attempts += 1
+        return particles
+
+    step = MetropolisHastingsMutation(
+        lambda particles: np.zeros(particles.shape[0]),
+        CallableMutationKernel(proposal, symmetric=True),
+        n_steps=2,
+    )
+
+    _, _, first = step.apply_with_n_steps(
+        particle_state, context_factory(), rng, n_steps=4
+    )
+    _, _, second = step.apply_with_n_steps(
+        particle_state, context_factory(), rng, n_steps=np.int64(1)
+    )
+    _, _, default = step(particle_state, context_factory(), rng)
+
+    assert attempts == 7
+    assert (first["steps"], second["steps"], default["steps"]) == (4, 1, 2)
+    assert step._n_steps == 2  # noqa: SLF001
+
+
+def test_fixed_length_zero_is_noop_without_kernel_calls(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+) -> None:
+    attempts = 0
+
+    def proposal(particles, inner_rng):
+        nonlocal attempts
+        attempts += 1
+        return particles
+
+    step = MetropolisHastingsMutation(
+        lambda particles: np.zeros(particles.shape[0]),
+        CallableMutationKernel(proposal, symmetric=True),
+        store_chains=True,
+    )
+    context = context_factory()
+    updated, returned_context, output = step.apply_with_n_steps(
+        particle_state, context, rng, n_steps=0
+    )
+
+    assert updated is particle_state
+    assert returned_context is context
+    assert attempts == 0
+    assert output["steps"] == 0
+    assert output["chain"].shape == (0, *particle_state.particles.shape)
+
+
+@pytest.mark.parametrize("value", [-1, 1.5, "2", True])
+def test_fixed_length_rejects_invalid_values(
+    particle_state: ParticleState,
+    context_factory,
+    rng,
+    value,
+) -> None:
+    step = MetropolisHastingsMutation(
+        lambda particles: np.zeros(particles.shape[0]),
+        CallableMutationKernel(
+            lambda particles, inner_rng: particles, symmetric=True
+        ),
+    )
+    error = ValueError if value == -1 else TypeError
+    with pytest.raises(error, match="n_steps"):
+        step.apply_with_n_steps(
+            particle_state, context_factory(), rng, n_steps=value
+        )
 
 
 def test_metropolis_tracks_target_and_proposal_work(rng) -> None:

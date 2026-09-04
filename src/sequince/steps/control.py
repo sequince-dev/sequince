@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
 
-from .base import SMCStep, StepContext
+from .base import FixedLengthMutation, SMCStep, StepContext, validate_n_steps
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -191,6 +191,23 @@ class RepeatStep(SMCStep):
 
         return state, context, tuple(outputs)
 
+    def apply_with_n_steps(self, state, context, rng, *, n_steps: int):
+        """Distribute a total budget while executing every fixed repetition."""
+        n_steps = validate_n_steps(n_steps)
+        if not isinstance(self.step, FixedLengthMutation):
+            raise TypeError(
+                "RepeatStep's child does not support fixed-length mutation."
+            )
+        quotient, remainder = divmod(n_steps, self.n)
+        outputs = []
+        for round_index in range(self.n):
+            round_steps = quotient + (round_index < remainder)
+            state, context, output = self.step.apply_with_n_steps(
+                state, context, rng, n_steps=round_steps
+            )
+            outputs.append(output)
+        return state, context, tuple(outputs)
+
 
 class SequentialStep(SMCStep):
     """Apply several SMC steps in order.
@@ -212,4 +229,31 @@ class SequentialStep(SMCStep):
             if context.stop_immediately:
                 break
 
+        return state, context, tuple(outputs)
+
+    def apply_with_n_steps(self, state, context, rng, *, n_steps: int):
+        """Forward a budget and execute the complete fixed sequence."""
+        n_steps = validate_n_steps(n_steps)
+        capable = [
+            index
+            for index, step in enumerate(self.steps)
+            if isinstance(step, FixedLengthMutation)
+        ]
+        if len(capable) != 1:
+            raise TypeError(
+                "SequentialStep fixed-length execution requires exactly one "
+                "fixed-length mutation child."
+            )
+        mutation_index = capable[0]
+        outputs = []
+        for index, step in enumerate(self.steps):
+            if index == mutation_index:
+                fixed_step = cast(FixedLengthMutation, step)
+                output_state = fixed_step.apply_with_n_steps(
+                    state, context, rng, n_steps=n_steps
+                )
+            else:
+                output_state = step(state, context, rng)
+            state, context, output = output_state
+            outputs.append(output)
         return state, context, tuple(outputs)
