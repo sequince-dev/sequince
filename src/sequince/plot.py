@@ -18,6 +18,8 @@ def plot_chains(
     filename: str | Path | None = None,
     parameter_labels: Sequence[str] | None = None,
     parameter_inds: Sequence[int] | None = None,
+    split_indices: Sequence[int] | None = None,
+    split_kwargs: dict | None = None,
     **kwargs,
 ):
     """Plot MCMC chains.
@@ -28,6 +30,11 @@ def plot_chains(
         The MCMC chains to plot, of shape (n_steps, n_chains, n_params).
     n_chains : int, optional
         The number of chains to plot. If None, all chains are plotted.
+    split_indices : sequence of int, optional
+        Indices at which a new mutation-chain segment starts. A vertical line
+        is drawn between the samples on either side of each split.
+    split_kwargs : dict, optional
+        Keyword arguments for the vertical split lines.
     filename : str | Path, optional
         If provided, the plot will be saved to this filename. If None, the plot will be returned as a matplotlib figure.
     **kwargs : additional keyword arguments
@@ -60,10 +67,20 @@ def plot_chains(
         parameter_labels = [f"$x_{i}$" for i in range(n_params)]
 
     its = np.arange(chains.shape[0])
+    split_line_kwargs = {
+        "color": "black",
+        "linestyle": "--",
+        "linewidth": 0.8,
+        "alpha": 0.7,
+    }
+    if split_kwargs is not None:
+        split_line_kwargs.update(split_kwargs)
 
     for i in range(n_params):
         for j in range(n_chains):
             axs[i].plot(its, chains[:, j, i], **kwargs)
+        for split_index in split_indices or ():
+            axs[i].axvline(split_index - 0.5, **split_line_kwargs)
         axs[i].set_ylabel(parameter_labels[i])
     axs[-1].set_xlabel("Mutation iteration")
     axs[-1].set_xlim(0, chains.shape[0] - 1)
