@@ -38,7 +38,7 @@ BlackJAXAlgorithmFactory = Callable[..., Any]
 
 @pytree_dataclass(
     data_fields=(
-        "acceptance",
+        "mean_acceptance_probability",
         "divergence",
         "chain",
         "num_integration_steps",
@@ -48,9 +48,13 @@ BlackJAXAlgorithmFactory = Callable[..., Any]
 )
 @dataclass(frozen=True)
 class BlackJAXOutput(Mapping[str, Any]):
-    """Fixed-structure BlackJAX metrics returned by a mutation step."""
+    """BlackJAX results with block acceptance in ``metrics.acceptance``.
 
-    acceptance: Any
+    ``mean_acceptance_probability`` averages the backend's MH acceptance
+    probabilities when available; it is not the realized accepted fraction.
+    """
+
+    mean_acceptance_probability: Any
     divergence: Any
     algorithm: str
     steps: int
@@ -60,7 +64,7 @@ class BlackJAXOutput(Mapping[str, Any]):
 
     def __getitem__(self, key: str) -> Any:
         if key not in {
-            "acceptance",
+            "mean_acceptance_probability",
             "divergence",
             "algorithm",
             "steps",
@@ -74,7 +78,7 @@ class BlackJAXOutput(Mapping[str, Any]):
     def __iter__(self):
         return iter(
             (
-                "acceptance",
+                "mean_acceptance_probability",
                 "divergence",
                 "algorithm",
                 "steps",
@@ -264,7 +268,7 @@ class BlackJAXMutation(MutationStep):
                 state,
                 context,
                 BlackJAXOutput(
-                    acceptance=None,
+                    mean_acceptance_probability=None,
                     divergence=None,
                     algorithm=self.algorithm_name,
                     steps=0,
@@ -423,11 +427,9 @@ class BlackJAXMutation(MutationStep):
         )
         context = context.add_evaluation_counts(counts)
 
-        acceptance = getattr(infos, "acceptance_rate", None)
-        if acceptance is None:
-            acceptance = getattr(infos, "is_accepted", None)
-        if acceptance is not None:
-            acceptance = jnp.mean(acceptance)
+        mean_acceptance_probability = getattr(infos, "acceptance_rate", None)
+        if mean_acceptance_probability is not None:
+            mean_acceptance_probability = jnp.mean(mean_acceptance_probability)
         divergence = getattr(infos, "is_divergent", None)
         if divergence is not None:
             divergence = jnp.mean(divergence)
@@ -447,7 +449,7 @@ class BlackJAXMutation(MutationStep):
             n_steps,
         )
         output = BlackJAXOutput(
-            acceptance=acceptance,
+            mean_acceptance_probability=mean_acceptance_probability,
             divergence=divergence,
             algorithm=self.algorithm_name,
             steps=n_steps,

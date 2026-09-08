@@ -282,7 +282,6 @@ class EmceeMutation(MutationStep):
                 state,
                 context,
                 {
-                    "acceptance": 0.0,
                     "steps": 0,
                     "chain": chain,
                     "metrics": None,
@@ -478,7 +477,6 @@ class EmceeMutation(MutationStep):
             n_steps,
         )
         output = {
-            "acceptance": acceptance,
             "steps": n_steps,
             "chain": stored_chain,
             "metrics": None,

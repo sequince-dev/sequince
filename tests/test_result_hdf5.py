@@ -139,13 +139,13 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
                 ResamplingOutput(1.5, True, np.array([1, 0]), "systematic"),
             ),
             MiniPCNOutput(
-                acceptance=np.array([0.5]),
+                acceptance_by_step=np.array([0.5]),
                 step_fn="pcn",
                 steps=2,
                 chain=None,
             ),
             BlackJAXOutput(
-                acceptance=np.array([0.75]),
+                mean_acceptance_probability=np.array([0.75]),
                 divergence=np.array([False]),
                 algorithm="hmc",
                 steps=3,

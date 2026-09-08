@@ -78,10 +78,12 @@ def test_blackjax_mutates_jax_particles(algorithm, algorithm_kwargs) -> None:
     assert result.evaluation is not None
     assert output["algorithm"] == algorithm
     assert output["steps"] == 2
-    assert 0.0 <= output["acceptance"] <= 1.0
+    assert 0.0 <= output["metrics"].acceptance <= 1.0
     assert "mutation_chains" not in result.metadata
     assert output["chain"].shape == (2, 4, 2)
+    assert "acceptance" not in output
     if algorithm in {"nuts", "hmc"}:
+        assert 0 <= output.mean_acceptance_probability <= 1
         assert output["num_integration_steps"].shape == (2, 4)
         assert np.all(np.asarray(output["num_integration_steps"]) > 0)
     else:
@@ -215,7 +217,7 @@ def test_blackjax_array_boundary_accepts_dynamic_beta_under_jit() -> None:
             context,
             random_state,
         )
-        return updated.particles, next_state, output["acceptance"]
+        return updated.particles, next_state, output["metrics"].acceptance
 
     particles, next_state, acceptance = compiled_step(
         _state().particles,

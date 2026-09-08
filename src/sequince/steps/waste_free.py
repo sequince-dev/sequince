@@ -289,8 +289,7 @@ class WasteFreeResampleMove(SMCStep):
         output = {
             "metrics": metrics,
             "ancestors": selected_ancestor_indices,
-            "acceptance": mean_acceptance,
-            "acceptance_by_round": tuple(acceptance_by_round),
+            "mean_acceptance_probability_by_round": tuple(acceptance_by_round),
             "selected_proposals": selected_proposals,
             "selected_parents": selected_parents,
             "selected_proposals_by_round": tuple(proposal_counts),

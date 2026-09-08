@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
+import numpy as np
+
 from ..._typing import Array
 from ...transforms import ParticleTransform
 from ..base import SMCStep
@@ -135,7 +137,11 @@ class BlockedMetropolisHastingsMutation(SMCStep):
                     mutation_state=mutation_state,
                 )
             )
-            acceptance[block.name] = float(block_output["acceptance"])
+            acceptance[block.name] = (
+                float(np.mean(block_output["acceptance_by_step"]))
+                if block_output["acceptance_by_step"]
+                else 0.0
+            )
             acceptance_by_step[block.name] = list(
                 block_output["acceptance_by_step"]
             )
@@ -146,7 +152,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
 
         metrics = self.metrics.result(mutation_state, context)
         output = {
-            "acceptance": acceptance,
+            "acceptance_by_block": acceptance,
             "acceptance_by_step": acceptance_by_step,
             "steps": steps,
             "chain": chains if self._store_chains else None,

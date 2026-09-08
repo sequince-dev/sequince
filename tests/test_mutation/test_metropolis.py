@@ -154,7 +154,7 @@ def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
         updated.particles, particle_state.particles + 1.0
     )
     np.testing.assert_allclose(updated.log_weights, particle_state.log_weights)
-    assert output["acceptance"] == 1.0
+    assert output["metrics"].acceptance == 1.0
     assert output["acceptance_by_step"] == (1.0, 1.0)
     assert output["steps"] == 2
     assert "mutation_chains" not in updated.metadata
@@ -216,7 +216,7 @@ def test_metropolis_whitening_keeps_target_in_particle_coordinates(
     )
     np.testing.assert_allclose(evaluated[1], expected, atol=1e-12)
     np.testing.assert_allclose(updated.particles, expected, atol=1e-12)
-    assert output["acceptance"] == 1.0
+    assert output["metrics"].acceptance == 1.0
 
 
 def test_metropolis_hastings_mutation_applies_transition_ratio(
@@ -238,7 +238,7 @@ def test_metropolis_hastings_mutation_applies_transition_ratio(
     updated, context, output = step(particle_state, context_factory(), rng)
 
     np.testing.assert_allclose(updated.particles, particle_state.particles)
-    assert output["acceptance"] == 0.0
+    assert output["metrics"].acceptance == 0.0
     assert context.evaluation_counts.log_proposal_evaluations == 0
 
 

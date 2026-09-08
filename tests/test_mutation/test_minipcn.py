@@ -41,18 +41,27 @@ def test_functional_step_can_be_jitted(
         state, context, key
     )
 
+    assert "acceptance" not in output
+    np.testing.assert_allclose(
+        output.metrics.acceptance,
+        np.mean(output.acceptance_by_step),
+        atol=1e-6,
+    )
+    assert output.metrics.n_steps == 2
     assert updated.particles.shape == state.particles.shape
     assert next_context.t == context.t
     assert output.step_fn == step_fn
     assert output.steps == 2
-    assert 0.0 <= output.acceptance <= 1.0
+    assert np.all(
+        (0.0 <= output.acceptance_by_step) & (output.acceptance_by_step <= 1.0)
+    )
     if store_chains:
         assert output.chain.shape == (2, *state.particles.shape)
     else:
         assert output.chain is None
     np.testing.assert_array_equal(updated.particles, replayed.particles)
     np.testing.assert_array_equal(
-        output.acceptance, replayed_output.acceptance
+        output.acceptance_by_step, replayed_output.acceptance_by_step
     )
     np.testing.assert_array_equal(
         jax.random.key_data(next_key),

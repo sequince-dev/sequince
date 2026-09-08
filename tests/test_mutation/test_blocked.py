@@ -43,7 +43,7 @@ def test_blocked_metropolis_updates_each_block_and_records_diagnostics(
 
     assert np.any(updated.particles[:, :2] != particles[:, :2])
     assert np.any(updated.particles[:, 2:] != particles[:, 2:])
-    assert output["acceptance"] == {
+    assert output["acceptance_by_block"] == {
         "intrinsic": 1.0,
         "extrinsic": 1.0,
     }

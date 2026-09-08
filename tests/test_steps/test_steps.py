@@ -756,7 +756,7 @@ def test_waste_free_resample_move_returns_uniform_weights(
     assert output["proposal_repeats"] == 1
     total_selected = output["selected_parents"] + output["selected_proposals"]
     assert total_selected == n
-    assert len(output["acceptance_by_round"]) == 1
+    assert len(output["mean_acceptance_probability_by_round"]) == 1
 
 
 def test_waste_free_resample_move_handles_one_dimensional_particles(
@@ -785,7 +785,7 @@ def test_waste_free_resample_move_handles_one_dimensional_particles(
     updated, context, output = step(state, context, rng)
     assert updated.particles.shape == particles.shape
     assert np.allclose(updated.log_weights, -np.log(n))
-    assert len(output["acceptance_by_round"]) == 1
+    assert len(output["mean_acceptance_probability_by_round"]) == 1
     assert output["proposal_repeats"] == 1
 
 
@@ -807,7 +807,7 @@ def test_waste_free_resample_move_multiple_proposals(
     n = particle_state.particles.shape[0]
     assert np.allclose(updated.log_weights, -np.log(n))
     assert output["proposal_repeats"] == 3
-    assert len(output["acceptance_by_round"]) == 3
+    assert len(output["mean_acceptance_probability_by_round"]) == 3
     assert len(output["selected_proposals_by_round"]) == 3
     assert (
         sum(output["selected_proposals_by_round"])
@@ -1010,8 +1010,10 @@ def test_waste_free_diagnostics_drive_proposal_adaptation(
     assert metrics.n_attempted == 9
     assert metrics.n_accepted == pytest.approx(4.5)
     assert metrics.acceptance == pytest.approx(0.5)
-    assert output["acceptance"] == pytest.approx(0.5)
-    assert output["acceptance_by_round"] == pytest.approx([0.5] * 3)
+    assert output["metrics"].acceptance == pytest.approx(0.5)
+    assert output["mean_acceptance_probability_by_round"] == pytest.approx(
+        [0.5] * 3
+    )
     expected_scale = 0.7 * np.exp(0.2 * (0.5 - 0.3))
     assert context.metadata["proposal_scale"] == pytest.approx(expected_scale)
     adapter(state, context, rng)

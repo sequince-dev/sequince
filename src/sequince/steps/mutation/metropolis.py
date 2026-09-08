@@ -177,7 +177,6 @@ class MetropolisHastingsMutation(MutationStep):
                 state,
                 context,
                 {
-                    "acceptance": 0.0,
                     "acceptance_by_step": (),
                     "steps": 0,
                     "chain": empty_chain,
@@ -317,7 +316,6 @@ class MetropolisHastingsMutation(MutationStep):
             n_steps,
         )
         output = {
-            "acceptance": acceptance,
             "acceptance_by_step": tuple(acceptance_by_step),
             "steps": n_steps,
             "chain": stored_chain,
@@ -542,7 +540,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 state,
                 context,
                 {
-                    "acceptance": 0.0,
                     "acceptance_by_step": (),
                     "acceptance_by_half": (),
                     "steps": 0,
@@ -685,7 +682,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             n_steps,
         )
         output = {
-            "acceptance": acceptance,
             "acceptance_by_step": tuple(acceptance_by_step),
             "acceptance_by_half": tuple(acceptance_by_half),
             "steps": n_steps,

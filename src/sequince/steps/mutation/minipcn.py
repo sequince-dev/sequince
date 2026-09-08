@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
-
-import numpy as np
 
 from ..._typing import Array
 from ...array_api import asarray, namespace
@@ -34,14 +32,17 @@ logger = logging.getLogger(__name__)
 
 
 @pytree_dataclass(
-    data_fields=("acceptance", "chain", "metrics"),
+    data_fields=("acceptance_by_step", "chain", "metrics"),
     meta_fields=("step_fn", "steps"),
 )
 @dataclass(frozen=True)
 class MiniPCNOutput(Mapping[str, Any]):
-    """Fixed-structure MiniPCN metrics returned by a mutation step."""
+    """MiniPCN results with block acceptance in ``metrics.acceptance``.
 
-    acceptance: Any
+    ``acceptance_by_step`` contains the backend's accepted fraction per step.
+    """
+
+    acceptance_by_step: Any
     step_fn: str
     steps: int
     chain: Any
@@ -49,7 +50,7 @@ class MiniPCNOutput(Mapping[str, Any]):
 
     def __getitem__(self, key: str) -> Any:
         if key not in {
-            "acceptance",
+            "acceptance_by_step",
             "step_fn",
             "steps",
             "chain",
@@ -59,7 +60,9 @@ class MiniPCNOutput(Mapping[str, Any]):
         return getattr(self, key)
 
     def __iter__(self):
-        return iter(("acceptance", "step_fn", "steps", "chain", "metrics"))
+        return iter(
+            ("acceptance_by_step", "step_fn", "steps", "chain", "metrics")
+        )
 
     def __len__(self) -> int:
         return 5
@@ -145,7 +148,9 @@ class MiniPCNMutation(MutationStep):
                 state,
                 context,
                 MiniPCNOutput(
-                    acceptance=0.0,
+                    acceptance_by_step=xp.empty(
+                        (0,), dtype=state.particles.dtype
+                    ),
                     step_fn=self._step_fn,
                     steps=0,
                     chain=chain,
@@ -177,7 +182,11 @@ class MiniPCNMutation(MutationStep):
             rng=rng,
         )
 
-        acceptance = float(np.mean(history.acceptance_rate))
+        acceptance_by_step = asarray(
+            history.acceptance_rate,
+            xp=namespace(latent_particles),
+            like=latent_particles,
+        )
         return self._complete_mutation(
             state,
             context,
@@ -187,7 +196,7 @@ class MiniPCNMutation(MutationStep):
             latent_particles=latent_particles,
             transform=transform,
             transform_auxiliary=transform_auxiliary,
-            acceptance=acceptance,
+            acceptance_by_step=acceptance_by_step,
             n_steps=n_steps,
             mutation_state=mutation_state,
         )
@@ -225,7 +234,7 @@ class MiniPCNMutation(MutationStep):
         )
         xp = namespace(latent_particles)
         acceptance_rate = xp.asarray(history.acceptance_rate)
-        acceptance = xp.mean(acceptance_rate)
+        acceptance_by_step = acceptance_rate
         latent_last = chain if return_last_only else chain[-1]
         latent_chain = None if return_last_only else chain[-self._n_steps :]
         updated_state, context, output, mutation_state = (
@@ -240,7 +249,7 @@ class MiniPCNMutation(MutationStep):
                 latent_particles=latent_particles,
                 transform=transform,
                 transform_auxiliary=transform_auxiliary,
-                acceptance=acceptance,
+                acceptance_by_step=acceptance_by_step,
                 n_steps=self._n_steps,
                 mutation_state=mutation_state,
             )
@@ -306,7 +315,7 @@ class MiniPCNMutation(MutationStep):
         latent_particles: Array,
         transform: ParticleTransform | None,
         transform_auxiliary: Any,
-        acceptance: Any,
+        acceptance_by_step: Any,
         n_steps: int,
         mutation_state: MutationStepState | None = None,
     ) -> tuple[
@@ -350,9 +359,7 @@ class MiniPCNMutation(MutationStep):
                 like=latent_particles,
             )
 
-        if diagnostic_chain is None:
-            mutation_state = None
-        else:
+        if diagnostic_chain is not None:
             assert mutation_state is not None
 
             def record(carry, positions):
@@ -386,13 +393,27 @@ class MiniPCNMutation(MutationStep):
                     carry, _ = record(carry, positions)
                 mutation_state, _ = carry
 
+        # Last-position-only sampling still exposes actual per-step acceptance.
+        if diagnostic_chain is None:
+            assert mutation_state is not None
+            n_particles = latent_particles.shape[0]
+            mutation_state = replace(
+                mutation_state,
+                n_steps=xp.asarray(n_steps),
+                n_attempted=xp.asarray(n_steps * n_particles),
+                n_accepted=xp.asarray(
+                    xp.round(xp.sum(acceptance_by_step) * n_particles),
+                    dtype=mutation_state.n_accepted.dtype,
+                ),
+            )
+
         logger.debug(
             "Iteration %d: MiniPCNMutation completed after %d steps.",
             context.t,
             n_steps,
         )
         output = MiniPCNOutput(
-            acceptance=acceptance,
+            acceptance_by_step=acceptance_by_step,
             step_fn=self._step_fn,
             steps=n_steps,
             chain=stored_chain,
