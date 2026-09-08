@@ -4,10 +4,9 @@ Getting started
 Installation
 ------------
 
-The project is published from the main branch and can be installed directly
-from GitHub::
+Install from PyPI::
 
-    pip install git+https://github.com/sequince-dev/sequince.git
+    pip install sequince
 
 ``sequince`` targets Python 3.11+. Its core dependencies are installed
 automatically; integrations such as emcee, BlackJAX, and HDF5 checkpointing are
