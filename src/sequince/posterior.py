@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 from ._typing import Array
@@ -69,6 +69,11 @@ class TemperedPosterior(TemperedTarget):
         particles and optionally context. Requesting either component evaluates
         and caches both. A runtime proposal override takes precedence over the
         returned proposal; refreshing only that override skips the joint call.
+    log_density_ratio:
+        Optional direct terminal-to-initial log-density ratio for weighting.
+        Accepts particles and optionally context. When supplied, weighting skips
+        full density preparation; MCMC still evaluates the posterior normally.
+        The callback must account for any runtime proposal override itself.
     """
 
     log_prior: TargetComponentFn
@@ -76,6 +81,9 @@ class TemperedPosterior(TemperedTarget):
     log_proposal: LogProposalLike | None = None
     log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY
     log_likelihood_and_proposal: JointLogDensityFn | None = None
+    log_density_ratio: TargetComponentFn | None = field(
+        default=None, kw_only=True
+    )
 
     def __post_init__(self) -> None:
         if self.log_likelihood_and_proposal is None:
@@ -95,6 +103,46 @@ class TemperedPosterior(TemperedTarget):
             self.log_likelihood_and_proposal, (particles,), context
         )
         return log_proposal
+
+    def evaluation_components(self, context):
+        components = {"log_prior", "log_likelihood"}
+        if (
+            self.resolve_log_proposal(
+                context.metadata.get(self.log_proposal_override_key)
+            )
+            is not None
+        ):
+            components.add("log_proposal")
+        return components
+
+    def log_increment(self, particles, context, *, evaluation=None):
+        if evaluation is not None:
+            self.validate_evaluation(evaluation, particles, context)
+            if "log_increment" in evaluation:
+                values = evaluation["log_increment"]
+                return values[0] if particles.ndim == 1 else values
+            if self.log_density_ratio is None and self.evaluation_components(
+                context
+            ).issubset(evaluation.components):
+                return super().log_increment(
+                    particles, context, evaluation=evaluation
+                )
+        evaluation = self.prepare_evaluation(
+            particles,
+            context,
+            evaluation=evaluation,
+            components={"log_increment"},
+        )
+        values = evaluation["log_increment"]
+        return values[0] if particles.ndim == 1 else values
+
+    def log_prob(self, particles, context, *, evaluation=None):
+        if evaluation is not None:
+            self.validate_evaluation(evaluation, particles, context)
+        evaluation = self.prepare_evaluation(
+            particles, context, evaluation=evaluation
+        )
+        return super().log_prob(particles, context, evaluation=evaluation)
 
     def resolve_log_proposal(
         self,
@@ -188,8 +236,17 @@ class TemperedPosterior(TemperedTarget):
         del refresh
         if evaluation is not None:
             self.validate_evaluation(evaluation, particles, context)
-        allowed = {"log_prior", "log_likelihood", "log_proposal"}
-        requested = allowed if components is None else set(components)
+        allowed = {
+            "log_prior",
+            "log_likelihood",
+            "log_proposal",
+            "log_increment",
+        }
+        requested = (
+            self.evaluation_components(context)
+            if components is None
+            else set(components)
+        )
         unknown = requested.difference(allowed)
         if unknown:
             raise ValueError(
@@ -219,6 +276,13 @@ class TemperedPosterior(TemperedTarget):
         *,
         proposal_overridden: bool,
     ) -> tuple[dict[str, Array], EvaluationCounts]:
+        wants_increment = "log_increment" in requested
+        if wants_increment and self.log_density_ratio is None:
+            requested |= self.evaluation_components(context).difference(values)
+        if requested.intersection(
+            {"log_prior", "log_likelihood", "log_proposal"}
+        ):
+            values.pop("log_increment", None)
         n_particles = 1 if particles.ndim == 1 else particles.shape[0]
         log_target_evaluations = (
             n_particles
@@ -267,6 +331,22 @@ class TemperedPosterior(TemperedTarget):
                     log_proposal, particles, context
                 )
                 log_proposal_evaluations += n_particles
+        if wants_increment:
+            if self.log_density_ratio is not None:
+                values["log_increment"] = _evaluate_component(
+                    self.log_density_ratio, particles, context
+                )
+            else:
+                density_evaluation = self.bind_evaluation(
+                    TargetEvaluation(values), context
+                )
+                values["log_increment"] = _evaluate_component(
+                    lambda pts: self.log_increment(
+                        pts, context, evaluation=density_evaluation
+                    ),
+                    particles,
+                    context,
+                )
         return (
             values,
             EvaluationCounts(

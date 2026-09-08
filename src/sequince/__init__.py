@@ -8,6 +8,7 @@ from .array_api import enable_scipy_array_api
 
 enable_scipy_array_api()
 
+from .density import SequentialDensity, TemperedDensity
 from .exceptions import DegenerateWeightsError
 from .mcmc import MarkovChainMonteCarlo, MCMCResult, make_mcmc
 from .posterior import TemperedPosterior
@@ -51,6 +52,8 @@ __all__ = [
     "MetaSequentialMonteCarlo",
     "SMCResult",
     "SequentialTarget",
+    "SequentialDensity",
+    "TemperedDensity",
     "Target",
     "TemperedTarget",
     "TemperedPosterior",

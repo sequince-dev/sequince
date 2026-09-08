@@ -14,7 +14,11 @@ from ..stats import (
     ess_from_log_weights,
     ess_ratio_from_log_weights,
 )
-from ..target import EvaluationCounts, SequentialTarget, TemperedTarget
+from ..target import (
+    EvaluationCounts,
+    SequentialTarget,
+    TemperedTarget,
+)
 from ..utils.callables import call_with_optional_context
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep, StepContext
@@ -224,6 +228,7 @@ class IncrementalWeighting(SMCStep):
             state.particles,
             context,
             evaluation=state.evaluation,
+            components={"log_increment"},
             return_counts=True,
         )
         return (
@@ -254,6 +259,7 @@ class IncrementalWeighting(SMCStep):
                 state.particles,
                 context,
                 evaluation=state.evaluation,
+                components={"log_increment"},
                 return_counts=True,
             )
             context = context.add_evaluation_counts(counts)
@@ -331,8 +337,9 @@ class BaseTemperedStep(SMCStep):
             state.particles,
             context,
             evaluation=state.evaluation,
-            refresh_components=self._refresh_components,
+            components={"log_increment"},
             return_counts=True,
+            refresh_components=self._refresh_components,
         )
         return (
             state.with_updates(evaluation=evaluation),
@@ -365,8 +372,9 @@ class BaseTemperedStep(SMCStep):
             state.particles,
             context,
             evaluation=state.evaluation,
-            refresh_components=self._refresh_components,
+            components={"log_increment"},
             return_counts=True,
+            refresh_components=self._refresh_components,
         )
         context = context.add_evaluation_counts(counts + log_increment_counts)
         if evaluation is not state.evaluation:
