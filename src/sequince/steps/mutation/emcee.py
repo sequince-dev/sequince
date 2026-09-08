@@ -17,15 +17,15 @@ from ...transforms import (
 )
 from ..base import validate_n_steps
 from ..context import StepContext
-from ..mutation_diagnostics import (
-    MutationMetric,
-    MutationStepState,
-)
 from .base import (
     MutationStep,
     TransformRefit,
     as_scalar_log_prob,
     as_vector_log_prob,
+)
+from .metrics import (
+    MutationMetric,
+    MutationStepState,
 )
 
 if TYPE_CHECKING:
@@ -262,11 +262,14 @@ class EmceeMutation(MutationStep):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
-            mutation_state = self._initialize_metrics(
-                mutation_state,
-                state.particles,
-                state.log_weights,
-                context,
+            mutation_state = (
+                self.metrics.initialize(
+                    state.particles, state.log_weights, context
+                )
+                if mutation_state is None
+                else self.metrics.prepare(
+                    mutation_state, state.particles, context
+                )
             )
             chain = (
                 xp.empty(
@@ -282,7 +285,7 @@ class EmceeMutation(MutationStep):
                     "acceptance": 0.0,
                     "steps": 0,
                     "chain": chain,
-                    "diagnostics": None,
+                    "metrics": None,
                 },
                 mutation_state,
             )
@@ -316,11 +319,18 @@ class EmceeMutation(MutationStep):
             squeeze_last = False
 
         n_walkers, ndim = initial_positions.shape
-        mutation_state = self._initialize_metrics(
-            mutation_state,
-            asarray(initial_positions, xp=xp, like=latent_particles),
-            state.log_weights,
-            context,
+        mutation_state = (
+            self.metrics.initialize(
+                asarray(initial_positions, xp=xp, like=latent_particles),
+                state.log_weights,
+                context,
+            )
+            if mutation_state is None
+            else self.metrics.prepare(
+                mutation_state,
+                asarray(initial_positions, xp=xp, like=latent_particles),
+                context,
+            )
         )
         logger.debug(
             "EmceeMutation starting: %d walkers, %d dimensions, %d steps.",
@@ -418,7 +428,7 @@ class EmceeMutation(MutationStep):
         ):
             cumulative_accepted = sampler.backend.accepted
             accepted = cumulative_accepted > previous_accepted
-            mutation_state = self._update_metrics(
+            mutation_state = self.metrics.update(
                 mutation_state,
                 asarray(
                     state_result.coords.copy(), xp=xp, like=latent_particles
@@ -471,7 +481,7 @@ class EmceeMutation(MutationStep):
             "acceptance": acceptance,
             "steps": n_steps,
             "chain": stored_chain,
-            "diagnostics": None,
+            "metrics": None,
         }
         return (
             state.replace_particles(

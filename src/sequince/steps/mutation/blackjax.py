@@ -19,11 +19,11 @@ from ...transforms import (
 from ...utils.pytrees import pytree_dataclass
 from ..base import validate_n_steps
 from ..context import StepContext
-from ..mutation_diagnostics import (
+from .base import MutationStep, TransformRefit
+from .metrics import (
     MutationMetric,
     MutationStepState,
 )
-from .base import MutationStep, TransformRefit
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -42,13 +42,13 @@ BlackJAXAlgorithmFactory = Callable[..., Any]
         "divergence",
         "chain",
         "num_integration_steps",
-        "diagnostics",
+        "metrics",
     ),
     meta_fields=("algorithm", "steps"),
 )
 @dataclass(frozen=True)
 class BlackJAXOutput(Mapping[str, Any]):
-    """Fixed-structure BlackJAX diagnostics returned by a mutation step."""
+    """Fixed-structure BlackJAX metrics returned by a mutation step."""
 
     acceptance: Any
     divergence: Any
@@ -56,7 +56,7 @@ class BlackJAXOutput(Mapping[str, Any]):
     steps: int
     chain: Any
     num_integration_steps: Any = None
-    diagnostics: Any = None
+    metrics: Any = None
 
     def __getitem__(self, key: str) -> Any:
         if key not in {
@@ -66,7 +66,7 @@ class BlackJAXOutput(Mapping[str, Any]):
             "steps",
             "chain",
             "num_integration_steps",
-            "diagnostics",
+            "metrics",
         }:
             raise KeyError(key)
         return getattr(self, key)
@@ -80,7 +80,7 @@ class BlackJAXOutput(Mapping[str, Any]):
                 "steps",
                 "chain",
                 "num_integration_steps",
-                "diagnostics",
+                "metrics",
             )
         )
 
@@ -244,11 +244,14 @@ class BlackJAXMutation(MutationStep):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
-            mutation_state = self._initialize_metrics(
-                mutation_state,
-                state.particles,
-                state.log_weights,
-                context,
+            mutation_state = (
+                self.metrics.initialize(
+                    state.particles, state.log_weights, context
+                )
+                if mutation_state is None
+                else self.metrics.prepare(
+                    mutation_state, state.particles, context
+                )
             )
             chain = (
                 xp.empty(
@@ -267,7 +270,7 @@ class BlackJAXMutation(MutationStep):
                     steps=0,
                     chain=chain,
                     num_integration_steps=None,
-                    diagnostics=None,
+                    metrics=None,
                 ),
                 mutation_state,
             )
@@ -335,11 +338,14 @@ class BlackJAXMutation(MutationStep):
             states = jax.vmap(shared_algorithm.init)(initial_positions)
         step_keys = jax.random.split(self._jax_key(rng), n_steps)
 
-        mutation_state = self._initialize_metrics(
-            mutation_state,
-            initial_positions,
-            state.log_weights,
-            context,
+        mutation_state = (
+            self.metrics.initialize(
+                initial_positions, state.log_weights, context
+            )
+            if mutation_state is None
+            else self.metrics.prepare(
+                mutation_state, initial_positions, context
+            )
         )
 
         def one_step(carry: Any, key: Any) -> tuple[Any, tuple[Any, Any]]:
@@ -368,7 +374,7 @@ class BlackJAXMutation(MutationStep):
             accepted = getattr(info, "is_accepted", None)
             if accepted is None:
                 accepted = jnp.any(updated.position != states.position, axis=1)
-            mutation_state = self._update_metrics(
+            mutation_state = self.metrics.update(
                 mutation_state, updated.position, accepted, context
             )
             return (updated, mutation_state), (updated, info)
@@ -447,7 +453,7 @@ class BlackJAXMutation(MutationStep):
             steps=n_steps,
             chain=stored_chain,
             num_integration_steps=integration_steps,
-            diagnostics=None,
+            metrics=None,
         )
         return (
             state.replace_particles(

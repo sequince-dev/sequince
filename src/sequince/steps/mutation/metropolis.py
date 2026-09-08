@@ -11,10 +11,6 @@ from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
 from ..base import validate_n_steps
 from ..context import StepContext
-from ..mutation_diagnostics import (
-    MutationMetric,
-    MutationStepState,
-)
 from .base import (
     MutationStep,
     TransformRefit,
@@ -25,6 +21,10 @@ from .kernels import (
     GammaRandomization,
     MutationKernel,
     evaluate_log_transition_ratio,
+)
+from .metrics import (
+    MutationMetric,
+    MutationStepState,
 )
 
 if TYPE_CHECKING:
@@ -157,11 +157,14 @@ class MetropolisHastingsMutation(MutationStep):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
-            mutation_state = self._initialize_metrics(
-                mutation_state,
-                state.particles,
-                state.log_weights,
-                context,
+            mutation_state = (
+                self.metrics.initialize(
+                    state.particles, state.log_weights, context
+                )
+                if mutation_state is None
+                else self.metrics.prepare(
+                    mutation_state, state.particles, context
+                )
             )
             empty_chain = (
                 xp.empty(
@@ -178,7 +181,7 @@ class MetropolisHastingsMutation(MutationStep):
                     "acceptance_by_step": (),
                     "steps": 0,
                     "chain": empty_chain,
-                    "diagnostics": None,
+                    "metrics": None,
                 },
                 mutation_state,
             )
@@ -195,8 +198,10 @@ class MetropolisHastingsMutation(MutationStep):
             like=state.particles,
         )
         n_particles = current.shape[0]
-        mutation_state = self._initialize_metrics(
-            mutation_state, current, state.log_weights, context
+        mutation_state = (
+            self.metrics.initialize(current, state.log_weights, context)
+            if mutation_state is None
+            else self.metrics.prepare(mutation_state, current, context)
         )
         kernel = self._resolve_kernel(current, context)
         current_log_prob, current_evaluation, counts = self._evaluate_log_prob(
@@ -277,7 +282,7 @@ class MetropolisHastingsMutation(MutationStep):
                 )
 
             accepted_count = int(to_numpy(xp.sum(accepted)))
-            mutation_state = self._update_metrics(
+            mutation_state = self.metrics.update(
                 mutation_state, current, accepted, context
             )
             accepted_total += accepted_count
@@ -316,7 +321,7 @@ class MetropolisHastingsMutation(MutationStep):
             "acceptance_by_step": tuple(acceptance_by_step),
             "steps": n_steps,
             "chain": stored_chain,
-            "diagnostics": None,
+            "metrics": None,
         }
         return (
             state.replace_particles(
@@ -517,11 +522,14 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
-            mutation_state = self._initialize_metrics(
-                mutation_state,
-                state.particles,
-                state.log_weights,
-                context,
+            mutation_state = (
+                self.metrics.initialize(
+                    state.particles, state.log_weights, context
+                )
+                if mutation_state is None
+                else self.metrics.prepare(
+                    mutation_state, state.particles, context
+                )
             )
             empty_chain = (
                 xp.empty(
@@ -539,7 +547,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                     "acceptance_by_half": (),
                     "steps": 0,
                     "chain": empty_chain,
-                    "diagnostics": None,
+                    "metrics": None,
                 },
                 mutation_state,
             )
@@ -557,8 +565,10 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         )
         current = asarray(current, xp=xp, like=state.particles)
         n_particles = current.shape[0]
-        mutation_state = self._initialize_metrics(
-            mutation_state, current, state.log_weights, context
+        mutation_state = (
+            self.metrics.initialize(current, state.log_weights, context)
+            if mutation_state is None
+            else self.metrics.prepare(mutation_state, current, context)
         )
         if n_particles < 2:
             raise ValueError(
@@ -643,7 +653,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                     accepted_b / group_b.shape[0],
                 )
             )
-            mutation_state = self._update_metrics(
+            mutation_state = self.metrics.update(
                 mutation_state, current, accepted_population, context
             )
             if self._store_chains:
@@ -680,7 +690,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             "acceptance_by_half": tuple(acceptance_by_half),
             "steps": n_steps,
             "chain": stored_chain,
-            "diagnostics": None,
+            "metrics": None,
         }
         return (
             state.replace_particles(

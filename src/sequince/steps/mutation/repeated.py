@@ -9,20 +9,19 @@ from typing import TYPE_CHECKING, Any
 from ...utils.pytrees import pytree_dataclass
 from ..base import SMCStep, validate_n_steps
 from ..context import StepContext
-from ..mutation_diagnostics import (
-    MutationDiagnostics,
-    MutationMetric,
-    MutationStepState,
-    finish_metrics,
-)
 from .base import MutationStep
+from .metrics import (
+    MutationMetrics,
+    MutationMetricsOutput,
+    MutationStepState,
+)
 
 if TYPE_CHECKING:
     from ...state import ParticleState
 
 
 @pytree_dataclass(
-    data_fields=("round_outputs", "after_round_outputs", "diagnostics")
+    data_fields=("round_outputs", "after_round_outputs", "metrics")
 )
 @dataclass(frozen=True)
 class RepeatedMutationStepOutput:
@@ -30,7 +29,7 @@ class RepeatedMutationStepOutput:
 
     round_outputs: tuple[Any, ...]
     after_round_outputs: tuple[Any, ...]
-    diagnostics: MutationDiagnostics | None
+    metrics: MutationMetricsOutput | None
 
 
 class RepeatedMutationStep(SMCStep):
@@ -48,7 +47,7 @@ class RepeatedMutationStep(SMCStep):
 
     Metrics are configured on the mutation child. Runtime state is local to
     the block call and passed explicitly through the rounds. Nested blocks
-    share the same state and only the outermost block finalizes diagnostics.
+    share the same state and only the outermost block finalizes metrics.
     Fixed schedules execute all rounds even if a child requests stopping;
     the stop flags remain available to the enclosing SMC runner.
     """
@@ -84,7 +83,7 @@ class RepeatedMutationStep(SMCStep):
         return self._n_steps
 
     @property
-    def metrics(self) -> tuple[MutationMetric, ...]:
+    def metrics(self) -> MutationMetrics:
         """Static metric configuration owned by the mutation child."""
         return self.mutation.metrics
 
@@ -104,9 +103,7 @@ class RepeatedMutationStep(SMCStep):
             context,
             replace(
                 output,
-                diagnostics=finish_metrics(
-                    self.metrics, mutation_state, context
-                ),
+                metrics=self.metrics.result(mutation_state, context),
             ),
         )
 

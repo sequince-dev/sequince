@@ -290,6 +290,127 @@ class StatePlot(PlotCallback):
         plt.close(fig)
 
 
+class AdaptiveMutationPlot(PlotCallback):
+    """Plot completed mutation budgets, acceptance, and accepted moves.
+
+    ``step_index`` selects the mutation output within each iteration (default
+    2, after weighting and resampling). Mapping and dataclass outputs containing
+    ``metrics`` are supported, including conditional wrappers. Missing metrics
+    leave gaps; no attempted moves leave acceptance undefined. ``target_steps``
+    optionally marks the target accepted moves per particle. The callback does
+    not depend on a particular adaptation policy and also supports fixed budgets.
+
+    ``every``, ``outdir``, and ``filename`` follow ``PlotCallback`` conventions.
+    """
+
+    def __init__(
+        self,
+        outdir: str | Path | None = None,
+        *,
+        step_index: int = 2,
+        target_steps: float | None = None,
+        filename: str = "adaptive_mutation_history.png",
+        every: int = 1,
+    ) -> None:
+        import math
+        from numbers import Integral
+
+        if (
+            isinstance(step_index, bool)
+            or not isinstance(step_index, Integral)
+            or step_index < 0
+        ):
+            raise ValueError("step_index must be a nonnegative integer.")
+        if target_steps is not None and (
+            not math.isfinite(target_steps) or target_steps < 0
+        ):
+            raise ValueError("target_steps must be finite and nonnegative.")
+        super().__init__(
+            str(outdir) if outdir is not None else None, filename, every=every
+        )
+        self.step_index: int = int(step_index)
+        self.target_steps: float | None = target_steps
+
+    def apply(
+        self, state: ParticleState, context: StepContext, results: SMCResult
+    ) -> None:
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        from .array_api import to_numpy
+        from .steps.mutation.metrics import MutationMetricsOutput
+
+        if not results.outputs:
+            return
+        steps, acceptance, accepted_moves = [], [], []
+        for iteration_output in results.outputs:
+            output = (
+                iteration_output[self.step_index]
+                if self.step_index < len(iteration_output)
+                else None
+            )
+            while output is not None:
+                metrics = (
+                    output.get("metrics")
+                    if isinstance(output, Mapping)
+                    else getattr(output, "metrics", None)
+                )
+                if metrics is not None:
+                    break
+                output = (
+                    output.get("child_output")
+                    if isinstance(output, Mapping)
+                    else getattr(output, "child_output", None)
+                )
+            if output is None:
+                steps.append(np.nan)
+                acceptance.append(np.nan)
+                accepted_moves.append(np.nan)
+                continue
+            if not isinstance(metrics, MutationMetricsOutput):
+                raise TypeError(
+                    "Selected output metrics must be MutationMetricsOutput."
+                )
+            n_steps = float(to_numpy(metrics.n_steps))
+            attempted = float(to_numpy(metrics.n_attempted))
+            rate = (
+                float(to_numpy(metrics.acceptance))
+                if attempted > 0
+                else np.nan
+            )
+            steps.append(n_steps)
+            acceptance.append(rate)
+            accepted_moves.append(n_steps * rate if attempted > 0 else 0.0)
+
+        iterations = np.arange(len(results.outputs))
+        fig, axes = plt.subplots(3, 1, sharex=True, figsize=(6, 9))
+        try:
+            axes[0].step(iterations, steps, where="mid")
+            axes[0].scatter(iterations, steps)
+            axes[0].set_ylabel("Mutation steps")
+            axes[0].set_title("Adaptive mutation history")
+            axes[1].plot(iterations, acceptance, marker="o")
+            axes[1].set_ylabel("Acceptance probability")
+            axes[1].set_ylim(0, 1)
+            axes[2].plot(iterations, accepted_moves, marker="o")
+            axes[2].set_ylabel("Accepted moves per particle")
+            if self.target_steps is not None:
+                axes[2].axhline(
+                    self.target_steps,
+                    color="C1",
+                    linestyle="--",
+                    label="Target accepted moves",
+                )
+                axes[2].legend()
+            axes[2].set_xlabel("SMC iteration")
+            for ax in axes:
+                ax.grid(alpha=0.3)
+            fig.tight_layout()
+            fig.savefig(self.full_path)
+        finally:
+            plt.close(fig)
+
+
 class MutationChainPlot(PlotCallback):
     """
     Callback to plot the chains from the mutation step of the SMC algorithm.

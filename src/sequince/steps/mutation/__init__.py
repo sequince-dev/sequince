@@ -1,18 +1,10 @@
 """Mutation steps, kernels, and configuration helpers."""
 
 from ..base import FixedLengthMutation
-from ..mutation_diagnostics import (
-    ESJDMetric,
-    MutationDiagnostics,
-    MutationMetric,
-    MutationStepState,
-)
 from .adaptive import (
-    AdaptGaussianProposal,
+    AdaptiveGaussianProposal,
     AdaptiveMutationStep,
     AdaptMutationSteps,
-    ESJDPolicy,
-    FixedMutationStepPolicy,
     MutationStepPolicy,
 )
 from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
@@ -46,6 +38,12 @@ from .kernels import (
     get_complementary_ensemble_kernel,
     get_mutation_kernel,
 )
+from .metrics import (
+    MutationMetric,
+    MutationMetrics,
+    MutationMetricsOutput,
+    MutationStepState,
+)
 from .metropolis import (
     DifferentialEvolutionMutation,
     MetropolisHastingsMutation,
@@ -56,7 +54,7 @@ from .rejuvenation import GenerativeProposal, ProposalRejuvenation
 from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
 __all__ = [
-    "AdaptGaussianProposal",
+    "AdaptiveGaussianProposal",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
@@ -70,9 +68,7 @@ __all__ = [
     "DifferentialEvolutionMutation",
     "EMCEE_MOVES",
     "EmceeMutation",
-    "ESJDPolicy",
     "FixedLengthMutation",
-    "FixedMutationStepPolicy",
     "GaussianRandomWalk",
     "GenerativeProposal",
     "MUTATION_KERNELS",
@@ -85,10 +81,10 @@ __all__ = [
     "MutationKernel",
     "RepeatedMutationStep",
     "RepeatedMutationStepOutput",
-    "MutationDiagnostics",
+    "MutationMetricsOutput",
     "MutationStepState",
     "MutationMetric",
-    "ESJDMetric",
+    "MutationMetrics",
     "MutationStep",
     "MutationStepPolicy",
     "MutateIfResampled",

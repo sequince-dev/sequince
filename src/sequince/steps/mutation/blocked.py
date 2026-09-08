@@ -9,13 +9,12 @@ from ..._typing import Array
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from ..context import StepContext
-from ..mutation_diagnostics import (
-    MutationMetric,
-    finish_metrics,
-    validate_metrics,
-)
 from .base import TransformRefit
 from .kernels import MutationKernel
+from .metrics import (
+    MutationMetric,
+    MutationMetrics,
+)
 from .metropolis import MetropolisHastingsMutation, MutationKernelFactory
 
 if TYPE_CHECKING:
@@ -91,7 +90,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
     ) -> None:
         super().__init__()
-        self.metrics = validate_metrics(metrics)
+        self.metrics = MutationMetrics(metrics)
         self._blocks = tuple(blocks)
         if not self._blocks:
             raise ValueError(
@@ -108,7 +107,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
                 transform=transform,
                 transform_refit=transform_refit,
                 store_chains=store_chains,
-                metrics=self.metrics,
+                metrics=list(self.metrics),
             )
             for block in self._blocks
         )
@@ -145,12 +144,12 @@ class BlockedMetropolisHastingsMutation(SMCStep):
 
         steps = {block.name: block.n_steps for block in self._blocks}
 
-        diagnostics = finish_metrics(self.metrics, mutation_state, context)
+        metrics = self.metrics.result(mutation_state, context)
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": acceptance_by_step,
             "steps": steps,
             "chain": chains if self._store_chains else None,
-            "diagnostics": diagnostics,
+            "metrics": metrics,
         }
         return updated, context, output

@@ -10,16 +10,12 @@ from ...target import EvaluationCounts, Target
 from ...transforms import ParticleTransform, _repeat_transform_auxiliary
 from ..base import SMCStep
 from ..context import StepContext
-from ..mutation_diagnostics import (
-    MutationDiagnostics,
+from .metrics import (
     MutationMetric,
+    MutationMetrics,
     MutationStepState,
-    finish_metrics,
-    prepare_metrics,
-    update_metrics,
-    validate_metrics,
-    with_diagnostics,
 )
+from .metrics.base import with_metrics
 
 if TYPE_CHECKING:
     from ...state import ParticleState
@@ -82,7 +78,7 @@ class MutationStep(SMCStep):
         metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
     ):
         super().__init__()
-        self.metrics = validate_metrics(metrics)
+        self.metrics = MutationMetrics(metrics)
         self._target = log_prob_fn if isinstance(log_prob_fn, Target) else None
         self._log_prob_fn = (
             None if self._target is not None else cast(LogProbFn, log_prob_fn)
@@ -123,7 +119,7 @@ class MutationStep(SMCStep):
         n_steps: int,
         mutation_state: MutationStepState | None = None,
     ) -> tuple["ParticleState", StepContext, Any, MutationStepState | None]:
-        """Run transitions within a block without finalizing diagnostics.
+        """Run transitions within a block without finalizing metrics.
 
         Pass ``mutation_state=None`` to initialize a new block; otherwise pass
         the state returned by the preceding call. The state holds individual
@@ -131,14 +127,14 @@ class MutationStep(SMCStep):
         to the same metric configuration and mutation coordinate space.
 
         Returns ``(state, context, output, mutation_state)``. The output's
-        diagnostics remain unset, including on the first and zero-step calls.
-        Concrete mutations refresh references on entry, update state for each
+        metrics remain unset, including on the first and zero-step calls.
+        Concrete mutations prepare existing metrics on entry, update state for each
         transition, and return it explicitly without calling metric.result().
         Runtime state must never be stored on the mutation object.
 
         Use ``apply`` or ``apply_with_n_steps`` for a complete standalone block.
         RepeatedMutationStep uses this method to continue across rounds and
-        finalizes diagnostics once after the complete block.
+        finalizes metrics once after the complete block.
         """
         raise NotImplementedError
 
@@ -152,45 +148,8 @@ class MutationStep(SMCStep):
         return (
             state,
             context,
-            with_diagnostics(
-                output, self._finish_metrics(mutation_state, context)
-            ),
+            with_metrics(output, self.metrics.result(mutation_state, context)),
         )
-
-    def _initialize_metrics(
-        self,
-        mutation_state: MutationStepState | None,
-        particles: Array,
-        log_weights: Array,
-        context: StepContext,
-    ) -> MutationStepState:
-        """Initialize a block, or refresh references in an enclosing block.
-
-        Runtime state is returned explicitly and never stored on this step.
-        """
-        return prepare_metrics(
-            self.metrics, mutation_state, particles, log_weights, context
-        )
-
-    def _update_metrics(
-        self,
-        mutation_state: MutationStepState,
-        particles: Array,
-        accepted: Array,
-        context: StepContext,
-    ) -> MutationStepState:
-        """Return updated metric state for one population transition."""
-        return update_metrics(
-            self.metrics, mutation_state, particles, accepted, context
-        )
-
-    def _finish_metrics(
-        self,
-        mutation_state: MutationStepState | None,
-        context: StepContext,
-    ) -> MutationDiagnostics | None:
-        """Finalize metric results at the complete block boundary."""
-        return finish_metrics(self.metrics, mutation_state, context)
 
     @property
     def store_chains(self) -> bool:
