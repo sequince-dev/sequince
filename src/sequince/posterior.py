@@ -16,6 +16,7 @@ from .target import (
     _evaluate_component,
 )
 from .transforms import ParticleTransform, get_prebuilt_transform
+from .utils.callables import call_with_optional_context
 from .utils.copying import array_safe_copy
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from .steps.context import StepContext
 
 LogProposalLike = TargetComponentFn | ProposalDistribution
+JointLogDensityFn = Callable[..., tuple[Array | float, Array | float]]
 
 
 def _resolve_log_proposal_fn(
@@ -53,19 +55,46 @@ class TemperedPosterior(TemperedTarget):
     log_prior:
         Callable returning ``log p(x)`` for each particle.
     log_likelihood:
-        Callable returning ``log l(x)`` for each particle.
+        Callable returning ``log l(x)`` for each particle. May be omitted when
+        ``log_likelihood_and_proposal`` is supplied.
     log_proposal:
         Optional callable or proposal object returning ``log q(x)``. When
         supplied the intermediate targets follow the bridge
         ``q(x)^{1-β} [p(x)L(x)]^{β}``.
     log_proposal_override_key:
         Context metadata key containing a runtime proposal override.
+    log_likelihood_and_proposal:
+        Alternative to separate likelihood and proposal inputs: a callable
+        returning ``(log l(x), log q(x))`` from shared computation. Accepts
+        particles and optionally context. Requesting either component evaluates
+        and caches both. A runtime proposal override takes precedence over the
+        returned proposal; refreshing only that override skips the joint call.
     """
 
     log_prior: TargetComponentFn
-    log_likelihood: TargetComponentFn
+    log_likelihood: TargetComponentFn | None = None
     log_proposal: LogProposalLike | None = None
     log_proposal_override_key: str = LOG_PROPOSAL_OVERRIDE_KEY
+    log_likelihood_and_proposal: JointLogDensityFn | None = None
+
+    def __post_init__(self) -> None:
+        if self.log_likelihood_and_proposal is None:
+            if self.log_likelihood is None:
+                raise ValueError(
+                    "Supply log_likelihood or log_likelihood_and_proposal."
+                )
+        elif self.log_likelihood is not None or self.log_proposal is not None:
+            raise ValueError(
+                "log_likelihood_and_proposal cannot be combined with "
+                "log_likelihood or log_proposal."
+            )
+
+    def _joint_log_proposal(self, particles: Array, context: StepContext):
+        assert self.log_likelihood_and_proposal is not None
+        _, log_proposal = call_with_optional_context(
+            self.log_likelihood_and_proposal, (particles,), context
+        )
+        return log_proposal
 
     def resolve_log_proposal(
         self,
@@ -74,6 +103,8 @@ class TemperedPosterior(TemperedTarget):
         """Return the effective proposal callable for the current evaluation."""
         if log_proposal_override is not None:
             return _resolve_log_proposal_fn(log_proposal_override)
+        if self.log_likelihood_and_proposal is not None:
+            return self._joint_log_proposal
         return _resolve_log_proposal_fn(self.log_proposal)
 
     def log_initial(
@@ -164,10 +195,30 @@ class TemperedPosterior(TemperedTarget):
             raise ValueError(
                 f"Unknown evaluation components: {sorted(unknown)}"
             )
-        log_proposal = self.resolve_log_proposal(
-            context.metadata.get(self.log_proposal_override_key)
+        override = context.metadata.get(self.log_proposal_override_key)
+        values, counts = self._evaluate_components(
+            particles,
+            context,
+            requested,
+            {} if evaluation is None else dict(evaluation.components),
+            self.resolve_log_proposal(override),
+            proposal_overridden=override is not None,
         )
-        values = {} if evaluation is None else dict(evaluation.components)
+        return (
+            self.bind_evaluation(TargetEvaluation(components=values), context),
+            counts,
+        )
+
+    def _evaluate_components(
+        self,
+        particles: Array,
+        context: StepContext,
+        requested: set[str],
+        values: dict[str, Array],
+        log_proposal: TargetComponentFn | None,
+        *,
+        proposal_overridden: bool,
+    ) -> tuple[dict[str, Array], EvaluationCounts]:
         n_particles = 1 if particles.ndim == 1 else particles.shape[0]
         log_target_evaluations = (
             n_particles
@@ -180,21 +231,44 @@ class TemperedPosterior(TemperedTarget):
             values["log_prior"] = _evaluate_component(
                 self.log_prior, particles, context
             )
-        if "log_likelihood" in requested:
+        joint = self.log_likelihood_and_proposal
+        use_joint = joint is not None and (
+            "log_likelihood" in requested
+            or ("log_proposal" in requested and not proposal_overridden)
+        )
+        if use_joint:
+            assert joint is not None
+            likelihood_value, proposal_value = call_with_optional_context(
+                joint, (particles,), context
+            )
+            values["log_likelihood"] = _evaluate_component(
+                lambda _: likelihood_value, particles, context
+            )
+            if not proposal_overridden:
+                values["log_proposal"] = _evaluate_component(
+                    lambda _: proposal_value, particles, context
+                )
+            log_target_evaluations = n_particles
+            log_likelihood_evaluations = n_particles
+            log_proposal_evaluations = n_particles
+        elif "log_likelihood" in requested:
+            assert self.log_likelihood is not None
             values["log_likelihood"] = _evaluate_component(
                 self.log_likelihood, particles, context
             )
             log_likelihood_evaluations = n_particles
-        if "log_proposal" in requested:
+        if "log_proposal" in requested and (
+            not use_joint or proposal_overridden
+        ):
             if log_proposal is None:
                 values.pop("log_proposal", None)
             else:
                 values["log_proposal"] = _evaluate_component(
                     log_proposal, particles, context
                 )
-                log_proposal_evaluations = n_particles
+                log_proposal_evaluations += n_particles
         return (
-            self.bind_evaluation(TargetEvaluation(components=values), context),
+            values,
             EvaluationCounts(
                 log_target_evaluations=log_target_evaluations,
                 log_likelihood_evaluations=log_likelihood_evaluations,
@@ -222,25 +296,18 @@ class TemperedPosterior(TemperedTarget):
             frozen_context = frozen_context.with_metadata(
                 **{self.log_proposal_override_key: log_proposal_override}
             )
-        log_prior = self.log_prior
-        log_likelihood = self.log_likelihood
-        log_proposal = self.resolve_log_proposal(
-            frozen_context.metadata.get(self.log_proposal_override_key)
-        )
+        override = frozen_context.metadata.get(self.log_proposal_override_key)
+        log_proposal = self.resolve_log_proposal(override)
 
         def _frozen_log_prob(particles):
-            components = {
-                "log_prior": _evaluate_component(
-                    log_prior, particles, frozen_context
-                ),
-                "log_likelihood": _evaluate_component(
-                    log_likelihood, particles, frozen_context
-                ),
-            }
-            if log_proposal is not None:
-                components["log_proposal"] = _evaluate_component(
-                    log_proposal, particles, frozen_context
-                )
+            components, _ = self._evaluate_components(
+                particles,
+                frozen_context,
+                {"log_prior", "log_likelihood", "log_proposal"},
+                {},
+                log_proposal,
+                proposal_overridden=override is not None,
+            )
             evaluation = TargetEvaluation(
                 components=components,
                 target_id=self.evaluation_id,
