@@ -778,3 +778,63 @@ def test_joint_posterior_preserves_backend(backend, backend_factory):
         np.testing.assert_allclose(
             to_numpy(gradient), to_numpy(-1.5 * case.particles[0])
         )
+
+
+@pytest.mark.parametrize("beta", [0.0, 0.4, 1.0])
+@pytest.mark.parametrize("array_beta", [False, True])
+@pytest.mark.parametrize("single", [False, True])
+def test_log_prob_with_zero_density_endpoints(beta, array_beta, single):
+    initial = np.array([-np.inf, -np.inf, -3.0, -3.0])
+    terminal = np.array([-np.inf, -2.0, -np.inf, -2.0])
+    particles = np.zeros((4, 1))
+    if single:
+        particles = particles[0]
+        initial, terminal = initial[:1], terminal[:1]
+    target = TemperedPosterior(
+        log_prior=lambda x: terminal,
+        log_likelihood=lambda x: 0.0,
+        log_proposal=lambda x: initial,
+        log_density_ratio=lambda x: 0.0,
+    )
+    context = StepContext(
+        t=0, metadata={"beta": np.asarray(beta) if array_beta else beta}
+    )
+    expected = (
+        initial
+        if beta == 0.0
+        else terminal
+        if beta == 1.0
+        else np.array([-np.inf, -np.inf, -np.inf, -2.6])[: len(initial)]
+    )
+    partial = target.prepare_evaluation(
+        particles, context, components={"log_increment"}
+    )
+    with np.errstate(invalid="raise"):
+        actual = target.log_prob(particles, context, evaluation=partial)
+        frozen = target.freeze_log_prob(context)(particles)
+    np.testing.assert_allclose(actual, expected[0] if single else expected)
+    np.testing.assert_allclose(frozen, actual)
+
+
+def test_jitted_posterior_zero_density_endpoints():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    target = TemperedPosterior(
+        log_prior=lambda x: jnp.where(x[..., 0] < 0, -jnp.inf, -2.0),
+        log_likelihood=lambda x: 0.0,
+        log_proposal=lambda x: jnp.where(x[..., 0] <= 0, -jnp.inf, -3.0),
+    )
+    particles = jnp.array([[-1.0], [0.0], [1.0]])
+
+    @jax.jit
+    def evaluate(beta):
+        return target.log_prob(
+            particles, StepContext(t=0, metadata={"beta": beta})
+        )
+
+    for beta, expected in [
+        (0.0, [-np.inf, -np.inf, -3.0]),
+        (0.4, [-np.inf, -np.inf, -2.6]),
+        (1.0, [-np.inf, -2.0, -2.0]),
+    ]:
+        np.testing.assert_allclose(evaluate(jnp.asarray(beta)), expected)

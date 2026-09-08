@@ -689,6 +689,9 @@ class TemperedTarget(SequentialTarget):
                 )
         initial = self.log_initial(particles, context, evaluation=evaluation)
         terminal = self.log_terminal(particles, context, evaluation=evaluation)
+        # Combine endpoints directly: subtracting two -inf densities would
+        # produce NaN outside their shared support. For array-valued beta,
+        # mask inactive endpoints before multiplying to avoid 0 * -inf.
         xp = namespace(particles)
         beta = asarray(beta, xp=xp, like=particles)
         initial = xp.where(beta == 1.0, 0.0, initial)
