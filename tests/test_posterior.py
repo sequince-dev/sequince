@@ -513,3 +513,268 @@ def test_draw_additional_samples_supports_metropolis_hastings(
     assert updated_state.particles.shape == (8, 1)
     assert updated_result.outputs[-1][0]["steps"] == 2
     assert updated_result.final_state is updated_state
+
+
+@pytest.mark.parametrize("with_context", [False, True])
+@pytest.mark.parametrize("single", [False, True])
+def test_joint_posterior_reuses_shared_computation(with_context, single):
+    calls = []
+    particles = np.array([[1.0, 2.0], [3.0, 4.0]])
+    if single:
+        particles = particles[0]
+    context = StepContext(t=0, metadata={"beta": 0.25})
+
+    def joint(values):
+        calls.append(values)
+        shared = np.sum(values**2, axis=-1)
+        return -shared, -0.5 * shared
+
+    def joint_with_context(values, ctx):
+        assert ctx is context
+        return joint(values)
+
+    target = TemperedPosterior(
+        log_prior=lambda values: -1.0,
+        log_likelihood_and_proposal=joint_with_context
+        if with_context
+        else joint,
+    )
+    evaluation, counts = target.prepare_evaluation(
+        particles, context, return_counts=True
+    )
+    expected_increment = -1.0 - 0.5 * np.sum(particles**2, axis=-1)
+    np.testing.assert_allclose(
+        target.log_increment(particles, context, evaluation=evaluation),
+        expected_increment,
+    )
+    np.testing.assert_allclose(
+        target.log_prob(particles, context, evaluation=evaluation),
+        -0.5 * np.sum(particles**2, axis=-1) + 0.25 * expected_increment,
+    )
+    cached, cached_counts = target.prepare_evaluation(
+        particles, context, evaluation=evaluation, return_counts=True
+    )
+    assert cached is evaluation
+    assert cached_counts == EvaluationCounts.zeros(xp=np)
+    assert len(calls) == 1
+    n = 1 if single else 2
+    assert counts == EvaluationCounts(n, n, n)
+
+
+@pytest.mark.parametrize("component", ["log_likelihood", "log_proposal"])
+def test_joint_refresh_updates_both_components(component):
+    calls = []
+
+    def joint(values):
+        calls.append(None)
+        return float(len(calls)), -float(len(calls))
+
+    target = TemperedPosterior(
+        log_prior=lambda values: 0.0,
+        log_likelihood_and_proposal=joint,
+    )
+    particles = np.zeros((3, 1))
+    context = StepContext(t=0)
+    evaluation = target.evaluate(particles, context)
+    refreshed, counts = target.prepare_evaluation(
+        particles,
+        context,
+        evaluation=evaluation,
+        refresh_components={component},
+        return_counts=True,
+    )
+    np.testing.assert_allclose(refreshed["log_likelihood"], 2.0)
+    np.testing.assert_allclose(refreshed["log_proposal"], -2.0)
+    np.testing.assert_allclose(evaluation["log_likelihood"], 1.0)
+    assert counts == EvaluationCounts(3, 3, 3)
+    target.refresh(particles, refreshed, context, components={"log_prior"})
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_joint_posterior_proposal_override(frozen):
+    calls = {"joint": 0, "override": 0}
+
+    def joint(values):
+        calls["joint"] += 1
+        return -2.0, -3.0
+
+    def override(values):
+        calls["override"] += 1
+        return -4.0
+
+    target = TemperedPosterior(
+        log_prior=lambda values: -1.0,
+        log_likelihood_and_proposal=joint,
+        log_proposal_override_key="custom_proposal",
+    )
+    particles = np.zeros((3, 1))
+    context = StepContext(
+        t=0, metadata={"beta": 0.25, "custom_proposal": override}
+    )
+    if frozen:
+        log_prob = target.freeze_log_prob(context)
+        context.metadata["beta"] = 1.0
+        context.metadata["custom_proposal"] = lambda values: -100.0
+        np.testing.assert_allclose(log_prob(particles), -3.75)
+        assert calls == {"joint": 1, "override": 1}
+        return
+
+    evaluation, counts = target.prepare_evaluation(
+        particles, context, return_counts=True
+    )
+    np.testing.assert_allclose(
+        target.log_prob(particles, context, evaluation=evaluation), -3.75
+    )
+    assert calls == {"joint": 1, "override": 1}
+    # Count both the joint proposal calculation and the effective override.
+    assert counts == EvaluationCounts(3, 3, 6)
+    refreshed, counts = target.prepare_evaluation(
+        particles,
+        context,
+        evaluation=evaluation,
+        refresh_components={"log_proposal"},
+        return_counts=True,
+    )
+    assert calls == {"joint": 1, "override": 2}
+    assert counts == EvaluationCounts(log_proposal_evaluations=3)
+    np.testing.assert_allclose(refreshed["log_likelihood"], -2.0)
+    _, counts = target.prepare_evaluation(
+        particles,
+        context,
+        evaluation=refreshed,
+        refresh_components={"log_likelihood"},
+        return_counts=True,
+    )
+    assert calls == {"joint": 2, "override": 2}
+    assert counts == EvaluationCounts(3, 3, 3)
+
+
+def test_joint_frozen_density_and_resolved_proposal():
+    calls = []
+
+    def joint(values):
+        calls.append(None)
+        return -2.0, -4.0
+
+    target = TemperedPosterior(
+        log_prior=lambda values: -1.0, log_likelihood_and_proposal=joint
+    )
+    context = StepContext(t=0, metadata={"beta": 0.25})
+    particles = np.zeros((3, 1))
+    np.testing.assert_allclose(
+        target.freeze_log_prob(context)(particles), -3.75
+    )
+    assert len(calls) == 1
+    np.testing.assert_allclose(
+        target.resolve_log_proposal()(particles, context), -4.0
+    )
+    assert len(calls) == 2
+    np.testing.assert_allclose(
+        target.freeze_log_prob(
+            context, log_proposal_override=lambda values: -8.0
+        )(particles),
+        -6.75,
+    )
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {
+            "log_likelihood": lambda values: 0.0,
+            "log_likelihood_and_proposal": lambda values: (0.0, 0.0),
+        },
+        {
+            "log_proposal": lambda values: 0.0,
+            "log_likelihood_and_proposal": lambda values: (0.0, 0.0),
+        },
+    ],
+)
+def test_joint_posterior_rejects_ambiguous_or_missing_inputs(kwargs):
+    with pytest.raises(ValueError, match="log_likelihood"):
+        TemperedPosterior(log_prior=lambda values: 0.0, **kwargs)
+
+
+def test_joint_weighting_and_mcmc_share_evaluations(rng):
+    from sequince.steps import FixedTemperedWeighting
+    from sequince.steps.mutation import (
+        CallableMutationKernel,
+        MetropolisHastingsMutation,
+    )
+
+    calls = []
+
+    def joint(values):
+        calls.append(None)
+        waveform = np.sum(values**2, axis=-1)
+        return -waveform, -0.5 * waveform
+
+    target = TemperedPosterior(
+        log_prior=lambda values: -1.0,
+        log_likelihood_and_proposal=joint,
+    )
+    state = ParticleState(np.zeros((4, 2)))
+    context = StepContext(t=0)
+    state, context, _ = FixedTemperedWeighting(
+        target, beta_increment=0.5
+    ).apply(state, context, rng)
+    assert len(calls) == 1
+    step = MetropolisHastingsMutation(
+        target,
+        CallableMutationKernel(
+            lambda values, rng: values + 0.25, symmetric=True
+        ),
+        n_steps=2,
+    )
+    state, context, _ = step.apply(state, context, rng)
+    assert len(calls) == 3  # Initial weighting plus each proposed population.
+    assert context.evaluation_counts.log_likelihood_evaluations == 12
+    assert context.evaluation_counts.log_proposal_evaluations == 12
+    np.testing.assert_allclose(
+        state.evaluation["log_likelihood"],
+        -np.sum(state.particles**2, axis=-1),
+    )
+    np.testing.assert_allclose(
+        state.evaluation["log_proposal"],
+        -0.5 * np.sum(state.particles**2, axis=-1),
+    )
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
+def test_joint_posterior_preserves_backend(backend, backend_factory):
+    case = backend_factory(backend)
+    xp = namespace(case.particles)
+
+    def joint(values):
+        shared = xp.sum(values**2, axis=-1)
+        return -shared, -0.5 * shared
+
+    target = TemperedPosterior(
+        log_prior=lambda values: -1.0, log_likelihood_and_proposal=joint
+    )
+    context = StepContext(t=0, metadata={"beta": 0.5})
+    evaluation = target.evaluate(case.particles, context)
+    assert all(
+        case.matches_namespace(value)
+        for value in evaluation.components.values()
+    )
+    frozen = target.freeze_log_prob(context)
+    result = frozen(case.particles)
+    assert case.matches_namespace(result)
+    np.testing.assert_allclose(
+        to_numpy(result),
+        to_numpy(-0.5 - 0.75 * xp.sum(case.particles**2, axis=-1)),
+    )
+    if backend == "jax":
+        import jax
+
+        np.testing.assert_allclose(
+            to_numpy(jax.jit(frozen)(case.particles)), to_numpy(result)
+        )
+        gradient = jax.jit(jax.grad(frozen))(case.particles[0])
+        np.testing.assert_allclose(
+            to_numpy(gradient), to_numpy(-1.5 * case.particles[0])
+        )
