@@ -706,10 +706,22 @@ def test_adapt_gaussian_proposal_updates_scale(
     context_factory,
     rng,
 ) -> None:
+    from sequince.steps import MutationDiagnostics
+
+    class Mutation(SMCStep):
+        def apply(self, state, context, rng):
+            assert context.metadata["proposal_scale"] == 0.5
+            return (
+                state,
+                context,
+                {"diagnostics": MutationDiagnostics(1, 10, 6)},
+            )
+
     state = particle_state
-    context = context_factory(metadata={"waste_free_acceptance": 0.6})
+    context = context_factory(metadata={"waste_free_acceptance": 0.0})
 
     adapter = AdaptGaussianProposal(
+        Mutation(),
         initial_scale=0.5,
         target_acceptance=0.3,
         adaptation_rate=0.2,
@@ -721,29 +733,9 @@ def test_adapt_gaussian_proposal_updates_scale(
     updated, context, _ = adapter(state, context, rng)
 
     assert updated is state
-    assert context.metadata["proposal_scale"] > 0.5
-
-
-def test_adapt_gaussian_proposal_adds_covariance(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-) -> None:
-    context = context_factory(metadata={})
-    adapter = AdaptGaussianProposal(
-        covariance_key="proposal_cov",
-        mean_key="proposal_mean",
-        covariance_jitter=1e-5,
+    assert context.metadata["proposal_scale"] == pytest.approx(
+        0.5 * np.exp(0.06)
     )
-
-    _, context, _ = adapter(particle_state, context, rng)
-
-    cov = context.metadata["proposal_cov"]
-    mean = context.metadata["proposal_mean"]
-    dims = particle_state.particles.shape[1]
-    assert cov.shape == (dims, dims)
-    assert np.all(np.isfinite(cov))
-    assert mean.shape == (dims,)
 
 
 def test_waste_free_resample_move_returns_uniform_weights(
@@ -870,15 +862,6 @@ def test_waste_free_resample_move_supports_dynamic_proposal(
         factory_scales.append(scale)
         return GaussianRandomWalk(scale=scale)
 
-    adapter = AdaptGaussianProposal(
-        scale_key="proposal_scale",
-        initial_scale=0.15,
-        target_acceptance=None,
-    )
-
-    # First update ensures the scale key is present.
-    _, context, _ = adapter(particle_state, context, rng)
-
     step = WasteFreeResampleMove(
         standard_normal_log_prob,
         factory,
@@ -932,7 +915,7 @@ def test_step_every_n_iterations_applies_step_conditionally(
 ) -> None:
     applied_iterations: list[int] = []
 
-    class RecordingStep(AdaptGaussianProposal):
+    class RecordingStep(SMCStep):
         def apply(
             self,
             state: ParticleState,
@@ -942,7 +925,7 @@ def test_step_every_n_iterations_applies_step_conditionally(
             applied_iterations.append(context.t)
             return state, context, {}
 
-    recording_step = RecordingStep(initial_scale=0.1, target_acceptance=None)
+    recording_step = RecordingStep()
     step = PeriodicStep(recording_step, n=3, offset=1)
 
     for t in range(10):
@@ -950,3 +933,47 @@ def test_step_every_n_iterations_applies_step_conditionally(
         step(particle_state, context, rng)
 
     assert applied_iterations == [1, 4, 7]
+
+
+@pytest.mark.parametrize(
+    "accepted,target,expected",
+    [(0, 0.3, 0.1), (10, 0.3, 2.0), (10, None, 0.5)],
+)
+def test_proposal_adaptation_bounds_and_disabled(
+    accepted, target, expected, particle_state, context_factory, rng
+):
+    from sequince.steps import MutationDiagnostics
+
+    output = {
+        "diagnostics": MutationDiagnostics(1, 10, accepted),
+        "extra": object(),
+    }
+
+    class Mutation(SMCStep):
+        def apply(self, state, context, rng):
+            return state, context, output
+
+    wrapper = AdaptGaussianProposal(
+        Mutation(),
+        initial_scale=0.5,
+        target_acceptance=target,
+        adaptation_rate=1e6,
+        min_scale=0.1,
+        max_scale=2.0,
+    )
+    _, context, result = wrapper(particle_state, context_factory(), rng)
+    assert result is output
+    assert context.metadata["proposal_scale"] == pytest.approx(expected)
+
+
+def test_proposal_adaptation_requires_completed_diagnostics(
+    particle_state, context_factory, rng
+):
+    class Mutation(SMCStep):
+        def apply(self, state, context, rng):
+            return state, context, {"diagnostics": None}
+
+    with pytest.raises(TypeError, match="complete MutationDiagnostics"):
+        AdaptGaussianProposal(Mutation())(
+            particle_state, context_factory(), rng
+        )
