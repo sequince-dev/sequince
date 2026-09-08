@@ -9,22 +9,33 @@ from .control import ConditionalStepOutput, ContinueWhile
 from .log import LoggingStep
 from .meta import MetaSMCStep
 from .mutation import (
+    AdaptGaussianProposal,
     AdaptiveMaskedGaussianRandomWalk,
+    AdaptiveMutationStep,
+    AdaptMutationSteps,
     BlackJAXMutation,
     BlockedMetropolisHastingsMutation,
     ComplementaryEnsembleKernel,
     DifferentialEvolutionKernel,
     DifferentialEvolutionMutation,
     EmceeMutation,
+    ESJDMetric,
+    ESJDPolicy,
     FixedLengthMutation,
+    FixedMutationStepPolicy,
     MaskedGaussianRandomWalk,
     MetropolisBlock,
     MetropolisHastingsMutation,
     MiniPCNMutation,
     MutateIfResampled,
     MutationDiagnostics,
+    MutationMetric,
+    MutationStepPolicy,
+    MutationStepState,
     ProposalRejuvenation,
     RedBlueMetropolisHastingsMutation,
+    RepeatedMutationStep,
+    RepeatedMutationStepOutput,
 )
 from .persistent import (
     PersistentAdaptiveTemperedWeighting,
@@ -33,7 +44,6 @@ from .persistent import (
     persistent_log_mixture_denominator,
     persistent_log_weights,
 )
-from .proposal import AdaptGaussianProposal
 from .resampling import (
     MultinomialResampling,
     StratifiedResampling,
@@ -56,6 +66,8 @@ from .weighting import (
 )
 
 __all__ = [
+    "AdaptiveMutationStep",
+    "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
     "BlackJAXMutation",
     "BlockedMetropolisHastingsMutation",
@@ -72,13 +84,21 @@ __all__ = [
     "SMCTransformation",
     "TransformationStep",
     "EmceeMutation",
+    "ESJDPolicy",
     "FixedLengthMutation",
+    "FixedMutationStepPolicy",
     "MaskedGaussianRandomWalk",
     "MetropolisHastingsMutation",
     "RedBlueMetropolisHastingsMutation",
     "MetropolisBlock",
     "MiniPCNMutation",
+    "RepeatedMutationStep",
+    "RepeatedMutationStepOutput",
     "MutationDiagnostics",
+    "MutationStepState",
+    "MutationMetric",
+    "ESJDMetric",
+    "MutationStepPolicy",
     "MutateIfResampled",
     "ProposalRejuvenation",
     "PersistParticles",

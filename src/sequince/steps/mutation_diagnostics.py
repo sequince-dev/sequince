@@ -1,224 +1,261 @@
-"""Minimal diagnostics for fixed-length mutation blocks."""
+"""Functional diagnostics and extensible metrics for fixed mutation blocks."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any, Protocol
 
+from .._typing import Array
 from ..array_api import asarray, logsumexp, namespace
 from ..utils.pytrees import pytree_dataclass
+from .context import StepContext
 
-MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY = "_mutation_diagnostics_accumulator"
-MUTATION_DIAGNOSTICS_RESET_REFERENCE_KEY = (
-    "_mutation_diagnostics_reset_reference"
-)
+
+class MutationMetric(Protocol):
+    """Static metric configuration with explicit, fixed-structure pytree state.
+
+    ``update`` must be pure: (old state, transition) -> new state. Never
+    mutate Python attributes or input arrays. Arrays, tuples, dictionaries and
+    registered pytree dataclasses are all valid states. Shapes and dtypes must
+    remain fixed under JIT. ``accepted`` is a per-particle boolean mask.
+
+    An optional ``reset_reference(state, particles, context)`` method may
+    return a new reference after a non-MCMC operation; absent means no-op.
+    """
+
+    name: str
+
+    def initialize(
+        self, particles: Array, log_weights: Array, context: StepContext
+    ) -> Any: ...
+    def update(
+        self,
+        state: Any,
+        particles: Array,
+        accepted: Array,
+        context: StepContext,
+    ) -> Any: ...
+    def result(self, state: Any, context: StepContext) -> Any: ...
 
 
 @pytree_dataclass(
-    data_fields=("n_accepted", "normalised_esjd_per_step"),
-    meta_fields=("n_steps", "n_attempted"),
+    data_fields=("n_steps", "n_attempted", "n_accepted", "metrics")
 )
 @dataclass(frozen=True)
 class MutationDiagnostics:
-    """Diagnostics for one complete continuous-MCMC mutation block."""
+    """Core bookkeeping and named results for one complete mutation block."""
 
-    n_steps: int
-    n_attempted: int
+    n_steps: Any
+    n_attempted: Any
     n_accepted: Any
-    normalised_esjd_per_step: Any
-
-    @classmethod
-    def empty(cls, particles: Any) -> MutationDiagnostics:
-        """Return zero diagnostics in the particles' array namespace."""
-        xp = namespace(particles)
-        return cls(0, 0, xp.asarray(0), xp.asarray(0.0))
+    metrics: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def acceptance(self) -> Any:
-        """Fraction of attempted proposals accepted, or zero without attempts."""
-        if self.n_attempted == 0:
-            return 0.0
-        return self.n_accepted / self.n_attempted
+        accepted = asarray(self.n_accepted)
+        xp = namespace(accepted)
+        return accepted / xp.maximum(xp.asarray(self.n_attempted), 1)
 
 
-class MutationDiagnosticsAccumulator:
-    """Stream standardised squared jumps for one mutation block."""
+@pytree_dataclass(
+    data_fields=(
+        "last_particles",
+        "inverse_variance",
+        "sum_squared_jump",
+        "n_steps",
+    )
+)
+@dataclass(frozen=True)
+class ESJDState:
+    last_particles: Array
+    inverse_variance: Array
+    sum_squared_jump: Array
+    n_steps: Array
 
-    def __init__(self, particles: Any = None, log_weights: Any = None):
-        self._initialized = False
-        if particles is not None:
-            self.initialize(particles, log_weights)
 
-    @property
-    def initialized(self) -> bool:
-        """Whether the first mutation participant has fixed the scaling."""
-        return self._initialized
+class ESJDMetric:
+    """Mean squared jump per particle, dimension and transition.
 
-    def initialize(self, particles: Any, log_weights: Any) -> None:
-        """Fix scaling and reference coordinates at the first participant."""
-        if self._initialized:
-            return
+    Uses mutation coordinates and frozen weighted diagonal pre-block scaling.
+    Degenerate variances (<= machine epsilon) are replaced by one.
+    """
+
+    name = "esjd"
+
+    def initialize(
+        self, particles: Array, log_weights: Array, context: StepContext
+    ) -> ESJDState:
         xp = namespace(particles)
-        values = self._matrix(asarray(particles, xp=xp))
-        weights = asarray(log_weights, xp=xp)
-        weights = xp.exp(weights - logsumexp(weights, xp=xp))
+        values = xp.reshape(particles, (particles.shape[0], -1))
+        weights = xp.exp(log_weights - logsumexp(log_weights, xp=xp))
         mean = xp.sum(values * weights[:, None], axis=0)
         variance = xp.sum(xp.square(values - mean) * weights[:, None], axis=0)
-        safe_variance = xp.where(
+        variance = xp.where(
             variance > xp.finfo(values.dtype).eps,
             variance,
             xp.ones_like(variance),
         )
+        return ESJDState(
+            values,
+            1.0 / variance,
+            xp.asarray(0.0, dtype=values.dtype),
+            xp.asarray(0),
+        )
 
-        self.last_particles = values
-        self.inverse_variance = 1.0 / safe_variance
-        self.sum_squared_jump = xp.asarray(0.0, dtype=values.dtype)
-        self.n_steps = 0
-        self.n_accepted = xp.asarray(0)
-        self.n_particles = values.shape[0]
-        self.n_dimensions = values.shape[1]
-        self._initialized = True
-
-    @staticmethod
-    def _matrix(values: Any) -> Any:
-        xp = namespace(values)
-        return xp.reshape(values, (values.shape[0], -1))
-
-    def reset_reference(self, particles: Any) -> None:
-        """Exclude an intervening non-MCMC operation from the next jump."""
-        if not self._initialized:  # pragma: no cover - lifecycle guard
-            raise RuntimeError(
-                "Mutation diagnostics have not been initialized."
-            )
+    def update(
+        self,
+        state: ESJDState,
+        particles: Array,
+        accepted: Array,
+        context: StepContext,
+    ) -> ESJDState:
         xp = namespace(particles)
-        self.last_particles = self._matrix(asarray(particles, xp=xp))
+        values = xp.reshape(particles, state.last_particles.shape)
+        jump = xp.sum(
+            xp.square(values - state.last_particles) * state.inverse_variance
+        )
+        return replace(
+            state,
+            last_particles=values,
+            sum_squared_jump=state.sum_squared_jump + jump,
+            n_steps=state.n_steps + 1,
+        )
 
-    def add_transition(self, particles: Any, accepted: Any) -> None:
-        """Record one continuous-MCMC population transition."""
-        if not self._initialized:  # pragma: no cover - lifecycle guard
-            raise RuntimeError(
-                "Mutation diagnostics have not been initialized."
-            )
+    def result(self, state: ESJDState, context: StepContext) -> Array:
+        xp = namespace(state.sum_squared_jump)
+        n, d = state.last_particles.shape
+        return state.sum_squared_jump / xp.maximum(n * d * state.n_steps, 1)
+
+    def reset_reference(
+        self, state: ESJDState, particles: Array, context: StepContext
+    ) -> ESJDState:
         xp = namespace(particles)
-        current = self._matrix(asarray(particles, xp=xp))
-        self.sum_squared_jump = self.sum_squared_jump + xp.sum(
-            xp.square(current - self.last_particles) * self.inverse_variance
-        )
-        self.n_steps += 1
-        self.n_accepted = self.n_accepted + xp.sum(asarray(accepted, xp=xp))
-        self.last_particles = current
-
-    def finish(self) -> MutationDiagnostics:
-        """Return the completed fixed-block diagnostics."""
-        if not self._initialized:  # pragma: no cover - lifecycle guard
-            raise RuntimeError(
-                "Mutation diagnostics have not been initialized."
-            )
-        n_attempted = self.n_particles * self.n_steps
-        normalizer = n_attempted * self.n_dimensions
-        esjd = (
-            self.sum_squared_jump / normalizer
-            if normalizer
-            else self.sum_squared_jump
-        )
-        return MutationDiagnostics(
-            n_steps=self.n_steps,
-            n_attempted=n_attempted,
-            n_accepted=self.n_accepted,
-            normalised_esjd_per_step=esjd,
+        return replace(
+            state,
+            last_particles=xp.reshape(particles, state.last_particles.shape),
         )
 
 
-def prepare_mutation_diagnostics(
-    particles: Any, log_weights: Any, context: Any
-) -> tuple[MutationDiagnosticsAccumulator, Any, bool]:
-    """Prepare diagnostics and report whether this mutation owns them."""
-    owns_accumulator = (
-        MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY not in context.metadata
-    )
-    accumulator = context.metadata.get(MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY)
-    if accumulator is None:
-        accumulator = MutationDiagnosticsAccumulator(particles, log_weights)
-        context = context.with_metadata(
-            **{MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY: accumulator}
+def validate_metrics(
+    metrics: Sequence[MutationMetric],
+) -> tuple[MutationMetric, ...]:
+    configured = tuple(metrics)
+    names = [metric.name for metric in configured]
+    if any(not isinstance(name, str) or not name for name in names):
+        raise ValueError("Mutation metric names must be non-empty strings.")
+    if len(set(names)) != len(names):
+        raise ValueError(
+            "Mutation metric names must be unique (duplicate name)."
         )
-    elif not accumulator.initialized:
-        accumulator.initialize(particles, log_weights)
-    elif context.metadata.get(MUTATION_DIAGNOSTICS_RESET_REFERENCE_KEY, False):
-        accumulator.reset_reference(particles)
-    if MUTATION_DIAGNOSTICS_RESET_REFERENCE_KEY in context.metadata:
-        context = context.without_metadata(
-            MUTATION_DIAGNOSTICS_RESET_REFERENCE_KEY
-        )
-    return accumulator, context, owns_accumulator
+    return configured
 
 
-def begin_mutation_diagnostics(context: Any) -> tuple[Any, bool]:
-    """Begin an outer block without choosing its mutation coordinate space."""
-    owns_accumulator = (
-        MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY not in context.metadata
-    )
-    if owns_accumulator:
-        context = context.with_metadata(
-            **{
-                MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY: (
-                    MutationDiagnosticsAccumulator()
+@pytree_dataclass(
+    data_fields=("states", "n_steps", "n_attempted", "n_accepted")
+)
+@dataclass(frozen=True)
+class MutationStepState:
+    """Immutable pytree state for continuing a mutation block.
+
+    Normally obtained from ``apply_with_mutation_state`` by passing ``None``
+    for the initial state, then passed unchanged into the next call. ``states``
+    holds individual metric states in configured metric order; the counters
+    accumulate across the complete block. This is runtime state, not finalized
+    diagnostics. Its pytree structure, leaf shapes and dtypes must remain fixed
+    inside compiled loops.
+    """
+
+    states: tuple[Any, ...]
+    n_steps: Any
+    n_attempted: Any
+    n_accepted: Any
+
+
+def prepare_metrics(
+    metrics: Sequence[MutationMetric],
+    metric_state: MutationStepState | None,
+    particles: Array,
+    log_weights: Array,
+    context: StepContext,
+) -> MutationStepState:
+    """Initialize once, or refresh references at a participant boundary."""
+    if metric_state is not None:
+        # Each participant may have crossed a symmetry or coordinate operation.
+        # Reset only references; the original scaling and totals remain frozen.
+        return replace(
+            metric_state,
+            states=tuple(
+                metric.reset_reference(state, particles, context)
+                if hasattr(metric, "reset_reference")
+                else state
+                for metric, state in zip(
+                    metrics, metric_state.states, strict=True
                 )
-            }
+            ),
         )
-    return context, owns_accumulator
-
-
-def empty_mutation_diagnostics(
-    particles: Any, log_weights: Any, context: Any
-) -> tuple[MutationDiagnostics | None, Any]:
-    """Return standalone empty diagnostics or join an enclosing block."""
-    if MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY not in context.metadata:
-        return MutationDiagnostics.empty(particles), context
-    accumulator, context, owns_accumulator = prepare_mutation_diagnostics(
-        particles, log_weights, context
-    )
-    return finish_mutation_diagnostics(
-        accumulator,
-        context,
-        owns_accumulator=owns_accumulator,
+    xp = namespace(particles)
+    return MutationStepState(
+        tuple(
+            metric.initialize(particles, log_weights, context)
+            for metric in metrics
+        ),
+        xp.asarray(0),
+        xp.asarray(0),
+        xp.asarray(0),
     )
 
 
-def finish_mutation_diagnostics(
-    accumulator: MutationDiagnosticsAccumulator,
-    context: Any,
-    *,
-    owns_accumulator: bool,
-) -> tuple[MutationDiagnostics | None, Any]:
-    """Finalise and remove diagnostics only for the owning mutation block."""
-    if not owns_accumulator:
-        return None, context
-    diagnostics = accumulator.finish()
-    context = context.without_metadata(
-        MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY,
-        MUTATION_DIAGNOSTICS_RESET_REFERENCE_KEY,
+def update_metrics(
+    metrics: Sequence[MutationMetric],
+    metric_state: MutationStepState,
+    particles: Array,
+    accepted: Array,
+    context: StepContext,
+) -> MutationStepState:
+    """Record one population transition without changing any input state."""
+    xp = namespace(particles)
+    return replace(
+        metric_state,
+        states=tuple(
+            metric.update(state, particles, accepted, context)
+            for metric, state in zip(metrics, metric_state.states, strict=True)
+        ),
+        n_steps=metric_state.n_steps + 1,
+        n_attempted=metric_state.n_attempted + particles.shape[0],
+        n_accepted=metric_state.n_accepted + xp.sum(asarray(accepted, xp=xp)),
     )
-    return diagnostics, context
 
 
-def request_mutation_diagnostics_reference_reset(context: Any) -> Any:
-    """Exclude an intervening non-MCMC operation from the next transition."""
-    if MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY not in context.metadata:
-        return context
-    return context.with_metadata(
-        **{MUTATION_DIAGNOSTICS_RESET_REFERENCE_KEY: True}
+def finish_metrics(
+    metrics: Sequence[MutationMetric],
+    metric_state: MutationStepState | None,
+    context: StepContext,
+) -> MutationDiagnostics | None:
+    """Finalize only at the outermost block boundary."""
+    if metric_state is None:
+        return None
+    return MutationDiagnostics(
+        metric_state.n_steps,
+        metric_state.n_attempted,
+        metric_state.n_accepted,
+        {
+            metric.name: metric.result(state, context)
+            for metric, state in zip(metrics, metric_state.states, strict=True)
+        },
     )
+
+
+def with_diagnostics(output, diagnostics):
+    if isinstance(output, dict):
+        return {**output, "diagnostics": diagnostics}
+    return replace(output, diagnostics=diagnostics)
 
 
 __all__ = [
-    "MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY",
-    "MUTATION_DIAGNOSTICS_RESET_REFERENCE_KEY",
+    "MutationMetric",
     "MutationDiagnostics",
-    "MutationDiagnosticsAccumulator",
-    "begin_mutation_diagnostics",
-    "empty_mutation_diagnostics",
-    "finish_mutation_diagnostics",
-    "prepare_mutation_diagnostics",
-    "request_mutation_diagnostics_reference_reset",
+    "MutationStepState",
+    "ESJDMetric",
+    "ESJDState",
 ]

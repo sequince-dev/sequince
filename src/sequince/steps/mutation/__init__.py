@@ -2,7 +2,18 @@
 
 from ..base import FixedLengthMutation
 from ..mutation_diagnostics import (
+    ESJDMetric,
     MutationDiagnostics,
+    MutationMetric,
+    MutationStepState,
+)
+from .adaptive import (
+    AdaptGaussianProposal,
+    AdaptiveMutationStep,
+    AdaptMutationSteps,
+    ESJDPolicy,
+    FixedMutationStepPolicy,
+    MutationStepPolicy,
 )
 from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
 from .blackjax import BlackJAXAlgorithmFactory, BlackJAXMutation
@@ -42,8 +53,12 @@ from .metropolis import (
 )
 from .minipcn import MiniPCNMutation
 from .rejuvenation import GenerativeProposal, ProposalRejuvenation
+from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
 __all__ = [
+    "AdaptGaussianProposal",
+    "AdaptiveMutationStep",
+    "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
     "BlockedMetropolisHastingsMutation",
     "BlackJAXAlgorithmFactory",
@@ -55,7 +70,9 @@ __all__ = [
     "DifferentialEvolutionMutation",
     "EMCEE_MOVES",
     "EmceeMutation",
+    "ESJDPolicy",
     "FixedLengthMutation",
+    "FixedMutationStepPolicy",
     "GaussianRandomWalk",
     "GenerativeProposal",
     "MUTATION_KERNELS",
@@ -66,8 +83,14 @@ __all__ = [
     "MetropolisBlock",
     "MixtureMutationKernel",
     "MutationKernel",
+    "RepeatedMutationStep",
+    "RepeatedMutationStepOutput",
     "MutationDiagnostics",
+    "MutationStepState",
+    "MutationMetric",
+    "ESJDMetric",
     "MutationStep",
+    "MutationStepPolicy",
     "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",
     "ProposalRejuvenation",

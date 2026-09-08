@@ -3,16 +3,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
-from .base import FixedLengthMutation, SMCStep, StepContext, validate_n_steps
-from .mutation_diagnostics import (
-    MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY,
-    MutationDiagnostics,
-    begin_mutation_diagnostics,
-    finish_mutation_diagnostics,
-    request_mutation_diagnostics_reference_reset,
-)
+from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -28,32 +21,6 @@ class ConditionalStepOutput:
 
     executed: bool
     child_output: Any = None
-
-
-class RepeatStepOutput(tuple):
-    """Tuple-compatible round outputs plus authoritative block diagnostics."""
-
-    diagnostics: MutationDiagnostics | None
-
-    def __new__(
-        cls,
-        outputs: Sequence[Any],
-        diagnostics: MutationDiagnostics | None,
-    ) -> RepeatStepOutput:
-        instance = super().__new__(cls, outputs)
-        instance.diagnostics = diagnostics
-        return instance
-
-    @property
-    def round_outputs(self) -> tuple[Any, ...]:
-        """The individual child outputs, retained for tuple compatibility."""
-        return tuple(self)
-
-    def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}(round_outputs={tuple(self)!r}, "
-            f"diagnostics={self.diagnostics!r})"
-        )
 
 
 class ContinueWhile(SMCStep):
@@ -224,37 +191,14 @@ class RepeatStep(SMCStep):
 
         return state, context, tuple(outputs)
 
-    def apply_with_n_steps(self, state, context, rng, *, n_steps: int):
-        """Distribute a total budget while executing every fixed repetition."""
-        n_steps = validate_n_steps(n_steps)
-        if not isinstance(self.step, FixedLengthMutation):
-            raise TypeError(
-                "RepeatStep's child does not support fixed-length mutation."
-            )
-        context, owns_accumulator = begin_mutation_diagnostics(context)
-        quotient, remainder = divmod(n_steps, self.n)
-        outputs = []
-        for round_index in range(self.n):
-            round_steps = quotient + (round_index < remainder)
-            state, context, output = self.step.apply_with_n_steps(
-                state, context, rng, n_steps=round_steps
-            )
-            outputs.append(output)
-        accumulator = context.metadata.get(
-            MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY
-        )
-        diagnostics = None
-        if accumulator is not None and accumulator.initialized:
-            diagnostics, context = finish_mutation_diagnostics(
-                accumulator,
-                context,
-                owns_accumulator=owns_accumulator,
-            )
-        elif owns_accumulator:
-            context = context.without_metadata(
-                MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY
-            )
-        return state, context, RepeatStepOutput(outputs, diagnostics)
+    def state_dict(self) -> dict[str, Any]:
+        return {"step": self.step.state_dict()}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        nested_state = state.get("step", {})
+        if not isinstance(nested_state, Mapping):
+            raise TypeError("RepeatStep state 'step' must be a mapping.")
+        self.step.load_state_dict(nested_state)
 
 
 class SequentialStep(SMCStep):
@@ -279,31 +223,26 @@ class SequentialStep(SMCStep):
 
         return state, context, tuple(outputs)
 
-    def apply_with_n_steps(self, state, context, rng, *, n_steps: int):
-        """Forward a budget and execute the complete fixed sequence."""
-        n_steps = validate_n_steps(n_steps)
-        capable = [
-            index
-            for index, step in enumerate(self.steps)
-            if isinstance(step, FixedLengthMutation)
-        ]
-        if len(capable) != 1:
-            raise TypeError(
-                "SequentialStep fixed-length execution requires exactly one "
-                "fixed-length mutation child."
+    def state_dict(self) -> dict[str, Any]:
+        return {"steps": [step.state_dict() for step in self.steps]}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        if "steps" not in state:
+            # Checkpoints created before nested SequentialStep state was
+            # supported contain the inherited empty state.
+            return
+        nested_states = state.get("steps", [])
+        if not isinstance(nested_states, Sequence) or isinstance(
+            nested_states, (str, bytes)
+        ):
+            raise TypeError("SequentialStep state 'steps' must be a sequence.")
+        if len(nested_states) != len(self.steps):
+            raise ValueError(
+                "SequentialStep checkpoint state does not match its children."
             )
-        mutation_index = capable[0]
-        outputs = []
-        for index, step in enumerate(self.steps):
-            if index == mutation_index:
-                fixed_step = cast(FixedLengthMutation, step)
-                output_state = fixed_step.apply_with_n_steps(
-                    state, context, rng, n_steps=n_steps
+        for step, nested_state in zip(self.steps, nested_states, strict=True):
+            if not isinstance(nested_state, Mapping):
+                raise TypeError(
+                    "SequentialStep child state must be a mapping."
                 )
-            else:
-                output_state = step(state, context, rng)
-            state, context, output = output_state
-            outputs.append(output)
-            if index != mutation_index:
-                context = request_mutation_diagnostics_reference_reset(context)
-        return state, context, tuple(outputs)
+            step.load_state_dict(nested_state)

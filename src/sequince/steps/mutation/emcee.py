@@ -18,9 +18,8 @@ from ...transforms import (
 from ..base import validate_n_steps
 from ..context import StepContext
 from ..mutation_diagnostics import (
-    empty_mutation_diagnostics,
-    finish_mutation_diagnostics,
-    prepare_mutation_diagnostics,
+    MutationMetric,
+    MutationStepState,
 )
 from .base import (
     MutationStep,
@@ -207,6 +206,7 @@ class EmceeMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
+        metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
         **kwargs,
     ):
         import emcee
@@ -216,6 +216,7 @@ class EmceeMutation(MutationStep):
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
+            metrics=metrics,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -223,6 +224,15 @@ class EmceeMutation(MutationStep):
         self._move = resolve_emcee_moves(move) or emcee.moves.StretchMove()
         self._run_kwargs: dict[str, Any] = dict(run_kwargs or {})
         self._run_kwargs.setdefault("progress", False)
+        if (
+            self._run_kwargs.get("thin_by", 1) != 1
+            or self._run_kwargs.get("thin") not in (None, 1)
+            or not self._run_kwargs.get("store", True)
+        ):
+            raise ValueError(
+                "Emcee mutation bookkeeping requires unthinned transitions "
+                "(thin_by=1, thin=None or 1) and store=True."
+            )
         self._kwargs: dict[str, Any] = kwargs
 
     def apply(
@@ -235,19 +245,28 @@ class EmceeMutation(MutationStep):
             state, context, rng, n_steps=self._n_steps
         )
 
-    def apply_with_n_steps(
+    def apply_with_mutation_state(
         self,
         state: ParticleState,
         context: StepContext,
         rng: "RandomGenerator",
         *,
         n_steps: int,
-    ) -> tuple[ParticleState, StepContext, dict[str, object]]:
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState,
+        StepContext,
+        dict[str, object],
+        MutationStepState | None,
+    ]:
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
-            diagnostics, context = empty_mutation_diagnostics(
-                state.particles, state.log_weights, context
+            mutation_state = self._initialize_metrics(
+                mutation_state,
+                state.particles,
+                state.log_weights,
+                context,
             )
             chain = (
                 xp.empty(
@@ -263,8 +282,9 @@ class EmceeMutation(MutationStep):
                     "acceptance": 0.0,
                     "steps": 0,
                     "chain": chain,
-                    "diagnostics": diagnostics,
+                    "diagnostics": None,
                 },
+                mutation_state,
             )
         import emcee
 
@@ -296,8 +316,11 @@ class EmceeMutation(MutationStep):
             squeeze_last = False
 
         n_walkers, ndim = initial_positions.shape
-        movement, context, owns_accumulator = prepare_mutation_diagnostics(
-            initial_positions, state.log_weights, context
+        mutation_state = self._initialize_metrics(
+            mutation_state,
+            asarray(initial_positions, xp=xp, like=latent_particles),
+            state.log_weights,
+            context,
         )
         logger.debug(
             "EmceeMutation starting: %d walkers, %d dimensions, %d steps.",
@@ -389,11 +412,21 @@ class EmceeMutation(MutationStep):
         )
         sampler.random_state = np.random.RandomState(emcee_seed).get_state()
 
-        state_result = sampler.run_mcmc(
-            initial_positions,
-            n_steps,
-            **self._run_kwargs,
-        )
+        previous_accepted = np.zeros(n_walkers)
+        for state_result in sampler.sample(
+            initial_positions, iterations=n_steps, **self._run_kwargs
+        ):
+            cumulative_accepted = sampler.backend.accepted
+            accepted = cumulative_accepted > previous_accepted
+            mutation_state = self._update_metrics(
+                mutation_state,
+                asarray(
+                    state_result.coords.copy(), xp=xp, like=latent_particles
+                ),
+                asarray(accepted, xp=xp, like=latent_particles),
+                context,
+            )
+            previous_accepted = cumulative_accepted.copy()
         new_positions = state_result.coords
 
         if squeeze_last:
@@ -419,19 +452,10 @@ class EmceeMutation(MutationStep):
         context = context.add_evaluation_counts(counts)
 
         acceptance = float(np.mean(sampler.acceptance_fraction))
-        diagnostic_chain = sampler.get_chain(flat=False, discard=0, thin=1)
-        previous = initial_positions
-        for positions in diagnostic_chain:
-            accepted_step = np.any(positions != previous, axis=1)
-            movement.add_transition(positions, accepted_step)
-            previous = positions
-        diagnostics, context = finish_mutation_diagnostics(
-            movement, context, owns_accumulator=owns_accumulator
-        )
         stored_chain = None
         if self._store_chains:
             stored_chain = self._inverse_chain(
-                diagnostic_chain,
+                sampler.get_chain(flat=False, discard=0, thin=1),
                 transform,
                 context,
                 auxiliary=transform_auxiliary,
@@ -447,7 +471,7 @@ class EmceeMutation(MutationStep):
             "acceptance": acceptance,
             "steps": n_steps,
             "chain": stored_chain,
-            "diagnostics": diagnostics,
+            "diagnostics": None,
         }
         return (
             state.replace_particles(
@@ -456,4 +480,5 @@ class EmceeMutation(MutationStep):
             ),
             context,
             output,
+            mutation_state,
         )

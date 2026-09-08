@@ -10,9 +10,9 @@ from ...transforms import ParticleTransform
 from ..base import SMCStep
 from ..context import StepContext
 from ..mutation_diagnostics import (
-    MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY,
-    begin_mutation_diagnostics,
-    finish_mutation_diagnostics,
+    MutationMetric,
+    finish_metrics,
+    validate_metrics,
 )
 from .base import TransformRefit
 from .kernels import MutationKernel
@@ -88,8 +88,10 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
+        metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
     ) -> None:
         super().__init__()
+        self.metrics = validate_metrics(metrics)
         self._blocks = tuple(blocks)
         if not self._blocks:
             raise ValueError(
@@ -106,6 +108,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
                 transform=transform,
                 transform_refit=transform_refit,
                 store_chains=store_chains,
+                metrics=self.metrics,
             )
             for block in self._blocks
         )
@@ -121,10 +124,18 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         acceptance: dict[str, float] = {}
         acceptance_by_step: dict[str, list[float]] = {}
         chains: dict[str, Array] = {}
-        context, owns_accumulator = begin_mutation_diagnostics(context)
+        mutation_state = None
 
         for block, step in zip(self._blocks, self._steps, strict=True):
-            updated, context, block_output = step(updated, context, rng)
+            updated, context, block_output, mutation_state = (
+                step.apply_with_mutation_state(
+                    updated,
+                    context,
+                    rng,
+                    n_steps=block.n_steps,
+                    mutation_state=mutation_state,
+                )
+            )
             acceptance[block.name] = float(block_output["acceptance"])
             acceptance_by_step[block.name] = list(
                 block_output["acceptance_by_step"]
@@ -134,12 +145,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
 
         steps = {block.name: block.n_steps for block in self._blocks}
 
-        accumulator = context.metadata[MUTATION_DIAGNOSTICS_ACCUMULATOR_KEY]
-        diagnostics, context = finish_mutation_diagnostics(
-            accumulator,
-            context,
-            owns_accumulator=owns_accumulator,
-        )
+        diagnostics = finish_metrics(self.metrics, mutation_state, context)
         output = {
             "acceptance": acceptance,
             "acceptance_by_step": acceptance_by_step,
