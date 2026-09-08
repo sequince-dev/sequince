@@ -6,7 +6,9 @@ composable steps. Each step receives the current particle state and runtime
 context, then returns an updated state, context, and optional output. The same
 mutation implementations can also be used through the standalone MCMC runner.
 At the end of an iteration, callbacks can inspect the accumulated result and
-update the context.
+update the context. This proceeds until a user-specified termination
+criterion is satisfied, which returns a result object for further processing
+and results visualisation.
 
 Start with the workflow guides when configuring a run and interpreting its
 output. The remaining sections explain sampling choices, the objects passed

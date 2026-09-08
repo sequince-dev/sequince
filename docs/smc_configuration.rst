@@ -43,7 +43,8 @@ data and evolving metadata.
 Building a pipeline manually
 ----------------------------
 
-For full control, instantiate the runner with steps in execution order:
+For full control, instantiate the runner with steps in execution order. For example,
+to reproduce the pre-built SMC defined above:
 
 .. code-block:: python
 
@@ -57,7 +58,7 @@ For full control, instantiate the runner with steps in execution order:
 
     smc = SequentialMonteCarlo(
         steps=[
-            AdaptiveTemperedWeighting(posterior, target_ess_ratio=0.8),
+            AdaptiveTemperedWeighting(posterior),
             SystematicResampling(always_resample=True),
             EmceeMutation(posterior, n_steps=10),
         ],
