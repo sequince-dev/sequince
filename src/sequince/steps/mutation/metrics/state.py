@@ -31,7 +31,8 @@ class MutationMetricsOutput:
     def acceptance(self) -> Any:
         accepted = asarray(self.n_accepted)
         xp = namespace(accepted)
-        return accepted / xp.maximum(xp.asarray(self.n_attempted), 1)
+        attempted = asarray(self.n_attempted, like=accepted)
+        return accepted / xp.maximum(attempted, xp.ones_like(attempted))
 
 
 @pytree_dataclass(

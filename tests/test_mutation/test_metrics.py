@@ -9,10 +9,34 @@ from sequince.steps.control import SequentialStep
 from sequince.steps.mutation import (
     CallableMutationKernel,
     MetropolisHastingsMutation,
+    MutationMetricsOutput,
     MutationStepState,
     RepeatedMutationStep,
     RepeatedMutationStepOutput,
 )
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
+@pytest.mark.parametrize(
+    "attempted, accepted, expected", [(0, 0.0, 0.0), (4, 1.5, 0.375)]
+)
+def test_acceptance_preserves_backend(
+    backend, backend_factory, attempted, accepted, expected
+):
+    from sequince.array_api import asarray, get_device, namespace
+
+    case = backend_factory(backend)
+    metrics = MutationMetricsOutput(
+        n_steps=1,
+        n_attempted=attempted,
+        n_accepted=asarray(accepted, like=case.particles),
+    )
+
+    acceptance = metrics.acceptance
+
+    assert namespace(acceptance) is case.xp
+    assert get_device(acceptance) == get_device(case.particles)
+    assert float(acceptance) == pytest.approx(expected)
 
 
 def _flat_log_prob(particles, context):
