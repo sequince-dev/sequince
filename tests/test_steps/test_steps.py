@@ -17,7 +17,7 @@ from sequince.stats import (
     ess_ratio_from_log_weights,
 )
 from sequince.steps import (
-    AdaptGaussianProposal,
+    AdaptiveGaussianProposal,
     ContinueWhile,
     MutateIfResampled,
     WasteFreeResampleMove,
@@ -706,7 +706,7 @@ def test_adapt_gaussian_proposal_updates_scale(
     context_factory,
     rng,
 ) -> None:
-    from sequince.steps import MutationDiagnostics
+    from sequince.steps import MutationMetricsOutput
 
     class Mutation(SMCStep):
         def apply(self, state, context, rng):
@@ -714,13 +714,13 @@ def test_adapt_gaussian_proposal_updates_scale(
             return (
                 state,
                 context,
-                {"diagnostics": MutationDiagnostics(1, 10, 6)},
+                {"metrics": MutationMetricsOutput(1, 10, 6)},
             )
 
     state = particle_state
     context = context_factory(metadata={"waste_free_acceptance": 0.0})
 
-    adapter = AdaptGaussianProposal(
+    adapter = AdaptiveGaussianProposal(
         Mutation(),
         initial_scale=0.5,
         target_acceptance=0.3,
@@ -942,10 +942,10 @@ def test_step_every_n_iterations_applies_step_conditionally(
 def test_proposal_adaptation_bounds_and_disabled(
     accepted, target, expected, particle_state, context_factory, rng
 ):
-    from sequince.steps import MutationDiagnostics
+    from sequince.steps import MutationMetricsOutput
 
     output = {
-        "diagnostics": MutationDiagnostics(1, 10, accepted),
+        "metrics": MutationMetricsOutput(1, 10, accepted),
         "extra": object(),
     }
 
@@ -953,7 +953,7 @@ def test_proposal_adaptation_bounds_and_disabled(
         def apply(self, state, context, rng):
             return state, context, output
 
-    wrapper = AdaptGaussianProposal(
+    wrapper = AdaptiveGaussianProposal(
         Mutation(),
         initial_scale=0.5,
         target_acceptance=target,
@@ -966,14 +966,53 @@ def test_proposal_adaptation_bounds_and_disabled(
     assert context.metadata["proposal_scale"] == pytest.approx(expected)
 
 
-def test_proposal_adaptation_requires_completed_diagnostics(
+def test_proposal_adaptation_requires_completed_metrics(
     particle_state, context_factory, rng
 ):
     class Mutation(SMCStep):
         def apply(self, state, context, rng):
-            return state, context, {"diagnostics": None}
+            return state, context, {"metrics": None}
 
-    with pytest.raises(TypeError, match="complete MutationDiagnostics"):
-        AdaptGaussianProposal(Mutation())(
+    with pytest.raises(TypeError, match="complete MutationMetricsOutput"):
+        AdaptiveGaussianProposal(Mutation())(
             particle_state, context_factory(), rng
         )
+
+
+def test_waste_free_diagnostics_drive_proposal_adaptation(
+    context_factory, rng
+):
+    from sequince.steps.mutation import CallableMutationKernel
+
+    scales = []
+
+    def factory(parents, context):
+        scales.append(context.metadata["proposal_scale"])
+        return CallableMutationKernel(lambda p, r: p + 1, symmetric=True)
+
+    # Every proposal has acceptance probability 1/2, regardless of parent.
+    move = WasteFreeResampleMove(
+        lambda p, c: -np.log(2) * p[:, 0],
+        factory,
+        resample_ancestors=False,
+        proposals_per_particle=3,
+    )
+    adapter = AdaptiveGaussianProposal(
+        move,
+        initial_scale=0.7,
+        target_acceptance=0.3,
+        adaptation_rate=0.2,
+    )
+    state = ParticleState(np.zeros((3, 1)))
+    state, context, output = adapter(state, context_factory(), rng)
+    metrics = output["metrics"]
+    assert metrics.n_steps == 3
+    assert metrics.n_attempted == 9
+    assert metrics.n_accepted == pytest.approx(4.5)
+    assert metrics.acceptance == pytest.approx(0.5)
+    assert output["acceptance"] == pytest.approx(0.5)
+    assert output["acceptance_by_round"] == pytest.approx([0.5] * 3)
+    expected_scale = 0.7 * np.exp(0.2 * (0.5 - 0.3))
+    assert context.metadata["proposal_scale"] == pytest.approx(expected_scale)
+    adapter(state, context, rng)
+    assert scales == pytest.approx([0.7, expected_scale])

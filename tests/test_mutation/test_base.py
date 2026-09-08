@@ -242,7 +242,7 @@ def test_sequential_step_runs_multiple_mutations_normally(
     _, _, outputs = sequence(particle_state, context_factory(), rng)
     assert first.lengths == second.lengths == [1]
     assert len(outputs) == 2
-    assert all(output["diagnostics"].n_steps == 1 for output in outputs)
+    assert all(output["metrics"].n_steps == 1 for output in outputs)
 
 
 def test_once_refit_reuses_transform_across_contexts(

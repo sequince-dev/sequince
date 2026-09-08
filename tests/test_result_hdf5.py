@@ -13,6 +13,7 @@ from sequince.state import ParticleState, PersistentParticleState
 from sequince.steps.context import StepContext
 from sequince.steps.control import ConditionalStepOutput
 from sequince.steps.mutation.blackjax import BlackJAXOutput
+from sequince.steps.mutation.metrics import MutationMetricsOutput
 from sequince.steps.mutation.minipcn import MiniPCNOutput
 from sequince.steps.resampling import ResamplingOutput
 from sequince.steps.transformations import SMCTransformation
@@ -150,6 +151,9 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
                 steps=3,
                 chain=None,
                 num_integration_steps=np.array([[2, 3]]),
+                metrics=MutationMetricsOutput(
+                    3, 6, 4, values={"custom_metric": 0.5}
+                ),
             ),
             {"nested": [np.array([1, 2]), ("x", None)]},
         ),
@@ -189,6 +193,12 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
     assert isinstance(actual.outputs[0][1], dict)
     assert isinstance(actual.outputs[0][2], dict)
     assert actual.outputs[0][2]["algorithm"] == "hmc"
+    assert actual.outputs[0][2]["metrics"] == {
+        "n_steps": 3,
+        "n_attempted": 6,
+        "n_accepted": 4,
+        "values": {"custom_metric": 0.5},
+    }
     np.testing.assert_array_equal(
         actual.outputs[0][3]["nested"][0], np.array([1, 2])
     )

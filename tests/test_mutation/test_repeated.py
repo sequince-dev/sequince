@@ -9,7 +9,6 @@ from sequince.steps.base import SMCStep
 from sequince.steps.control import SequentialStep
 from sequince.steps.mutation import (
     CallableMutationKernel,
-    ESJDMetric,
     MetropolisHastingsMutation,
     MutateIfResampled,
     RepeatedMutationStep,
@@ -21,7 +20,6 @@ def mutation(n_steps=2):
         lambda p, c: namespace(p).zeros(p.shape[0]),
         CallableMutationKernel(lambda p, r: p + 1, symmetric=True),
         n_steps=n_steps,
-        metrics=[ESJDMetric()],
     )
 
 
@@ -60,7 +58,7 @@ def test_default_budget_and_override_are_independent(context_factory, rng):
     assert [output["steps"] for output in default.round_outputs] == [2, 2, 2]
     assert [output["steps"] for output in override.round_outputs] == [2, 1, 1]
     assert default.after_round_outputs == (None, None, None)
-    assert default.diagnostics.n_steps == replay.diagnostics.n_steps == 6
+    assert default.metrics.n_steps == replay.metrics.n_steps == 6
     np.testing.assert_array_equal(
         default_state.particles, replay_state.particles
     )
@@ -95,9 +93,8 @@ def test_after_round_runs_after_every_round_with_one_conditional_decision(
         2,
         3,
     ]
-    assert output.diagnostics.n_steps == n_steps
-    assert output.diagnostics.n_attempted == 2 * n_steps
-    assert output.diagnostics.metrics["esjd"] == (1 if n_steps else 0)
+    assert output.metrics.n_steps == n_steps
+    assert output.metrics.n_attempted == 2 * n_steps
     np.testing.assert_array_equal(
         updated.particles, state.particles + n_steps + 300
     )
@@ -162,7 +159,7 @@ def test_checkpoint_restores_child_and_after_round(context_factory, rng):
     assert restored_child.calls == restored_after.calls == 2
     _, _, output = restored(state, context_factory(), rng)
     assert restored_child.calls == restored_after.calls == 4
-    assert output.diagnostics.n_steps == 2
+    assert output.metrics.n_steps == 2
 
 
 def test_blackjax_block_functional_transform_and_after_round():
@@ -194,7 +191,6 @@ def test_blackjax_block_functional_transform_and_after_round():
             algorithm="random-walk",
             algorithm_kwargs={"sigma": 0.1},
             transform=ShiftTransform(),
-            metrics=[ESJDMetric()],
             store_chains=True,
         ),
         n_rounds=2,
@@ -208,22 +204,16 @@ def test_blackjax_block_functional_transform_and_after_round():
     _, _, _, output = jax.jit(block.apply_functional)(
         state, context, jax.random.key(42)
     )
-    total = 0.0
-    previous = np.asarray(state.particles)
-    for child in output.round_outputs:
-        chain = np.asarray(child.chain)
-        total += np.sum(
-            np.diff(np.concatenate([previous[None], chain]), axis=0) ** 2
-        )
-        previous = 20 - chain[-1]
-    assert output.diagnostics.metrics["esjd"] == pytest.approx(total / 8)
+    assert output.metrics.n_steps == 4
+    assert output.metrics.n_attempted == 8
+    assert all(child.chain.shape[0] == 2 for child in output.round_outputs)
 
 
 @pytest.mark.parametrize("n_steps", [0, 5])
 def test_proposal_scale_adapts_after_complete_block(
     n_steps, context_factory, rng
 ):
-    from sequince.steps import AdaptGaussianProposal
+    from sequince.steps import AdaptiveGaussianProposal
 
     class RecordScale(SMCStep):
         def __init__(self):
@@ -235,7 +225,7 @@ def test_proposal_scale_adapts_after_complete_block(
 
     after = RecordScale()
     block = RepeatedMutationStep(mutation(), n_rounds=3, after_round=after)
-    wrapper = AdaptGaussianProposal(
+    wrapper = AdaptiveGaussianProposal(
         block, initial_scale=0.5, adaptation_rate=0.2
     )
     state = ParticleState(np.array([[-1.0], [1.0]]))
@@ -244,20 +234,20 @@ def test_proposal_scale_adapts_after_complete_block(
         state, original_context, rng, n_steps=n_steps
     )
     assert after.scales == [0.5] * 3
-    assert output.diagnostics.n_steps == n_steps
+    assert output.metrics.n_steps == n_steps
     assert "proposal_scale" not in original_context.metadata
     expected = 0.5 * np.exp(0.2 * 0.7) if n_steps else 0.5
     assert context.metadata["proposal_scale"] == pytest.approx(expected)
     _, _, next_output = wrapper(updated, context, rng)
     assert after.scales[3:] == pytest.approx([expected] * 3)
-    assert next_output.diagnostics.n_steps == block.n_steps
+    assert next_output.metrics.n_steps == block.n_steps
 
 
 def test_proposal_adaptation_preserves_nested_checkpoint(context_factory, rng):
-    from sequince.steps import AdaptGaussianProposal
+    from sequince.steps import AdaptiveGaussianProposal
 
     after = ShiftAfterRound()
-    wrapper = AdaptGaussianProposal(
+    wrapper = AdaptiveGaussianProposal(
         RepeatedMutationStep(mutation(), n_rounds=2, after_round=after)
     )
     state = ParticleState(np.array([[-1.0], [1.0]]))

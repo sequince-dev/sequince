@@ -8,7 +8,6 @@ from sequince.steps.base import SMCStep
 from sequince.steps.control import SequentialStep
 from sequince.steps.mutation import (
     CallableMutationKernel,
-    ESJDMetric,
     MetropolisHastingsMutation,
     MutationStepState,
     RepeatedMutationStep,
@@ -34,7 +33,7 @@ class NegateStep(SMCStep):
         return state.replace_particles(-state.particles), context, None
 
 
-def test_deterministic_esjd_has_expected_counts_and_normalisation(
+def test_deterministic_mutation_has_expected_counts(
     context_factory, rng
 ) -> None:
     state = ParticleState(np.array([[-1.0, 0.0], [1.0, 0.0]]))
@@ -42,25 +41,22 @@ def test_deterministic_esjd_has_expected_counts_and_normalisation(
         _flat_log_prob,
         _add(np.array([1.0, 2.0])),
         n_steps=2,
-        metrics=[ESJDMetric()],
+        metrics=[CountMetric()],
     )
 
     updated, _, output = mutation(state, context_factory(), rng)
-    diagnostics = output["diagnostics"]
+    metrics = output["metrics"]
 
-    assert diagnostics.n_steps == 2
-    assert diagnostics.n_attempted == 4
-    assert diagnostics.n_accepted == 4
-    assert diagnostics.acceptance == pytest.approx(1.0)
+    assert metrics.n_steps == 2
+    assert metrics.n_attempted == 4
+    assert metrics.n_accepted == 4
+    assert metrics.acceptance == pytest.approx(1.0)
     # Initial variances are (1, 0); the zero-variance coordinate uses scale 1.
     # Each particle moves (1, 2), hence (1 + 4) / two dimensions = 2.5.
-    assert diagnostics.metrics["esjd"] == pytest.approx(2.5)
     np.testing.assert_allclose(updated.particles, state.particles + [2.0, 4.0])
 
 
-def test_rejected_proposals_count_as_attempts_and_zero_esjd(
-    context_factory, rng
-) -> None:
+def test_rejected_proposals_count_as_attempts(context_factory, rng) -> None:
     state = ParticleState(np.zeros((3, 1)))
 
     def target(particles, context):
@@ -68,16 +64,15 @@ def test_rejected_proposals_count_as_attempts_and_zero_esjd(
         return np.where(particles[:, 0] == 0.0, 0.0, -np.inf)
 
     mutation = MetropolisHastingsMutation(
-        target, _add(1.0), n_steps=2, metrics=[ESJDMetric()]
+        target, _add(1.0), n_steps=2, metrics=[CountMetric()]
     )
     updated, _, output = mutation(state, context_factory(), rng)
-    diagnostics = output["diagnostics"]
+    metrics = output["metrics"]
 
-    assert diagnostics.n_steps == 2
-    assert diagnostics.n_attempted == 6
-    assert diagnostics.n_accepted == 0
-    assert diagnostics.acceptance == 0.0
-    assert diagnostics.metrics["esjd"] == 0.0
+    assert metrics.n_steps == 2
+    assert metrics.n_attempted == 6
+    assert metrics.n_accepted == 0
+    assert metrics.acceptance == 0.0
     np.testing.assert_array_equal(updated.particles, state.particles)
 
 
@@ -91,74 +86,38 @@ def test_partial_acceptance_is_counted_per_particle(
         return np.where(particles[:, 0] <= 1.0, 0.0, -np.inf)
 
     _, _, output = MetropolisHastingsMutation(
-        target, _add(1.0), metrics=[ESJDMetric()]
+        target, _add(1.0), metrics=[CountMetric()]
     )(state, context_factory(), rng)
-    diagnostics = output["diagnostics"]
+    metrics = output["metrics"]
 
-    assert diagnostics.n_attempted == 2
-    assert diagnostics.n_accepted == 1
-    assert diagnostics.acceptance == pytest.approx(0.5)
-    assert diagnostics.metrics["esjd"] == pytest.approx(0.5)
-
-
-def test_weighted_pre_mutation_variance_is_frozen(
-    context_factory, rng
-) -> None:
-    state = ParticleState(
-        np.array([[0.0], [2.0]]),
-        log_weights=np.log([0.75, 0.25]),
-    )
-    mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(np.sqrt(0.75)), n_steps=3, metrics=[ESJDMetric()]
-    )
-
-    _, _, output = mutation(state, context_factory(), rng)
-
-    # The weighted initial variance is 0.75. Every transition therefore has
-    # unit standardised squared displacement even as the population moves.
-    assert output["diagnostics"].metrics["esjd"] == pytest.approx(1.0)
-
-
-def test_zero_variance_dimensions_use_unit_scaling(
-    context_factory, rng
-) -> None:
-    state = ParticleState(np.zeros((4, 2)))
-    mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(np.array([1.0, 2.0])), metrics=[ESJDMetric()]
-    )
-
-    _, _, output = mutation(state, context_factory(), rng)
-
-    assert np.isfinite(output["diagnostics"].metrics["esjd"])
-    assert output["diagnostics"].metrics["esjd"] == pytest.approx(2.5)
+    assert metrics.n_attempted == 2
+    assert metrics.n_accepted == 1
+    assert metrics.acceptance == pytest.approx(0.5)
 
 
 def test_zero_step_mutation_reports_zero_diagnostics(
     particle_state, context_factory, rng
 ) -> None:
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(1.0), metrics=[ESJDMetric()]
+        _flat_log_prob, _add(1.0), metrics=[CountMetric()]
     )
 
     updated, _, output = mutation.apply_with_n_steps(
         particle_state, context_factory(), rng, n_steps=0
     )
-    diagnostics = output["diagnostics"]
+    metrics = output["metrics"]
 
-    assert diagnostics.n_steps == 0
-    assert diagnostics.n_attempted == 0
-    assert diagnostics.n_accepted == 0
-    assert diagnostics.acceptance == 0.0
-    assert diagnostics.metrics["esjd"] == 0.0
+    assert metrics.n_steps == 0
+    assert metrics.n_attempted == 0
+    assert metrics.n_accepted == 0
+    assert metrics.acceptance == 0.0
     np.testing.assert_array_equal(updated.particles, particle_state.particles)
 
 
-def test_repeated_rounds_share_scaling_and_exclude_symmetry(
-    context_factory, rng
-) -> None:
+def test_repeated_rounds_share_metric_state(context_factory, rng) -> None:
     state = ParticleState(np.array([[-1.0], [1.0]]))
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(1.0), metrics=[ESJDMetric()]
+        _flat_log_prob, _add(1.0), metrics=[CountMetric()]
     )
     repeated = RepeatedMutationStep(
         mutation, after_round=SequentialStep([NegateStep()]), n_rounds=2
@@ -167,17 +126,16 @@ def test_repeated_rounds_share_scaling_and_exclude_symmetry(
     updated, context, outputs = repeated.apply_with_n_steps(
         state, context_factory(), rng, n_steps=2
     )
-    diagnostics = outputs.diagnostics
+    metrics = outputs.metrics
 
     assert isinstance(outputs, RepeatedMutationStepOutput)
     assert all(
-        round_output["diagnostics"] is None
+        round_output["metrics"] is None
         for round_output in outputs.round_outputs
     )
-    assert diagnostics.n_steps == 2
-    assert diagnostics.n_attempted == 4
-    assert diagnostics.n_accepted == 4
-    assert diagnostics.metrics["esjd"] == pytest.approx(1.0)
+    assert metrics.n_steps == 2
+    assert metrics.n_attempted == 4
+    assert metrics.n_accepted == 4
     assert "_mutation_diagnostics_accumulator" not in context.metadata
     # Both mutation and symmetry rounds still execute exactly as before.
     np.testing.assert_array_equal(updated.particles, state.particles)
@@ -189,7 +147,7 @@ def test_repeated_mutation_returns_one_complete_block_diagnostic(
     state = ParticleState(np.array([[-1.0], [1.0]]))
     repeated = RepeatedMutationStep(
         MetropolisHastingsMutation(
-            _flat_log_prob, _add(1.0), metrics=[ESJDMetric()]
+            _flat_log_prob, _add(1.0), metrics=[CountMetric()]
         ),
         n_rounds=3,
     )
@@ -199,13 +157,10 @@ def test_repeated_mutation_returns_one_complete_block_diagnostic(
     )
 
     assert [output["steps"] for output in outputs.round_outputs] == [2, 2, 1]
-    assert all(
-        output["diagnostics"] is None for output in outputs.round_outputs
-    )
-    assert outputs.diagnostics.n_steps == 5
-    assert outputs.diagnostics.n_attempted == 10
-    assert outputs.diagnostics.n_accepted == 10
-    assert outputs.diagnostics.metrics["esjd"] == pytest.approx(1.0)
+    assert all(output["metrics"] is None for output in outputs.round_outputs)
+    assert outputs.metrics.n_steps == 5
+    assert outputs.metrics.n_attempted == 10
+    assert outputs.metrics.n_accepted == 10
     assert "_mutation_diagnostics_accumulator" not in context.metadata
     np.testing.assert_array_equal(updated.particles, state.particles + 5.0)
 
@@ -216,7 +171,7 @@ def test_repeated_mutation_budget_smaller_than_round_count(
     state = ParticleState(np.array([[-1.0], [1.0]]))
     repeated = RepeatedMutationStep(
         MetropolisHastingsMutation(
-            _flat_log_prob, _add(1.0), metrics=[ESJDMetric()]
+            _flat_log_prob, _add(1.0), metrics=[CountMetric()]
         ),
         n_rounds=4,
     )
@@ -231,13 +186,10 @@ def test_repeated_mutation_budget_smaller_than_round_count(
         0,
         0,
     ]
-    assert all(
-        output["diagnostics"] is None for output in outputs.round_outputs
-    )
-    assert outputs.diagnostics.n_steps == 2
-    assert outputs.diagnostics.n_attempted == 4
-    assert outputs.diagnostics.n_accepted == 4
-    assert outputs.diagnostics.metrics["esjd"] == pytest.approx(1.0)
+    assert all(output["metrics"] is None for output in outputs.round_outputs)
+    assert outputs.metrics.n_steps == 2
+    assert outputs.metrics.n_attempted == 4
+    assert outputs.metrics.n_accepted == 4
     np.testing.assert_array_equal(updated.particles, state.particles + 2.0)
 
 
@@ -247,7 +199,7 @@ def test_nested_repeats_only_finalise_the_outer_block(
     state = ParticleState(np.array([[-1.0], [1.0]]))
     inner = RepeatedMutationStep(
         MetropolisHastingsMutation(
-            _flat_log_prob, _add(1.0), metrics=[ESJDMetric()]
+            _flat_log_prob, _add(1.0), metrics=[CountMetric()]
         ),
         n_rounds=2,
     )
@@ -257,14 +209,13 @@ def test_nested_repeats_only_finalise_the_outer_block(
         state, context_factory(), rng, n_steps=4
     )
 
-    assert outputs.diagnostics.n_steps == 4
-    assert outputs.diagnostics.n_attempted == 8
+    assert outputs.metrics.n_steps == 4
+    assert outputs.metrics.n_attempted == 8
     assert all(
-        inner_output.diagnostics is None
-        for inner_output in outputs.round_outputs
+        inner_output.metrics is None for inner_output in outputs.round_outputs
     )
     assert all(
-        child_output["diagnostics"] is None
+        child_output["metrics"] is None
         for inner_output in outputs.round_outputs
         for child_output in inner_output.round_outputs
     )
@@ -307,7 +258,7 @@ def test_metric_lifecycle_and_independence(context_factory, rng):
         for method in ("initialize", "update", "result"):
             setattr(metric, method, Mock(wraps=getattr(metric, method)))
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(1.0), metrics=[first, second, ESJDMetric()]
+        _flat_log_prob, _add(1.0), metrics=[first, second]
     )
     state = ParticleState(np.array([[-1.0], [1.0]]))
     repeat = RepeatedMutationStep(
@@ -320,9 +271,8 @@ def test_metric_lifecycle_and_independence(context_factory, rng):
         assert metric.initialize.call_count == 1
         assert metric.update.call_count == 5
         assert metric.result.call_count == 1
-    assert output.diagnostics.metrics["count"] == (5, 10)
-    assert output.diagnostics.metrics["scaled_count"] == (35, 10)
-    assert output.diagnostics.metrics["esjd"] == pytest.approx(1.0)
+    assert output.metrics.values["count"] == (5, 10)
+    assert output.metrics.values["scaled_count"] == (35, 10)
 
 
 def test_no_metrics_and_sampling_invariance(context_factory):
@@ -332,7 +282,7 @@ def test_no_metrics_and_sampling_invariance(context_factory):
     from sequince.steps.mutation import GaussianRandomWalk
 
     outputs = []
-    for metrics in ([], [ESJDMetric(), CountMetric()]):
+    for metrics in ([], [CountMetric()]):
         mutation = MetropolisHastingsMutation(
             lambda p, c: -np.sum(p**2, axis=1),
             GaussianRandomWalk(scale=0.3),
@@ -344,7 +294,7 @@ def test_no_metrics_and_sampling_invariance(context_factory):
             state, context_factory(), resolve_rng(42)
         )
         outputs.append((result, context, output))
-    assert outputs[0][2]["diagnostics"].metrics == {}
+    assert outputs[0][2]["metrics"].values == {}
     np.testing.assert_array_equal(
         outputs[0][0].particles, outputs[1][0].particles
     )
@@ -352,8 +302,8 @@ def test_no_metrics_and_sampling_invariance(context_factory):
         outputs[0][2]["chain"], outputs[1][2]["chain"]
     )
     assert (
-        outputs[0][2]["diagnostics"].n_accepted
-        == outputs[1][2]["diagnostics"].n_accepted
+        outputs[0][2]["metrics"].n_accepted
+        == outputs[1][2]["metrics"].n_accepted
     )
     assert outputs[0][1].metadata == outputs[1][1].metadata
 
@@ -365,7 +315,7 @@ def test_duplicate_metric_names_rejected():
         )
 
 
-def test_custom_metric_and_esjd_under_jit():
+def test_custom_metric_under_jit():
     jax = pytest.importorskip("jax")
     jnp = pytest.importorskip("jax.numpy")
     from sequince.steps.context import StepContext
@@ -378,7 +328,7 @@ def test_custom_metric_and_esjd_under_jit():
         algorithm="random-walk",
         algorithm_kwargs={"sigma": 0.3},
         n_steps=4,
-        metrics=[ESJDMetric(), CountMetric()],
+        metrics=[CountMetric()],
         store_chains=True,
     )
 
@@ -387,17 +337,12 @@ def test_custom_metric_and_esjd_under_jit():
         return mutation.apply_functional(state, context, key)
 
     result, _, next_key, output = run(state, jax.random.key(42))
-    diagnostics = output.diagnostics
-    assert diagnostics.n_steps == 4
-    assert diagnostics.n_attempted == 8
-    assert diagnostics.metrics["count"][0] == 4
-    assert diagnostics.metrics["count"][1] == diagnostics.n_accepted
-    trajectory = np.concatenate(
-        [np.asarray(state.particles)[None], np.asarray(output.chain)]
-    )
-    expected = np.mean(np.diff(trajectory, axis=0) ** 2)
-    assert diagnostics.metrics["esjd"] == pytest.approx(expected)
-    assert np.isfinite(diagnostics.acceptance)
+    metrics = output.metrics
+    assert metrics.n_steps == 4
+    assert metrics.n_attempted == 8
+    assert metrics.values["count"][0] == 4
+    assert metrics.values["count"][1] == metrics.n_accepted
+    assert np.isfinite(metrics.acceptance)
     plain = BlackJAXMutation(
         lambda p, c: -jnp.sum(p**2) / 2,
         algorithm="random-walk",
@@ -411,22 +356,6 @@ def test_custom_metric_and_esjd_under_jit():
     np.testing.assert_array_equal(
         jax.random.key_data(next_key), jax.random.key_data(plain_key)
     )
-
-
-def test_esjd_frozen_scaling_when_population_spreads(context_factory, rng):
-    state = ParticleState(np.array([[-1.0], [1.0]]))
-    mutation = MetropolisHastingsMutation(
-        _flat_log_prob,
-        CallableMutationKernel(lambda p, r: 2 * p, symmetric=True),
-        n_steps=2,
-        metrics=[ESJDMetric()],
-    )
-    repeat = RepeatedMutationStep(mutation, n_rounds=2)
-    _, _, output = repeat.apply_with_n_steps(
-        state, context_factory(), rng, n_steps=2
-    )
-    # Jumps are +/-1 then +/-2, both scaled by initial variance 1.
-    assert output.diagnostics.metrics["esjd"] == pytest.approx(2.5)
 
 
 def test_zero_block_metric_lifecycle(context_factory, rng):
@@ -446,8 +375,8 @@ def test_zero_block_metric_lifecycle(context_factory, rng):
     assert metric.initialize.call_count == 1
     assert metric.update.call_count == 0
     assert metric.result.call_count == 1
-    assert output.diagnostics.metrics["count"] == (0, 0)
-    assert output.diagnostics.acceptance == 0
+    assert output.metrics.values["count"] == (0, 0)
+    assert output.metrics.acceptance == 0
 
 
 def test_blocked_mutation_metrics_share_state(context_factory, rng):
@@ -462,12 +391,11 @@ def test_blocked_mutation_metrics_share_state(context_factory, rng):
             MetropolisBlock("first", _add(1), 2),
             MetropolisBlock("second", _add(2), 1),
         ],
-        metrics=[ESJDMetric(), CountMetric()],
+        metrics=[CountMetric()],
     )
     state = ParticleState(np.array([[-1.0], [1.0]]))
     _, _, output = step(state, context_factory(), rng)
-    assert output["diagnostics"].metrics["esjd"] == pytest.approx(2)
-    assert output["diagnostics"].metrics["count"] == (3, 6)
+    assert output["metrics"].values["count"] == (3, 6)
 
 
 def test_minipcn_functional_metrics_preserve_sampling():
@@ -480,7 +408,7 @@ def test_minipcn_functional_metrics_preserve_sampling():
     context = StepContext(t=jnp.asarray(0))
     key = jax.random.key(42)
     results = []
-    for metrics in ([], [ESJDMetric(), CountMetric()]):
+    for metrics in ([], [CountMetric()]):
         step = MiniPCNMutation(
             lambda p, c: -0.5 * jnp.sum(p**2, axis=-1),
             n_steps=3,
@@ -495,9 +423,8 @@ def test_minipcn_functional_metrics_preserve_sampling():
     )
     output = results[1][3]
     assert output.chain is None
-    assert output.diagnostics.metrics["count"][0] == 3
-    assert output.diagnostics.n_attempted == 48
-    assert np.isfinite(output.diagnostics.metrics["esjd"])
+    assert output.metrics.values["count"][0] == 3
+    assert output.metrics.n_attempted == 48
 
 
 def test_emcee_metrics_count_accepted_zero_displacement(context_factory, rng):
@@ -513,12 +440,11 @@ def test_emcee_metrics_count_accepted_zero_displacement(context_factory, rng):
         lambda p, c: 0.0,
         n_steps=3,
         move=IdentityMove(),
-        metrics=[ESJDMetric(), CountMetric()],
+        metrics=[CountMetric()],
     )
     _, _, output = step(state, context_factory(), rng)
-    assert output["diagnostics"].metrics["count"] == (3, 24)
-    assert output["diagnostics"].metrics["esjd"] == 0
-    assert output["diagnostics"].acceptance == 1
+    assert output["metrics"].values["count"] == (3, 24)
+    assert output["metrics"].acceptance == 1
 
 
 def test_custom_dataclass_and_array_state_in_jax_loop():
@@ -526,10 +452,8 @@ def test_custom_dataclass_and_array_state_in_jax_loop():
     from typing import Any
 
     from sequince.steps.context import StepContext
-    from sequince.steps.mutation_diagnostics import (
-        finish_metrics,
-        prepare_metrics,
-        update_metrics,
+    from sequince.steps.mutation.metrics import (
+        MutationMetrics,
     )
     from sequince.utils.pytrees import pytree_dataclass
 
@@ -567,18 +491,15 @@ def test_custom_dataclass_and_array_state_in_jax_loop():
 
     particles = jnp.ones((2, 1))
     context = StepContext(t=0)
-    metrics = [ArrayMetric(), DataclassMetric()]
+    metrics = MutationMetrics([ArrayMetric(), DataclassMetric()])
 
     @jax.jit
     def run():
-        initial = prepare_metrics(
-            metrics, None, particles, jnp.zeros(2), context
-        )
+        initial = metrics.initialize(particles, jnp.zeros(2), context)
         final = jax.lax.fori_loop(
             0,
             3,
-            lambda i, metric_state: update_metrics(
-                metrics,
+            lambda i, metric_state: metrics.update(
                 metric_state,
                 particles,
                 jnp.ones(2, dtype=bool),
@@ -586,37 +507,13 @@ def test_custom_dataclass_and_array_state_in_jax_loop():
             ),
             initial,
         )
-        return initial, finish_metrics(metrics, final, context)
+        return initial, metrics.result(final, context)
 
     initial, result = run()
     np.testing.assert_array_equal(initial.states[0], 0)
     np.testing.assert_array_equal(initial.states[1].total, 0)
-    np.testing.assert_array_equal(result.metrics["array"], 3)
-    np.testing.assert_array_equal(result.metrics["dataclass"], 3)
-
-
-def test_emcee_in_place_moves_do_not_alias_metric_reference(
-    context_factory, rng
-):
-    emcee = pytest.importorskip("emcee")
-    from sequince.steps.mutation import EmceeMutation
-
-    class IncrementMove(emcee.moves.Move):
-        def propose(self, model, state):
-            state.coords[:] += 1
-            return state, np.ones(state.coords.shape[0], dtype=bool)
-
-    state = ParticleState(np.arange(8, dtype=float)[:, None])
-    step = EmceeMutation(
-        lambda p, c: 0.0,
-        n_steps=3,
-        move=IncrementMove(),
-        metrics=[ESJDMetric()],
-    )
-    _, _, output = step(state, context_factory(), rng)
-    assert output["diagnostics"].metrics["esjd"] == pytest.approx(
-        1 / np.var(state.particles)
-    )
+    np.testing.assert_array_equal(result.values["array"], 3)
+    np.testing.assert_array_equal(result.values["dataclass"], 3)
 
 
 @pytest.mark.parametrize(
@@ -648,11 +545,9 @@ def test_conditional_mutation_in_shared_block(resampled, context_factory, rng):
     assert output.executed == resampled
     output = output.child_output
     if resampled:
-        assert output.diagnostics.metrics["count"] == (4, 8)
+        assert output.metrics.values["count"] == (4, 8)
         assert metric.initialize.call_count == metric.result.call_count == 1
-        assert all(
-            child["diagnostics"] is None for child in output.round_outputs
-        )
+        assert all(child["metrics"] is None for child in output.round_outputs)
     else:
         assert output is None
         assert metric.initialize.call_count == metric.result.call_count == 0
@@ -682,7 +577,7 @@ def test_repeated_block_returns_structured_results_under_jit():
             lambda p, c: -0.5 * jnp.sum(p**2),
             algorithm="random-walk",
             algorithm_kwargs={"sigma": 0.1},
-            metrics=[ESJDMetric(), CountMetric()],
+            metrics=[CountMetric()],
         ),
         n_rounds=2,
     )
@@ -698,10 +593,9 @@ def test_repeated_block_returns_structured_results_under_jit():
 
     _, _, output = run(jnp.array([[-1.0], [1.0]]), jax.random.key(42))
     assert [child.steps for child in output.round_outputs] == [2, 1]
-    assert all(child.diagnostics is None for child in output.round_outputs)
-    assert output.diagnostics.n_steps == 3
-    assert output.diagnostics.metrics["count"][0] == 3
-    assert np.isfinite(output.diagnostics.metrics["esjd"])
+    assert all(child.metrics is None for child in output.round_outputs)
+    assert output.metrics.n_steps == 3
+    assert output.metrics.values["count"][0] == 3
 
 
 def test_public_continuation_preserves_state_without_finalizing(
@@ -718,7 +612,7 @@ def test_public_continuation_preserves_state_without_finalizing(
     mutation = MetropolisHastingsMutation(
         lambda p, c: -np.sum(p**2, axis=1),
         GaussianRandomWalk(scale=0.5),
-        metrics=[ESJDMetric(), counter],
+        metrics=[counter],
         store_chains=True,
     )
     initial = ParticleState(np.array([[-1.0], [1.0]]))
@@ -739,9 +633,9 @@ def test_public_continuation_preserves_state_without_finalizing(
 
     assert counter.initialize.call_count == 1
     assert counter.result.call_count == 0
-    assert first_output["diagnostics"] is None
-    assert final_output["diagnostics"] is None
-    assert zero_output["diagnostics"] is None
+    assert first_output["metrics"] is None
+    assert final_output["metrics"] is None
+    assert zero_output["metrics"] is None
     assert isinstance(first_state, MutationStepState)
     assert isinstance(final_state, MutationStepState)
     assert first_state.n_steps == 2
@@ -758,7 +652,46 @@ def test_public_continuation_preserves_state_without_finalizing(
         np.concatenate([first_output["chain"], final_output["chain"]]),
         output["chain"],
     )
-    assert final_state.n_accepted == output["diagnostics"].n_accepted
-    assert ESJDMetric().result(
-        final_state.states[0], context
-    ) == pytest.approx(output["diagnostics"].metrics["esjd"])
+    assert final_state.n_accepted == output["metrics"].n_accepted
+
+
+def test_metric_collection_prepare_preserves_accumulation(context_factory):
+    from sequince.steps.mutation.metrics import MutationMetrics
+
+    class SegmentMetric(CountMetric):
+        name = "segments"
+
+        def __init__(self):
+            super().__init__("segments")
+
+        def initialize(self, particles, log_weights, context):
+            return {"totals": (0, 0), "segments": 0}
+
+        def update(self, state, particles, accepted, context):
+            return {
+                **super().update(state, particles, accepted, context),
+                "segments": state["segments"],
+            }
+
+        def prepare(self, state, particles, context):
+            return {**state, "segments": state["segments"] + 1}
+
+        def result(self, state, context):
+            return state
+
+    metrics = MutationMetrics([SegmentMetric(), CountMetric()])
+    context = context_factory()
+    particles = np.zeros((2, 1))
+    initial = metrics.initialize(particles, np.zeros(2), context)
+    first = metrics.update(initial, particles, np.ones(2, dtype=bool), context)
+    prepared = metrics.prepare(first, particles + 100, context)
+    final = metrics.update(
+        prepared, particles, np.ones(2, dtype=bool), context
+    )
+    result = metrics.result(final, context)
+    assert result.n_steps == 2
+    assert result.n_accepted == result.n_attempted == 4
+    assert result.values["segments"] == {"totals": (2, 4), "segments": 1}
+    assert result.values["count"] == (2, 4)
+    assert first.states[0]["segments"] == 0
+    assert initial.n_steps == 0

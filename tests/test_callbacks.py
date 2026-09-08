@@ -314,3 +314,59 @@ def test_particle_transform_plot(
         parameter_labels=["x"],
         bins=8,
     )
+
+
+def test_adaptive_mutation_plot_completed_metrics(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from matplotlib.figure import Figure
+
+    from sequince.callbacks import AdaptiveMutationPlot
+    from sequince.steps.mutation.metrics import MutationMetricsOutput
+
+    saved = []
+    savefig = Figure.savefig
+
+    def record(fig, *args, **kwargs):
+        saved.append(fig)
+        return savefig(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", record)
+    state = ParticleState(np.zeros((4, 1)))
+    context = StepContext(t=3)
+    result = SMCResult(
+        states=[state] * 4,
+        context=context,
+        outputs=(
+            ({"metrics": MutationMetricsOutput(8, 32, 16)},),
+            (
+                SimpleNamespace(
+                    child_output=SimpleNamespace(
+                        metrics=MutationMetricsOutput(4, 16, 12)
+                    )
+                ),
+            ),
+            ({"metrics": MutationMetricsOutput(0, 0, 0)},),
+            (None,),
+        ),
+    )
+    callback = AdaptiveMutationPlot(tmp_path, step_index=0, target_steps=3)
+    callback(state, context, result)
+    assert callback.full_path.is_file()
+    axes = saved[0].axes
+    np.testing.assert_allclose(axes[0].lines[0].get_ydata(), [8, 4, 0, np.nan])
+    np.testing.assert_allclose(
+        axes[1].lines[0].get_ydata(), [0.5, 0.75, np.nan, np.nan]
+    )
+    np.testing.assert_allclose(axes[2].lines[0].get_ydata(), [4, 3, 0, np.nan])
+    np.testing.assert_allclose(axes[2].lines[1].get_ydata(), [3, 3])
+
+
+def test_adaptive_mutation_plot_empty_history(tmp_path):
+    from sequince.callbacks import AdaptiveMutationPlot
+
+    state = ParticleState(np.zeros((1, 1)))
+    context = StepContext(t=0)
+    callback = AdaptiveMutationPlot(tmp_path)
+    callback(state, context, SMCResult(states=[state], context=context))
+    assert not callback.full_path.exists()
