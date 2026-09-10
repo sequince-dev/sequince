@@ -121,7 +121,7 @@ def make_standard_bayesian_smc(
     resampling_kwargs:
         Extra keyword arguments forwarded to the resampling step constructor.
     mutation:
-        Mutation strategy to use. Accepts ``"blackjax"``, ``"emcee"``,
+        Mutation strategy to use. Accepts ``"blackjax"``, ``"emcee"``, ``"eryn"``,
         ``"metropolis-hastings"``, ``"minipcn"`` (default), ``"none"``, or a
         pre-built ``SMCStep`` instance.
     mutation_n_steps:

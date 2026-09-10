@@ -8,6 +8,7 @@ from ...transforms import ParticleTransform
 from ..base import SMCStep
 from .blackjax import BlackJAXMutation
 from .emcee import EmceeMutation
+from .eryn import ErynMutation
 from .kernels import get_complementary_ensemble_kernel, get_mutation_kernel
 from .metropolis import (
     DifferentialEvolutionMutation,
@@ -43,6 +44,10 @@ def get_mutation_step(
             n_steps=mutation_n_steps,
             run_kwargs=run_kwargs,
             **kwargs,
+        )
+    elif mutation == "eryn":
+        mutation_step = ErynMutation(
+            target, n_steps=mutation_n_steps, **kwargs
         )
     elif mutation == "minipcn":
         mutation_step = MiniPCNMutation(
@@ -107,7 +112,7 @@ def get_mutation_step(
         mutation_step = None
     else:
         raise ValueError(
-            "mutation must be 'blackjax', 'emcee', 'metropolis-hastings', "
+            "mutation must be 'blackjax', 'emcee', 'eryn', 'metropolis-hastings', "
             "'minipcn', 'differential-evolution', "
             "'red-blue-metropolis-hastings', 'red-blue-mh', 'red-blue', "
             "'none', or an SMCStep instance."
