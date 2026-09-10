@@ -5,7 +5,8 @@ requires-pixi = ">=0.78"
 platforms = [
     "linux-64",
     "osx-arm64",
-    { name = "linux-64-cuda", platform = "linux-64", cuda = "12" },
+    { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
+    { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
 ]
 
 [dependencies]
@@ -22,13 +23,18 @@ default = { features = ["cpu", "py313", "test", "lint"], solve-group = "py313" }
 py311 = ["cpu", "py311", "test"]
 py312 = ["cpu", "py312", "test"]
 py313 = { features = ["cpu", "py313", "test"], solve-group = "py313" }
-all-backends = ["cpu", "py313", "test", "jax", "torch-cpu"]
+all-backends = ["cpu", "py313", "test", "jax", "jax-cpu", "torch-cpu"]
 docs = ["cpu", "py313", "doc"]
-jax = ["cpu", "py313", "test", "jax"]
+jax = ["cpu", "py313", "test", "jax", "jax-cpu"]
+jax-cuda12 = ["py313", "test", "cuda12", "jax", "jax-gpu", "jax-cuda12"]
+jax-cuda13 = ["py313", "test", "cuda13", "jax", "jax-gpu", "jax-cuda13"]
 torch = ["cpu", "py313", "test", "torch-cpu"]
-cupy = ["py313", "test", "cuda", "cupy"]
-torch-gpu = ["py313", "test", "cuda", "torch-gpu"]
-gpu = ["py313", "test", "cuda", "cupy", "torch-gpu"]
+cupy-cuda12 = ["py313", "test", "cuda12", "cupy"]
+cupy-cuda13 = ["py313", "test", "cuda13", "cupy"]
+torch-cuda12 = ["py313", "test", "cuda12", "torch-gpu"]
+torch-cuda13 = ["py313", "test", "cuda13", "torch-gpu"]
+cuda12 = ["py313", "test", "cuda12", "cupy", "torch-gpu"]
+cuda13 = ["py313", "test", "cuda13", "cupy", "torch-gpu"]
 
 [feature.cpu]
 platforms = ["linux-64", "osx-arm64"]
@@ -77,19 +83,40 @@ jax = ">0.5.3"
 jaxlib = "*"
 blackjax = ">=1.2"
 
-[feature.jax.activation.env]
+[feature.jax-cpu.activation.env]
 JAX_PLATFORMS = "cpu"
+
+# JAX supplies its runtime libraries through PyPI; the shared cuda-version
+# metapackage selects the CUDA major version without installing a toolkit.
+[feature.jax-cuda12.pypi-dependencies]
+jax = { version = ">0.5.3", extras = ["cuda12"] }
+
+[feature.jax-cuda13.pypi-dependencies]
+jax = { version = ">0.5.3", extras = ["cuda13"] }
+
+[feature.jax-gpu.activation.env]
+# Require CUDA initialization while keeping CPU devices available explicitly.
+JAX_PLATFORMS = "cuda,cpu"
+
+[feature.jax-gpu.tasks]
+check-jax = "python -c \"import jax; import jax.numpy as jnp; device = jax.devices('gpu')[0]; x = jax.device_put(jnp.arange(10), device); result = jax.jit(lambda a: jnp.sum(a * a))(x).block_until_ready(); assert result.device.platform == 'gpu'; assert int(result) == 285; print('JAX CUDA OK:', device)\""
 
 [feature.torch-cpu.dependencies]
 pytorch-cpu = "*"
 
 # CUDA environments target NVIDIA GPUs on Linux. Pin the runtime separately
 # from the driver capability declared on the CUDA platform.
-[feature.cuda]
-platforms = ["linux-64-cuda"]
+[feature.cuda12]
+platforms = ["linux-64-cuda12"]
 
-[feature.cuda.dependencies]
+[feature.cuda12.dependencies]
 cuda-version = "12.*"
+
+[feature.cuda13]
+platforms = ["linux-64-cuda13"]
+
+[feature.cuda13.dependencies]
+cuda-version = "13.*"
 
 [feature.cupy.dependencies]
 cupy = "*"
