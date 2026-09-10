@@ -1060,8 +1060,14 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         increments: Array,
         delta: Array,
     ) -> Array:
+        xp = namespace(base_log_weights, increments)
+        # A zero step leaves weights unchanged even outside the next target's
+        # support. Mask before multiplication to avoid 0 * (-inf).
+        active_increments = xp.where(
+            delta == 0, xp.zeros_like(increments), increments
+        )
         return ess_ratio_from_log_weights(
-            base_log_weights + delta * increments
+            base_log_weights + delta * active_increments
         )
 
     @staticmethod
@@ -1070,7 +1076,11 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         increments: Array,
         delta: Array,
     ) -> Array:
+        xp = namespace(base_log_weights, increments)
+        active_increments = xp.where(
+            delta == 0, xp.zeros_like(increments), increments
+        )
         return cess_ratio_from_log_weights_and_increments(
             base_log_weights,
-            delta * increments,
+            delta * active_increments,
         )
