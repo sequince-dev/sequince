@@ -121,6 +121,7 @@ celerybeat.pid
 
 # Environments
 .pixi/
+pixi.lock
 .env
 .venv
 env/
