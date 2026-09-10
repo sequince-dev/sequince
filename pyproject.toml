@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Michael J. Williams" }, { name = "Christian Chapman-Bird" }]
 dependencies = [
-    "acai-control>=0.1.0a1",
+    "acai-control>=0.1.0",
     "scipy>=1.16",
     "matplotlib>=3.5",
     "numpy>=1.25.2",
@@ -18,7 +18,7 @@ dependencies = [
     "array-api-compat>=1.13",
     "array-api-extra>=0.10",
     "optree>=0.19",
-    "orng>=0.2.0a2",
+    "orng>=0.2.0",
 ]
 dynamic = [
     "version"
