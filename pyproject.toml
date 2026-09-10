@@ -18,7 +18,7 @@ dependencies = [
     "array-api-compat>=1.13",
     "array-api-extra>=0.10",
     "optree>=0.19",
-    "orng>=0.2.0",
+    "orng>=0.2.1",
 ]
 dynamic = [
     "version"
