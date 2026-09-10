@@ -9,7 +9,6 @@ from orng import RandomGenerator
 
 from sequince import ParticleState
 from sequince.checkpoint import CheckpointWriter, SMCCheckpoint
-from sequince.jax import compile_functional_iteration
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
@@ -19,6 +18,9 @@ from sequince.utils.optimize import bisect_monotone_decreasing
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
+compile_functional_iteration = pytest.importorskip(
+    "sequince.jax"
+).compile_functional_iteration
 
 
 def test_monotone_bisection_uses_jittable_control_flow() -> None:
