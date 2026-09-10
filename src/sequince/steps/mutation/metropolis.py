@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Callable, cast
 import array_api_extra as xpx
 
 from ..._typing import Array
-from ...array_api import asarray, namespace, to_numpy
+from ...array_api import asarray, get_device, namespace, to_numpy
 from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
 from ..base import validate_n_steps
@@ -168,7 +168,9 @@ class MetropolisHastingsMutation(MutationStep):
             )
             empty_chain = (
                 xp.empty(
-                    (0, *state.particles.shape), dtype=state.particles.dtype
+                    (0, *state.particles.shape),
+                    dtype=state.particles.dtype,
+                    device=get_device(state.particles),
                 )
                 if self._store_chains
                 else None
@@ -531,7 +533,9 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             )
             empty_chain = (
                 xp.empty(
-                    (0, *state.particles.shape), dtype=state.particles.dtype
+                    (0, *state.particles.shape),
+                    dtype=state.particles.dtype,
+                    device=get_device(state.particles),
                 )
                 if self._store_chains
                 else None
@@ -588,7 +592,9 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         acceptance_by_half: list[tuple[float, float]] = []
         chain: list[Array] = []
         for _ in range(n_steps):
-            accepted_population = xp.zeros((n_particles,), dtype=bool)
+            accepted_population = xp.zeros_like(
+                current_log_prob, dtype=xp.bool
+            )
             group_a, group_b = self._split_indices(
                 n_particles,
                 rng,
