@@ -48,6 +48,10 @@ blackjax = [
 emcee = [
     "emcee>=3.0",
 ]
+eryn = [
+    "eryn>=1.2.6",
+    "numpy<2.4", # Eryn uses np.in1d, removed in NumPy 2.4.
+]
 corner = [
     "corner",
 ]
@@ -61,6 +65,8 @@ test-core = [
     "pytest-cov>=4.0",
     "corner",
     "emcee>=3.0",
+    "eryn>=1.2.6",
+    "numpy<2.4",
     "h5py>=3",
 ]
 test = [
