@@ -24,6 +24,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: xarray-contrib/pixi-lock/create-and-cache@1cf6af9f0f4075f75c491fcabb7daa379e7e18be
         id: pixi-lock
+        env:
+          # Resolve CUDA environments on a CPU runner; tests use real hardware detection.
+          CONDA_OVERRIDE_CUDA: "13"
         with:
           pixi-version: v0.78.0
           manifest-path: pyproject.toml
