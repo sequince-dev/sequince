@@ -331,8 +331,10 @@ def _log_det_entries(value, arr, xp):
         A vector of log-determinant entries, one per particle.
     """
     if arr.ndim == 1 or arr.shape[0] == 1:
-        return xp.asarray(value)
-    return xp.full((arr.shape[0],), value, dtype=arr.dtype)
+        return asarray(value, xp=xp, like=arr)
+    # Broadcast on the particle device without extracting a host scalar.
+    value = asarray(value, xp=xp, dtype=arr.dtype, like=arr)
+    return xp.broadcast_to(value, (arr.shape[0],))
 
 
 class ParticleTransform:
