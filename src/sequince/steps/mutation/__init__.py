@@ -1,10 +1,13 @@
 """Mutation steps, kernels, and configuration helpers."""
 
-from .base import (
-    PARTICLE_TRANSFORM_KEY,
-    MutationStep,
-    TransformRefit,
+from ..base import FixedLengthMutation
+from .adaptive import (
+    AdaptiveGaussianProposal,
+    AdaptiveMutationStep,
+    AdaptMutationSteps,
+    MutationStepPolicy,
 )
+from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
 from .blackjax import BlackJAXAlgorithmFactory, BlackJAXMutation
 from .blocked import (
     BlockedMetropolisHastingsMutation,
@@ -35,6 +38,12 @@ from .kernels import (
     get_complementary_ensemble_kernel,
     get_mutation_kernel,
 )
+from .metrics import (
+    MutationMetric,
+    MutationMetrics,
+    MutationMetricsOutput,
+    MutationStepState,
+)
 from .metropolis import (
     DifferentialEvolutionMutation,
     MetropolisHastingsMutation,
@@ -42,8 +51,12 @@ from .metropolis import (
 )
 from .minipcn import MiniPCNMutation
 from .rejuvenation import GenerativeProposal, ProposalRejuvenation
+from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
 __all__ = [
+    "AdaptiveGaussianProposal",
+    "AdaptiveMutationStep",
+    "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
     "BlockedMetropolisHastingsMutation",
     "BlackJAXAlgorithmFactory",
@@ -55,6 +68,7 @@ __all__ = [
     "DifferentialEvolutionMutation",
     "EMCEE_MOVES",
     "EmceeMutation",
+    "FixedLengthMutation",
     "GaussianRandomWalk",
     "GenerativeProposal",
     "MUTATION_KERNELS",
@@ -65,7 +79,14 @@ __all__ = [
     "MetropolisBlock",
     "MixtureMutationKernel",
     "MutationKernel",
+    "RepeatedMutationStep",
+    "RepeatedMutationStepOutput",
+    "MutationMetricsOutput",
+    "MutationStepState",
+    "MutationMetric",
+    "MutationMetrics",
     "MutationStep",
+    "MutationStepPolicy",
     "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",
     "ProposalRejuvenation",

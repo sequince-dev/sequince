@@ -5,12 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
+import numpy as np
+
 from ..._typing import Array
 from ...transforms import ParticleTransform
 from ..base import SMCStep
 from ..context import StepContext
 from .base import TransformRefit
 from .kernels import MutationKernel
+from .metrics import (
+    MutationMetric,
+    MutationMetrics,
+)
 from .metropolis import MetropolisHastingsMutation, MutationKernelFactory
 
 if TYPE_CHECKING:
@@ -83,8 +89,10 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
+        metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
     ) -> None:
         super().__init__()
+        self.metrics = MutationMetrics(metrics)
         self._blocks = tuple(blocks)
         if not self._blocks:
             raise ValueError(
@@ -101,6 +109,7 @@ class BlockedMetropolisHastingsMutation(SMCStep):
                 transform=transform,
                 transform_refit=transform_refit,
                 store_chains=store_chains,
+                metrics=list(self.metrics),
             )
             for block in self._blocks
         )
@@ -116,10 +125,23 @@ class BlockedMetropolisHastingsMutation(SMCStep):
         acceptance: dict[str, float] = {}
         acceptance_by_step: dict[str, list[float]] = {}
         chains: dict[str, Array] = {}
+        mutation_state = None
 
         for block, step in zip(self._blocks, self._steps, strict=True):
-            updated, context, block_output = step(updated, context, rng)
-            acceptance[block.name] = float(block_output["acceptance"])
+            updated, context, block_output, mutation_state = (
+                step.apply_with_mutation_state(
+                    updated,
+                    context,
+                    rng,
+                    n_steps=block.n_steps,
+                    mutation_state=mutation_state,
+                )
+            )
+            acceptance[block.name] = (
+                float(np.mean(block_output["acceptance_by_step"]))
+                if block_output["acceptance_by_step"]
+                else 0.0
+            )
             acceptance_by_step[block.name] = list(
                 block_output["acceptance_by_step"]
             )
@@ -128,10 +150,12 @@ class BlockedMetropolisHastingsMutation(SMCStep):
 
         steps = {block.name: block.n_steps for block in self._blocks}
 
+        metrics = self.metrics.result(mutation_state, context)
         output = {
-            "acceptance": acceptance,
+            "acceptance_by_block": acceptance,
             "acceptance_by_step": acceptance_by_step,
             "steps": steps,
             "chain": chains if self._store_chains else None,
+            "metrics": metrics,
         }
         return updated, context, output

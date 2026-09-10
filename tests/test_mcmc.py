@@ -45,7 +45,8 @@ def test_mcmc_returns_chain_and_processed_samples(
         2,
     )
     np.testing.assert_allclose(result.chain[-1], result.final_state.particles)
-    assert "acceptance" in result.diagnostics
+    assert "acceptance" not in result.diagnostics
+    assert 0 <= result.diagnostics["metrics"].acceptance <= 1
     assert result.diagnostics["steps"] == 4
 
 

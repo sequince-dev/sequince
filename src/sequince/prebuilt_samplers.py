@@ -466,8 +466,9 @@ def make_persistent_bayesian_smc(
             )
             mutation = outputs[3] if len(outputs) > 3 else None
             acceptance = (
-                f", Acceptance={float(mutation['acceptance']):.3f}"
-                if isinstance(mutation, Mapping) and "acceptance" in mutation
+                f", Acceptance={float(mutation['metrics'].acceptance):.3f}"
+                if isinstance(mutation, Mapping)
+                and mutation.get("metrics") is not None
                 else ""
             )
             logger.info(

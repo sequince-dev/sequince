@@ -9,20 +9,31 @@ from .control import ConditionalStepOutput, ContinueWhile
 from .log import LoggingStep
 from .meta import MetaSMCStep
 from .mutation import (
+    AdaptiveGaussianProposal,
     AdaptiveMaskedGaussianRandomWalk,
+    AdaptiveMutationStep,
+    AdaptMutationSteps,
     BlackJAXMutation,
     BlockedMetropolisHastingsMutation,
     ComplementaryEnsembleKernel,
     DifferentialEvolutionKernel,
     DifferentialEvolutionMutation,
     EmceeMutation,
+    FixedLengthMutation,
     MaskedGaussianRandomWalk,
     MetropolisBlock,
     MetropolisHastingsMutation,
     MiniPCNMutation,
     MutateIfResampled,
+    MutationMetric,
+    MutationMetrics,
+    MutationMetricsOutput,
+    MutationStepPolicy,
+    MutationStepState,
     ProposalRejuvenation,
     RedBlueMetropolisHastingsMutation,
+    RepeatedMutationStep,
+    RepeatedMutationStepOutput,
 )
 from .persistent import (
     PersistentAdaptiveTemperedWeighting,
@@ -31,7 +42,6 @@ from .persistent import (
     persistent_log_mixture_denominator,
     persistent_log_weights,
 )
-from .proposal import AdaptGaussianProposal
 from .resampling import (
     MultinomialResampling,
     StratifiedResampling,
@@ -54,6 +64,8 @@ from .weighting import (
 )
 
 __all__ = [
+    "AdaptiveMutationStep",
+    "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
     "BlackJAXMutation",
     "BlockedMetropolisHastingsMutation",
@@ -70,11 +82,19 @@ __all__ = [
     "SMCTransformation",
     "TransformationStep",
     "EmceeMutation",
+    "FixedLengthMutation",
     "MaskedGaussianRandomWalk",
     "MetropolisHastingsMutation",
     "RedBlueMetropolisHastingsMutation",
     "MetropolisBlock",
     "MiniPCNMutation",
+    "RepeatedMutationStep",
+    "RepeatedMutationStepOutput",
+    "MutationMetricsOutput",
+    "MutationStepState",
+    "MutationMetric",
+    "MutationMetrics",
+    "MutationStepPolicy",
     "MutateIfResampled",
     "ProposalRejuvenation",
     "PersistParticles",
@@ -83,7 +103,7 @@ __all__ = [
     "persistent_log_mixture_denominator",
     "persistent_log_weights",
     "MetaSMCStep",
-    "AdaptGaussianProposal",
+    "AdaptiveGaussianProposal",
     "MultinomialResampling",
     "StratifiedResampling",
     "SystematicResampling",

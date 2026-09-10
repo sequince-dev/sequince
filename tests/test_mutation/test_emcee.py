@@ -49,7 +49,10 @@ def test_emcee_mutation_uses_supplied_rng(
     )
 
     np.testing.assert_array_equal(first.particles, second.particles)
-    assert first_output["acceptance"] == second_output["acceptance"]
+    assert (
+        first_output["metrics"].acceptance
+        == second_output["metrics"].acceptance
+    )
     assert first_output["steps"] == 3
 
 

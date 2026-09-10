@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from numbers import Integral
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from orng import RandomGenerator
 
@@ -13,6 +14,34 @@ if TYPE_CHECKING:
     from orng import RandomGenerator
 
     from ..state import ParticleState
+
+
+def validate_n_steps(n_steps: int) -> int:
+    """Validate a caller-supplied fixed mutation length."""
+    if isinstance(n_steps, bool) or not isinstance(n_steps, Integral):
+        raise TypeError("n_steps must be an integer.")
+    value = int(n_steps)
+    if value < 0:
+        raise ValueError("n_steps must be >= 0.")
+    return value
+
+
+@runtime_checkable
+class FixedLengthMutation(Protocol):
+    """Capability for mutation-like steps accepting a per-call transition count.
+
+    ``n_steps`` is a host-side integer. Backends such as JAX therefore require it
+    to be static while tracing or compiling a call.
+    """
+
+    def apply_with_n_steps(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: Any,
+        *,
+        n_steps: int,
+    ) -> tuple["ParticleState", StepContext, Any]: ...
 
 
 class SMCStep:

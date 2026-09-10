@@ -61,6 +61,18 @@ class StepContext:
         """Return a context with copy-on-write metadata updates."""
         return replace(self, metadata={**self.metadata, **updates})
 
+    def without_metadata(self, *keys: str) -> StepContext:
+        """Return a context without the named metadata entries."""
+        removed = set(keys)
+        return replace(
+            self,
+            metadata={
+                key: value
+                for key, value in self.metadata.items()
+                if key not in removed
+            },
+        )
+
     def add_evaluation_counts(self, counts: EvaluationCounts) -> StepContext:
         """Return a context with newly incurred work added to its counters."""
         return replace(

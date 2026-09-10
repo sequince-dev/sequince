@@ -146,7 +146,7 @@ def test_persistent_red_blue_kernel_transition_ratio_is_applied(
     )
 
     np.testing.assert_array_equal(updated.particles, particles)
-    assert output["acceptance"] == 0.0
+    assert output["metrics"].acceptance == 0.0
     assert returned_context.evaluation_counts.log_target_evaluations == 12
     assert returned_context.evaluation_counts.log_proposal_evaluations == 0
 
@@ -223,7 +223,7 @@ def test_acceptance_updates_only_the_active_half(context_factory) -> None:
     first_indices = kernel.active_groups[0][:, 0].astype(int)
     expected[first_indices] += 10.0
     np.testing.assert_array_equal(updated.particles, expected)
-    assert output["acceptance"] == 0.5
+    assert output["metrics"].acceptance == 0.5
     assert output["acceptance_by_step"] == (0.5,)
     assert output["acceptance_by_half"] == ((1.0, 0.0),)
 

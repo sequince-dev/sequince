@@ -15,6 +15,7 @@ from ..utils.callables import call_with_optional_context
 from .base import SMCStep, StepContext
 from .mutation import (
     MutationKernel,
+    MutationMetricsOutput,
     evaluate_log_transition_ratio,
 )
 
@@ -31,6 +32,12 @@ MutationKernelFactory = Callable[[Array, StepContext], MutationKernel]
 
 class WasteFreeResampleMove(SMCStep):
     """Combine resampling and mutation using waste-free recycling of proposals.
+
+    Completed ``MutationMetricsOutput`` report proposal rounds and attempted
+    proposals. Since recycling integrates over accept/reject decisions,
+    ``n_accepted`` is the sum of acceptance probabilities (an expected count),
+    and ``acceptance`` is their mean. This supports ``AdaptiveGaussianProposal``
+    without introducing additional random draws.
 
     Examples
     --------
@@ -250,11 +257,12 @@ class WasteFreeResampleMove(SMCStep):
             new_particles = new_particles[:, 0]
 
         selected_ancestor_indices = ancestor_indices[selected % n]
-        mean_acceptance = (
-            float(xp.mean(xp.concat(tuple(acceptance_history), axis=0)))
-            if acceptance_history
-            else float("nan")
+        metrics = MutationMetricsOutput(
+            n_steps=xp.asarray(self._n_proposals),
+            n_attempted=xp.asarray(n * self._n_proposals),
+            n_accepted=xp.sum(xp.concat(tuple(acceptance_history), axis=0)),
         )
+        mean_acceptance = float(metrics.acceptance)
         acceptance_by_round = [
             float(xp.mean(values)) for values in acceptance_history
         ]
@@ -279,9 +287,9 @@ class WasteFreeResampleMove(SMCStep):
             device=get_device(log_weight_template),
         )
         output = {
+            "metrics": metrics,
             "ancestors": selected_ancestor_indices,
-            "acceptance": mean_acceptance,
-            "acceptance_by_round": tuple(acceptance_by_round),
+            "mean_acceptance_probability_by_round": tuple(acceptance_by_round),
             "selected_proposals": selected_proposals,
             "selected_parents": selected_parents,
             "selected_proposals_by_round": tuple(proposal_counts),

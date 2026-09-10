@@ -191,6 +191,15 @@ class RepeatStep(SMCStep):
 
         return state, context, tuple(outputs)
 
+    def state_dict(self) -> dict[str, Any]:
+        return {"step": self.step.state_dict()}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        nested_state = state.get("step", {})
+        if not isinstance(nested_state, Mapping):
+            raise TypeError("RepeatStep state 'step' must be a mapping.")
+        self.step.load_state_dict(nested_state)
+
 
 class SequentialStep(SMCStep):
     """Apply several SMC steps in order.
@@ -213,3 +222,27 @@ class SequentialStep(SMCStep):
                 break
 
         return state, context, tuple(outputs)
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"steps": [step.state_dict() for step in self.steps]}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        if "steps" not in state:
+            # Checkpoints created before nested SequentialStep state was
+            # supported contain the inherited empty state.
+            return
+        nested_states = state.get("steps", [])
+        if not isinstance(nested_states, Sequence) or isinstance(
+            nested_states, (str, bytes)
+        ):
+            raise TypeError("SequentialStep state 'steps' must be a sequence.")
+        if len(nested_states) != len(self.steps):
+            raise ValueError(
+                "SequentialStep checkpoint state does not match its children."
+            )
+        for step, nested_state in zip(self.steps, nested_states, strict=True):
+            if not isinstance(nested_state, Mapping):
+                raise TypeError(
+                    "SequentialStep child state must be a mapping."
+                )
+            step.load_state_dict(nested_state)

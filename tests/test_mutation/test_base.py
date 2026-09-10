@@ -6,7 +6,12 @@ import pytest
 import sequince.transforms as transforms_module
 from sequince.steps.base import SMCStep
 from sequince.steps.control import RepeatStep, SequentialStep
-from sequince.steps.mutation import MutationStep
+from sequince.steps.mutation import (
+    CallableMutationKernel,
+    MetropolisHastingsMutation,
+    MutationStep,
+    RepeatedMutationStep,
+)
 from sequince.transforms import FlowTransform, ParticleTransform
 
 
@@ -70,6 +75,23 @@ class CountingGibbsStep(SMCStep):
             gibbs_updates=context.metadata.get("gibbs_updates", 0) + 1
         )
         return state, context, None
+
+
+class RecordingFixedMutation(MetropolisHastingsMutation):
+    def __init__(self):
+        super().__init__(
+            lambda p, c: np.zeros(p.shape[0]),
+            CallableMutationKernel(lambda p, r: p, symmetric=True),
+        )
+        self.lengths: list[int] = []
+
+    def apply_with_mutation_state(
+        self, state, context, rng, *, n_steps, mutation_state=None
+    ):
+        self.lengths.append(n_steps)
+        return super().apply_with_mutation_state(
+            state, context, rng, n_steps=n_steps, mutation_state=mutation_state
+        )
 
 
 def _mutation(refit, fits):
@@ -173,6 +195,54 @@ def test_per_context_refit_reuses_transform_across_alternating_rounds(
     mutation(particle_state, context_factory(t=1), rng)
 
     assert len(fits) == 2
+
+
+def test_repeat_sequence_distributes_total_budget_and_keeps_rounds_fixed(
+    particle_state, context_factory, rng
+) -> None:
+    mutation = RecordingFixedMutation()
+    rounds = RepeatedMutationStep(
+        mutation,
+        after_round=SequentialStep([CountingGibbsStep()]),
+        n_rounds=4,
+    )
+
+    _, context, outputs = rounds.apply_with_n_steps(
+        particle_state, context_factory(), rng, n_steps=10
+    )
+
+    assert mutation.lengths == [3, 3, 2, 2]
+    assert context.metadata["gibbs_updates"] == 4
+    assert len(outputs.round_outputs) == 4
+
+
+def test_repeat_sequence_zero_budget_still_runs_nonmutation_round_steps(
+    particle_state, context_factory, rng
+) -> None:
+    mutation = RecordingFixedMutation()
+    rounds = RepeatedMutationStep(
+        mutation,
+        after_round=SequentialStep([CountingGibbsStep()]),
+        n_rounds=3,
+    )
+
+    _, context, _ = rounds.apply_with_n_steps(
+        particle_state, context_factory(), rng, n_steps=0
+    )
+
+    assert mutation.lengths == [0, 0, 0]
+    assert context.metadata["gibbs_updates"] == 3
+
+
+def test_sequential_step_runs_multiple_mutations_normally(
+    particle_state, context_factory, rng
+) -> None:
+    first, second = RecordingFixedMutation(), RecordingFixedMutation()
+    sequence = SequentialStep([first, second])
+    _, _, outputs = sequence(particle_state, context_factory(), rng)
+    assert first.lengths == second.lengths == [1]
+    assert len(outputs) == 2
+    assert all(output["metrics"].n_steps == 1 for output in outputs)
 
 
 def test_once_refit_reuses_transform_across_contexts(

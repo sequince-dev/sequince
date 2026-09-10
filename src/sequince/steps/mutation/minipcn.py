@@ -2,21 +2,25 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
-
-import numpy as np
 
 from ..._typing import Array
 from ...array_api import asarray, namespace
 from ...target import EvaluationCounts
 from ...transforms import ParticleTransform
 from ...utils.pytrees import pytree_dataclass
+from ..base import validate_n_steps
 from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
 )
+from .metrics import (
+    MutationMetric,
+    MutationStepState,
+)
+from .metrics.base import with_metrics
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -28,28 +32,40 @@ logger = logging.getLogger(__name__)
 
 
 @pytree_dataclass(
-    data_fields=("acceptance", "chain"),
+    data_fields=("acceptance_by_step", "chain", "metrics"),
     meta_fields=("step_fn", "steps"),
 )
 @dataclass(frozen=True)
 class MiniPCNOutput(Mapping[str, Any]):
-    """Fixed-structure MiniPCN diagnostics returned by a mutation step."""
+    """MiniPCN results with block acceptance in ``metrics.acceptance``.
 
-    acceptance: Any
+    ``acceptance_by_step`` contains the backend's accepted fraction per step.
+    """
+
+    acceptance_by_step: Any
     step_fn: str
     steps: int
     chain: Any
+    metrics: Any = None
 
     def __getitem__(self, key: str) -> Any:
-        if key not in {"acceptance", "step_fn", "steps", "chain"}:
+        if key not in {
+            "acceptance_by_step",
+            "step_fn",
+            "steps",
+            "chain",
+            "metrics",
+        }:
             raise KeyError(key)
         return getattr(self, key)
 
     def __iter__(self):
-        return iter(("acceptance", "step_fn", "steps", "chain"))
+        return iter(
+            ("acceptance_by_step", "step_fn", "steps", "chain", "metrics")
+        )
 
     def __len__(self) -> int:
-        return 4
+        return 5
 
 
 class MiniPCNMutation(MutationStep):
@@ -69,6 +85,7 @@ class MiniPCNMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
+        metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
         **kwargs,
     ) -> None:
         super().__init__(
@@ -76,6 +93,7 @@ class MiniPCNMutation(MutationStep):
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
+            metrics=metrics,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -84,6 +102,7 @@ class MiniPCNMutation(MutationStep):
         self._verbose = verbose
         self._kwargs = kwargs
         self._kwargs.setdefault("target_acceptance_rate", 0.234)
+        self._kwargs.setdefault("adaptive", False)
 
     def apply(
         self,
@@ -91,6 +110,54 @@ class MiniPCNMutation(MutationStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, MiniPCNOutput]:
+        return self.apply_with_n_steps(
+            state, context, rng, n_steps=self._n_steps
+        )
+
+    def apply_with_mutation_state(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState, StepContext, MiniPCNOutput, MutationStepState | None
+    ]:
+        n_steps = validate_n_steps(n_steps)
+        if n_steps == 0:
+            xp = namespace(state.particles)
+            mutation_state = (
+                self.metrics.initialize(
+                    state.particles, state.log_weights, context
+                )
+                if mutation_state is None
+                else self.metrics.prepare(
+                    mutation_state, state.particles, context
+                )
+            )
+            chain = (
+                xp.empty(
+                    (0, *state.particles.shape), dtype=state.particles.dtype
+                )
+                if self._store_chains
+                else None
+            )
+            return (
+                state,
+                context,
+                MiniPCNOutput(
+                    acceptance_by_step=xp.empty(
+                        (0,), dtype=state.particles.dtype
+                    ),
+                    step_fn=self._step_fn,
+                    steps=0,
+                    chain=chain,
+                    metrics=None,
+                ),
+                mutation_state,
+            )
         (
             sampler,
             latent_particles,
@@ -99,25 +166,39 @@ class MiniPCNMutation(MutationStep):
             context,
         ) = self._prepare_sampler(state, context, rng=rng)
 
+        mutation_state = (
+            self.metrics.initialize(
+                latent_particles, state.log_weights, context
+            )
+            if mutation_state is None
+            else self.metrics.prepare(
+                mutation_state, latent_particles, context
+            )
+        )
         chain, history = sampler.sample(
             latent_particles,
-            n_steps=self._n_steps,
+            n_steps=n_steps,
             verbose=self._verbose,
             rng=rng,
         )
 
-        acceptance = float(np.mean(history.acceptance_rate))
+        acceptance_by_step = asarray(
+            history.acceptance_rate,
+            xp=namespace(latent_particles),
+            like=latent_particles,
+        )
         return self._complete_mutation(
             state,
             context,
             latent_last=chain[-1],
-            latent_chain=chain[-self._n_steps :]
-            if self._store_chains
-            else None,
+            latent_chain=chain[-n_steps:] if self._store_chains else None,
+            diagnostic_chain=chain[-n_steps:],
             latent_particles=latent_particles,
             transform=transform,
             transform_auxiliary=transform_auxiliary,
-            acceptance=acceptance,
+            acceptance_by_step=acceptance_by_step,
+            n_steps=n_steps,
+            mutation_state=mutation_state,
         )
 
     def apply_functional(
@@ -140,7 +221,10 @@ class MiniPCNMutation(MutationStep):
             context,
         ) = self._prepare_sampler(state, context, rng=transform_rng)
         random_state = transform_rng.state()
-        return_last_only = not self._store_chains
+        mutation_state: MutationStepState | None = self.metrics.initialize(
+            latent_particles, state.log_weights, context
+        )
+        return_last_only = not (self._store_chains or self.metrics)
         chain, history, next_random_state = sampler.sample_functional(
             latent_particles,
             n_steps=self._n_steps,
@@ -150,18 +234,28 @@ class MiniPCNMutation(MutationStep):
         )
         xp = namespace(latent_particles)
         acceptance_rate = xp.asarray(history.acceptance_rate)
-        acceptance = xp.mean(acceptance_rate)
+        acceptance_by_step = acceptance_rate
         latent_last = chain if return_last_only else chain[-1]
         latent_chain = None if return_last_only else chain[-self._n_steps :]
-        updated_state, context, output = self._complete_mutation(
-            state,
-            context,
-            latent_last=latent_last,
-            latent_chain=latent_chain,
-            latent_particles=latent_particles,
-            transform=transform,
-            transform_auxiliary=transform_auxiliary,
-            acceptance=acceptance,
+        updated_state, context, output, mutation_state = (
+            self._complete_mutation(
+                state,
+                context,
+                latent_last=latent_last,
+                latent_chain=latent_chain if self._store_chains else None,
+                diagnostic_chain=None
+                if return_last_only
+                else chain[-self._n_steps :],
+                latent_particles=latent_particles,
+                transform=transform,
+                transform_auxiliary=transform_auxiliary,
+                acceptance_by_step=acceptance_by_step,
+                n_steps=self._n_steps,
+                mutation_state=mutation_state,
+            )
+        )
+        output = with_metrics(
+            output, self.metrics.result(mutation_state, context)
         )
         return updated_state, context, next_random_state, output
 
@@ -217,12 +311,17 @@ class MiniPCNMutation(MutationStep):
         *,
         latent_last: Array,
         latent_chain: Array | None,
+        diagnostic_chain: Array | None,
         latent_particles: Array,
         transform: ParticleTransform | None,
         transform_auxiliary: Any,
-        acceptance: Any,
-    ) -> tuple[ParticleState, StepContext, MiniPCNOutput]:
-        """Map MiniPCN results back to particle space and build diagnostics."""
+        acceptance_by_step: Any,
+        n_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState, StepContext, MiniPCNOutput, MutationStepState | None
+    ]:
+        """Map MiniPCN results back to particle space and build metrics."""
         xp = namespace(latent_particles)
         latent_last = asarray(latent_last, xp=xp, like=latent_particles)
         new_particles, _ = self._inverse_transform(
@@ -236,16 +335,16 @@ class MiniPCNMutation(MutationStep):
         )
         counts = EvaluationCounts(
             log_target_evaluations=(
-                final_counts.log_target_evaluations * (self._n_steps + 2)
+                final_counts.log_target_evaluations * (n_steps + 2)
             ),
             log_likelihood_evaluations=(
-                final_counts.log_likelihood_evaluations * (self._n_steps + 2)
+                final_counts.log_likelihood_evaluations * (n_steps + 2)
             ),
             log_proposal_evaluations=(
-                final_counts.log_proposal_evaluations * (self._n_steps + 2)
+                final_counts.log_proposal_evaluations * (n_steps + 2)
             ),
             log_increment_evaluations=(
-                final_counts.log_increment_evaluations * (self._n_steps + 2)
+                final_counts.log_increment_evaluations * (n_steps + 2)
             ),
         )
         context = context.add_evaluation_counts(counts)
@@ -260,16 +359,65 @@ class MiniPCNMutation(MutationStep):
                 like=latent_particles,
             )
 
+        if diagnostic_chain is not None:
+            assert mutation_state is not None
+
+            def record(carry, positions):
+                mutation_state, previous = carry
+                accepted = xp.any(
+                    xp.reshape(
+                        positions != previous, (positions.shape[0], -1)
+                    ),
+                    axis=1,
+                )
+                return (
+                    self.metrics.update(
+                        mutation_state, positions, accepted, context
+                    ),
+                    positions,
+                ), None
+
+            from ...array_api import is_jax_namespace
+
+            if is_jax_namespace(xp):
+                import jax
+
+                (mutation_state, _), _ = jax.lax.scan(
+                    record,
+                    (mutation_state, latent_particles),
+                    diagnostic_chain,
+                )
+            else:
+                carry = mutation_state, latent_particles
+                for positions in diagnostic_chain:
+                    carry, _ = record(carry, positions)
+                mutation_state, _ = carry
+
+        # Last-position-only sampling still exposes actual per-step acceptance.
+        if diagnostic_chain is None:
+            assert mutation_state is not None
+            n_particles = latent_particles.shape[0]
+            mutation_state = replace(
+                mutation_state,
+                n_steps=xp.asarray(n_steps),
+                n_attempted=xp.asarray(n_steps * n_particles),
+                n_accepted=xp.asarray(
+                    xp.round(xp.sum(acceptance_by_step) * n_particles),
+                    dtype=mutation_state.n_accepted.dtype,
+                ),
+            )
+
         logger.debug(
             "Iteration %d: MiniPCNMutation completed after %d steps.",
             context.t,
-            self._n_steps,
+            n_steps,
         )
         output = MiniPCNOutput(
-            acceptance=acceptance,
+            acceptance_by_step=acceptance_by_step,
             step_fn=self._step_fn,
-            steps=self._n_steps,
+            steps=n_steps,
             chain=stored_chain,
+            metrics=None,
         )
         return (
             state.replace_particles(
@@ -278,4 +426,5 @@ class MiniPCNMutation(MutationStep):
             ),
             context,
             output,
+            mutation_state,
         )

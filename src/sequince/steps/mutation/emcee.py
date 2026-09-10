@@ -15,12 +15,17 @@ from ...transforms import (
     ParticleTransform,
     has_particle_aligned_auxiliary,
 )
+from ..base import validate_n_steps
 from ..context import StepContext
 from .base import (
     MutationStep,
     TransformRefit,
     as_scalar_log_prob,
     as_vector_log_prob,
+)
+from .metrics import (
+    MutationMetric,
+    MutationStepState,
 )
 
 if TYPE_CHECKING:
@@ -201,6 +206,7 @@ class EmceeMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
+        metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
         **kwargs,
     ):
         import emcee
@@ -210,6 +216,7 @@ class EmceeMutation(MutationStep):
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
+            metrics=metrics,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -217,6 +224,15 @@ class EmceeMutation(MutationStep):
         self._move = resolve_emcee_moves(move) or emcee.moves.StretchMove()
         self._run_kwargs: dict[str, Any] = dict(run_kwargs or {})
         self._run_kwargs.setdefault("progress", False)
+        if (
+            self._run_kwargs.get("thin_by", 1) != 1
+            or self._run_kwargs.get("thin") not in (None, 1)
+            or not self._run_kwargs.get("store", True)
+        ):
+            raise ValueError(
+                "Emcee mutation bookkeeping requires unthinned transitions "
+                "(thin_by=1, thin=None or 1) and store=True."
+            )
         self._kwargs: dict[str, Any] = kwargs
 
     def apply(
@@ -225,6 +241,53 @@ class EmceeMutation(MutationStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple[ParticleState, StepContext, dict[str, object]]:
+        return self.apply_with_n_steps(
+            state, context, rng, n_steps=self._n_steps
+        )
+
+    def apply_with_mutation_state(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState,
+        StepContext,
+        dict[str, object],
+        MutationStepState | None,
+    ]:
+        n_steps = validate_n_steps(n_steps)
+        if n_steps == 0:
+            xp = namespace(state.particles)
+            mutation_state = (
+                self.metrics.initialize(
+                    state.particles, state.log_weights, context
+                )
+                if mutation_state is None
+                else self.metrics.prepare(
+                    mutation_state, state.particles, context
+                )
+            )
+            chain = (
+                xp.empty(
+                    (0, *state.particles.shape), dtype=state.particles.dtype
+                )
+                if self._store_chains
+                else None
+            )
+            return (
+                state,
+                context,
+                {
+                    "steps": 0,
+                    "chain": chain,
+                    "metrics": None,
+                },
+                mutation_state,
+            )
         import emcee
 
         xp = namespace(state.particles)
@@ -255,11 +318,24 @@ class EmceeMutation(MutationStep):
             squeeze_last = False
 
         n_walkers, ndim = initial_positions.shape
+        mutation_state = (
+            self.metrics.initialize(
+                asarray(initial_positions, xp=xp, like=latent_particles),
+                state.log_weights,
+                context,
+            )
+            if mutation_state is None
+            else self.metrics.prepare(
+                mutation_state,
+                asarray(initial_positions, xp=xp, like=latent_particles),
+                context,
+            )
+        )
         logger.debug(
             "EmceeMutation starting: %d walkers, %d dimensions, %d steps.",
             n_walkers,
             ndim,
-            self._n_steps,
+            n_steps,
         )
 
         vectorized = bool(self._kwargs.get("vectorize", False))
@@ -345,11 +421,21 @@ class EmceeMutation(MutationStep):
         )
         sampler.random_state = np.random.RandomState(emcee_seed).get_state()
 
-        state_result = sampler.run_mcmc(
-            initial_positions,
-            self._n_steps,
-            **self._run_kwargs,
-        )
+        previous_accepted = np.zeros(n_walkers)
+        for state_result in sampler.sample(
+            initial_positions, iterations=n_steps, **self._run_kwargs
+        ):
+            cumulative_accepted = sampler.backend.accepted
+            accepted = cumulative_accepted > previous_accepted
+            mutation_state = self.metrics.update(
+                mutation_state,
+                asarray(
+                    state_result.coords.copy(), xp=xp, like=latent_particles
+                ),
+                asarray(accepted, xp=xp, like=latent_particles),
+                context,
+            )
+            previous_accepted = cumulative_accepted.copy()
         new_positions = state_result.coords
 
         if squeeze_last:
@@ -377,9 +463,8 @@ class EmceeMutation(MutationStep):
         acceptance = float(np.mean(sampler.acceptance_fraction))
         stored_chain = None
         if self._store_chains:
-            chains = sampler.get_chain(flat=False, discard=0, thin=1)
             stored_chain = self._inverse_chain(
-                chains,
+                sampler.get_chain(flat=False, discard=0, thin=1),
                 transform,
                 context,
                 auxiliary=transform_auxiliary,
@@ -389,12 +474,12 @@ class EmceeMutation(MutationStep):
         logger.debug(
             "EmceeMutation completed: acceptance=%.3f after %d steps.",
             acceptance,
-            self._n_steps,
+            n_steps,
         )
         output = {
-            "acceptance": acceptance,
-            "steps": self._n_steps,
+            "steps": n_steps,
             "chain": stored_chain,
+            "metrics": None,
         }
         return (
             state.replace_particles(
@@ -403,4 +488,5 @@ class EmceeMutation(MutationStep):
             ),
             context,
             output,
+            mutation_state,
         )

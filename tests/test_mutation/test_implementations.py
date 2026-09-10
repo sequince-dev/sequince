@@ -37,7 +37,8 @@ def test_mutation_runs_single_step(
     )(particle_state, context, rng)
 
     assert mutated.particles.shape == particle_state.particles.shape
-    assert "acceptance" in output
+    assert "acceptance" not in output
+    assert 0 <= output["metrics"].acceptance <= 1
     assert output["steps"] == 1
     assert "mutation_chains" not in mutated.metadata
     assert output["chain"].shape[0] == 1
@@ -62,7 +63,8 @@ def test_mutation_evaluates_final_population(
         np.testing.assert_allclose(
             mutated.evaluation[component], expected[component]
         )
-    assert "acceptance" in output
+    assert "acceptance" not in output
+    assert 0 <= output["metrics"].acceptance <= 1
 
 
 @pytest.mark.parametrize(
@@ -87,5 +89,6 @@ def test_mutation_with_transform(
     )(particle_state, context, rng)
 
     assert mutated.particles.shape == particle_state.particles.shape
-    assert "acceptance" in output
+    assert "acceptance" not in output
+    assert 0 <= output["metrics"].acceptance <= 1
     assert output["steps"] == n_steps

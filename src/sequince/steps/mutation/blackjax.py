@@ -17,8 +17,13 @@ from ...transforms import (
     select_transform_auxiliary,
 )
 from ...utils.pytrees import pytree_dataclass
+from ..base import validate_n_steps
 from ..context import StepContext
 from .base import MutationStep, TransformRefit
+from .metrics import (
+    MutationMetric,
+    MutationStepState,
+)
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -33,32 +38,39 @@ BlackJAXAlgorithmFactory = Callable[..., Any]
 
 @pytree_dataclass(
     data_fields=(
-        "acceptance",
+        "mean_acceptance_probability",
         "divergence",
         "chain",
         "num_integration_steps",
+        "metrics",
     ),
     meta_fields=("algorithm", "steps"),
 )
 @dataclass(frozen=True)
 class BlackJAXOutput(Mapping[str, Any]):
-    """Fixed-structure BlackJAX diagnostics returned by a mutation step."""
+    """BlackJAX results with block acceptance in ``metrics.acceptance``.
 
-    acceptance: Any
+    ``mean_acceptance_probability`` averages the backend's MH acceptance
+    probabilities when available; it is not the realized accepted fraction.
+    """
+
+    mean_acceptance_probability: Any
     divergence: Any
     algorithm: str
     steps: int
     chain: Any
     num_integration_steps: Any = None
+    metrics: Any = None
 
     def __getitem__(self, key: str) -> Any:
         if key not in {
-            "acceptance",
+            "mean_acceptance_probability",
             "divergence",
             "algorithm",
             "steps",
             "chain",
             "num_integration_steps",
+            "metrics",
         }:
             raise KeyError(key)
         return getattr(self, key)
@@ -66,17 +78,18 @@ class BlackJAXOutput(Mapping[str, Any]):
     def __iter__(self):
         return iter(
             (
-                "acceptance",
+                "mean_acceptance_probability",
                 "divergence",
                 "algorithm",
                 "steps",
                 "chain",
                 "num_integration_steps",
+                "metrics",
             )
         )
 
     def __len__(self) -> int:
-        return 6
+        return 7
 
 
 class BlackJAXMutation(MutationStep):
@@ -123,12 +136,14 @@ class BlackJAXMutation(MutationStep):
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
+        metrics: tuple[MutationMetric, ...] | list[MutationMetric] = (),
     ) -> None:
         super().__init__(
             log_prob_fn,
             transform=transform,
             transform_refit=transform_refit,
             store_chains=store_chains,
+            metrics=metrics,
         )
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1.")
@@ -212,6 +227,57 @@ class BlackJAXMutation(MutationStep):
         context: StepContext,
         rng: "RandomGenerator",
     ) -> tuple["ParticleState", StepContext, BlackJAXOutput]:
+        return self.apply_with_n_steps(
+            state, context, rng, n_steps=self._n_steps
+        )
+
+    def apply_with_mutation_state(
+        self,
+        state: "ParticleState",
+        context: StepContext,
+        rng: "RandomGenerator",
+        *,
+        n_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        "ParticleState",
+        StepContext,
+        BlackJAXOutput,
+        MutationStepState | None,
+    ]:
+        n_steps = validate_n_steps(n_steps)
+        if n_steps == 0:
+            xp = namespace(state.particles)
+            mutation_state = (
+                self.metrics.initialize(
+                    state.particles, state.log_weights, context
+                )
+                if mutation_state is None
+                else self.metrics.prepare(
+                    mutation_state, state.particles, context
+                )
+            )
+            chain = (
+                xp.empty(
+                    (0, *state.particles.shape), dtype=state.particles.dtype
+                )
+                if self._store_chains
+                else None
+            )
+            return (
+                state,
+                context,
+                BlackJAXOutput(
+                    mean_acceptance_probability=None,
+                    divergence=None,
+                    algorithm=self.algorithm_name,
+                    steps=0,
+                    chain=chain,
+                    num_integration_steps=None,
+                    metrics=None,
+                ),
+                mutation_state,
+            )
         import jax
         import jax.numpy as jnp
 
@@ -274,9 +340,20 @@ class BlackJAXMutation(MutationStep):
                 dimensions,
             )
             states = jax.vmap(shared_algorithm.init)(initial_positions)
-        step_keys = jax.random.split(self._jax_key(rng), self._n_steps)
+        step_keys = jax.random.split(self._jax_key(rng), n_steps)
 
-        def one_step(states: Any, key: Any) -> tuple[Any, tuple[Any, Any]]:
+        mutation_state = (
+            self.metrics.initialize(
+                initial_positions, state.log_weights, context
+            )
+            if mutation_state is None
+            else self.metrics.prepare(
+                mutation_state, initial_positions, context
+            )
+        )
+
+        def one_step(carry: Any, key: Any) -> tuple[Any, tuple[Any, Any]]:
+            states, mutation_state = carry
             chain_keys = jax.random.split(key, n_particles)
 
             def step_particle(
@@ -298,10 +375,16 @@ class BlackJAXMutation(MutationStep):
                 updated, info = jax.vmap(shared_algorithm.step)(
                     chain_keys, states
                 )
-            return updated, (updated, info)
+            accepted = getattr(info, "is_accepted", None)
+            if accepted is None:
+                accepted = jnp.any(updated.position != states.position, axis=1)
+            mutation_state = self.metrics.update(
+                mutation_state, updated.position, accepted, context
+            )
+            return (updated, mutation_state), (updated, info)
 
-        final_states, (chain_states, infos) = jax.lax.scan(
-            one_step, states, step_keys
+        (final_states, mutation_state), (chain_states, infos) = jax.lax.scan(
+            one_step, (states, mutation_state), step_keys
         )
         latent_result = final_states.position
         if squeeze_last:
@@ -318,7 +401,7 @@ class BlackJAXMutation(MutationStep):
 
         integration_steps = getattr(infos, "num_integration_steps", None)
         if integration_steps is None:
-            internal_evaluation_points = n_particles * (self._n_steps + 1)
+            internal_evaluation_points = n_particles * (n_steps + 1)
         else:
             internal_evaluation_points = n_particles + jnp.sum(
                 integration_steps
@@ -344,11 +427,9 @@ class BlackJAXMutation(MutationStep):
         )
         context = context.add_evaluation_counts(counts)
 
-        acceptance = getattr(infos, "acceptance_rate", None)
-        if acceptance is None:
-            acceptance = getattr(infos, "is_accepted", None)
-        if acceptance is not None:
-            acceptance = jnp.mean(acceptance)
+        mean_acceptance_probability = getattr(infos, "acceptance_rate", None)
+        if mean_acceptance_probability is not None:
+            mean_acceptance_probability = jnp.mean(mean_acceptance_probability)
         divergence = getattr(infos, "is_divergent", None)
         if divergence is not None:
             divergence = jnp.mean(divergence)
@@ -365,15 +446,16 @@ class BlackJAXMutation(MutationStep):
         logger.debug(
             "BlackJAXMutation completed with %s after %d steps.",
             self.algorithm_name,
-            self._n_steps,
+            n_steps,
         )
         output = BlackJAXOutput(
-            acceptance=acceptance,
+            mean_acceptance_probability=mean_acceptance_probability,
             divergence=divergence,
             algorithm=self.algorithm_name,
-            steps=self._n_steps,
+            steps=n_steps,
             chain=stored_chain,
             num_integration_steps=integration_steps,
+            metrics=None,
         )
         return (
             state.replace_particles(
@@ -382,4 +464,5 @@ class BlackJAXMutation(MutationStep):
             ),
             context,
             output,
+            mutation_state,
         )
