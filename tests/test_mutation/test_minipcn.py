@@ -4,12 +4,14 @@ import numpy as np
 import pytest
 
 from sequince import ParticleState, make_standard_bayesian_smc
-from sequince.jax import compile_functional_iteration
 from sequince.steps import StepContext
 from sequince.steps.mutation import MiniPCNMutation
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
+compile_functional_iteration = pytest.importorskip(
+    "sequince.jax"
+).compile_functional_iteration
 
 
 def _standard_normal_log_prob(particles, context):
