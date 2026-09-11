@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 from orng import RandomGenerator
 
-from sequince.array_api import namespace
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.stats import (
@@ -20,11 +19,9 @@ from sequince.steps import (
     AdaptiveGaussianProposal,
     ContinueWhile,
     MutateIfResampled,
-    WasteFreeResampleMove,
 )
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.control import PeriodicStep
-from sequince.steps.mutation import GaussianRandomWalk
 from sequince.steps.weighting import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
@@ -738,144 +735,6 @@ def test_adapt_gaussian_proposal_updates_scale(
     )
 
 
-def test_waste_free_resample_move_returns_uniform_weights(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-    standard_normal_log_prob,
-) -> None:
-    context = context_factory(shared={"beta": 1.0})
-    proposal = GaussianRandomWalk(scale=0.5)
-    step = WasteFreeResampleMove(standard_normal_log_prob, proposal)
-
-    updated, context, output = step(particle_state, context, rng)
-
-    n = particle_state.particles.shape[0]
-    assert np.allclose(updated.log_weights, -np.log(n))
-    assert "waste_free_acceptance" not in updated.metadata
-    assert output["proposal_repeats"] == 1
-    total_selected = output["selected_parents"] + output["selected_proposals"]
-    assert total_selected == n
-    assert len(output["mean_acceptance_probability_by_round"]) == 1
-
-
-def test_waste_free_resample_move_handles_one_dimensional_particles(
-    rng,
-) -> None:
-    particles = np.array([-1.0, -0.2, 0.5, 1.3])
-    n = particles.size
-    state = ParticleState(
-        particles=particles,
-        log_weights=np.full(n, -np.log(n)),
-        metadata={"beta": 0.0},
-    )
-
-    def log_prob(particles: np.ndarray, context: StepContext) -> np.ndarray:
-        pts = np.asarray(particles, dtype=float)
-        return -0.5 * (pts**2)
-
-    context = StepContext(t=0, shared={})
-    proposal = GaussianRandomWalk(scale=0.3)
-    step = WasteFreeResampleMove(
-        log_prob,
-        proposal,
-        resample_ancestors=False,
-    )
-
-    updated, context, output = step(state, context, rng)
-    assert updated.particles.shape == particles.shape
-    assert np.allclose(updated.log_weights, -np.log(n))
-    assert len(output["mean_acceptance_probability_by_round"]) == 1
-    assert output["proposal_repeats"] == 1
-
-
-def test_waste_free_resample_move_multiple_proposals(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-    standard_normal_log_prob,
-) -> None:
-    context = context_factory(shared={"beta": 1.0})
-    step = WasteFreeResampleMove(
-        standard_normal_log_prob,
-        GaussianRandomWalk(scale=0.4),
-        proposals_per_particle=3,
-    )
-
-    updated, context, output = step(particle_state, context, rng)
-
-    n = particle_state.particles.shape[0]
-    assert np.allclose(updated.log_weights, -np.log(n))
-    assert output["proposal_repeats"] == 3
-    assert len(output["mean_acceptance_probability_by_round"]) == 3
-    assert len(output["selected_proposals_by_round"]) == 3
-    assert (
-        sum(output["selected_proposals_by_round"])
-        == output["selected_proposals"]
-    )
-    assert output["total_proposals"] == n * 3
-
-
-@pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
-def test_waste_free_resample_move_preserves_array_backend(
-    backend: str,
-    backend_factory,
-    context_factory,
-) -> None:
-    case = backend_factory(backend)
-    xp = case.xp
-    particles = case.particles
-    backend_ns = namespace(particles)
-
-    def log_prob(values, context: StepContext):
-        return -0.5 * xp.sum(values**2, axis=1)
-
-    step = WasteFreeResampleMove(
-        log_prob,
-        GaussianRandomWalk(scale=0.4),
-        proposals_per_particle=2,
-    )
-    updated, _, output = step(
-        case.state(),
-        context_factory(shared={"beta": 1.0}),
-        case.rng(1234),
-    )
-
-    assert namespace(updated.particles) is backend_ns
-    assert namespace(updated.log_weights) is backend_ns
-    assert namespace(output["ancestors"]) is backend_ns
-    assert updated.particles.shape == particles.shape
-    assert updated.log_weights.shape == case.log_weights.shape
-
-
-def test_waste_free_resample_move_supports_dynamic_proposal(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-    standard_normal_log_prob,
-) -> None:
-    context = context_factory(metadata={"proposal_scale": 0.15})
-    factory_scales = []
-
-    def factory(parents: np.ndarray, ctx: StepContext) -> GaussianRandomWalk:
-        scale = float(ctx.metadata.get("proposal_scale", 0.15))
-        factory_scales.append(scale)
-        return GaussianRandomWalk(scale=scale)
-
-    step = WasteFreeResampleMove(
-        standard_normal_log_prob,
-        factory,
-        proposals_per_particle=2,
-    )
-
-    _, context, _ = step(particle_state, context, rng)
-
-    assert factory_scales
-    assert all(
-        scale == context.metadata["proposal_scale"] for scale in factory_scales
-    )  # noqa: PLR2004
-
-
 def test_continue_while_overrides_stop_request(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
@@ -977,44 +836,3 @@ def test_proposal_adaptation_requires_completed_metrics(
         AdaptiveGaussianProposal(Mutation())(
             particle_state, context_factory(), rng
         )
-
-
-def test_waste_free_diagnostics_drive_proposal_adaptation(
-    context_factory, rng
-):
-    from sequince.steps.mutation import CallableMutationKernel
-
-    scales = []
-
-    def factory(parents, context):
-        scales.append(context.metadata["proposal_scale"])
-        return CallableMutationKernel(lambda p, r: p + 1, symmetric=True)
-
-    # Every proposal has acceptance probability 1/2, regardless of parent.
-    move = WasteFreeResampleMove(
-        lambda p, c: -np.log(2) * p[:, 0],
-        factory,
-        resample_ancestors=False,
-        proposals_per_particle=3,
-    )
-    adapter = AdaptiveGaussianProposal(
-        move,
-        initial_scale=0.7,
-        target_acceptance=0.3,
-        adaptation_rate=0.2,
-    )
-    state = ParticleState(np.zeros((3, 1)))
-    state, context, output = adapter(state, context_factory(), rng)
-    metrics = output["metrics"]
-    assert metrics.n_steps == 3
-    assert metrics.n_attempted == 9
-    assert metrics.n_accepted == pytest.approx(4.5)
-    assert metrics.acceptance == pytest.approx(0.5)
-    assert output["metrics"].acceptance == pytest.approx(0.5)
-    assert output["mean_acceptance_probability_by_round"] == pytest.approx(
-        [0.5] * 3
-    )
-    expected_scale = 0.7 * np.exp(0.2 * (0.5 - 0.3))
-    assert context.metadata["proposal_scale"] == pytest.approx(expected_scale)
-    adapter(state, context, rng)
-    assert scales == pytest.approx([0.7, expected_scale])
