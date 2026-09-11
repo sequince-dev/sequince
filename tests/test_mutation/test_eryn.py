@@ -147,7 +147,7 @@ def test_custom_move(context_factory):
     move = GaussianMove({"model_0": np.eye(2) * 0.1})
     state = ParticleState(np.zeros((10, 2)))
     result, _, output = ErynMutation(
-        lambda x: 0.0,
+        lambda x: np.zeros(x.shape[0]),
         move=move,
         n_steps=3,
     )(state, context_factory(), RandomGenerator(seed=7))
