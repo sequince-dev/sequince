@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection
 
 import numpy as np
+import pytest
 
 from sequince.posterior import TemperedPosterior
 from sequince.target import (
@@ -277,3 +278,60 @@ def test_tempered_posterior_exposes_annealed_endpoints(
     np.testing.assert_allclose(
         target.log_prob(particles, context, evaluation=evaluation), -1.5
     )
+
+
+@pytest.mark.parametrize("beta", [0.0, 0.25, 1.0])
+@pytest.mark.parametrize("array_beta", [False, True])
+@pytest.mark.parametrize("backend_name", ["numpy", "jax", "torch", "cupy"])
+def test_tempered_density_preserves_zero_support(
+    beta, array_beta, backend_name, backend_factory, context_factory
+):
+    from sequince.array_api import to_numpy
+
+    xp = backend_factory(backend_name).xp
+    particles = xp.asarray(
+        [
+            [-float("inf"), -float("inf")],
+            [-float("inf"), -2.0],
+            [-3.0, -float("inf")],
+            [-3.0, -2.0],
+        ]
+    )
+    target = TemperedPosterior(
+        log_proposal=lambda x: x[:, 0],
+        log_prior=lambda x: x[:, 1],
+        log_likelihood=lambda x: xp.zeros_like(x[:, 1]),
+    )
+    context = context_factory(
+        metadata={"beta": xp.asarray(beta) if array_beta else beta}
+    )
+    with np.errstate(invalid="raise"):
+        result = target.log_prob(particles, context)
+    if beta == 0:
+        expected = [-np.inf, -np.inf, -3.0, -3.0]
+    elif beta == 1:
+        expected = [-np.inf, -2.0, -np.inf, -2.0]
+    else:
+        expected = [-np.inf, -np.inf, -np.inf, -2.75]
+    np.testing.assert_allclose(to_numpy(result), expected)
+
+
+def test_tempered_density_with_traced_beta(context_factory):
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    particles = jnp.array([[-jnp.inf, -2.0], [-3.0, -jnp.inf]])
+    target = TemperedPosterior(
+        log_proposal=lambda x: x[:, 0],
+        log_prior=lambda x: x[:, 1],
+        log_likelihood=lambda x: jnp.zeros_like(x[:, 1]),
+    )
+
+    @jax.jit
+    def log_prob(beta):
+        return target.log_prob(
+            particles, context_factory(metadata={"beta": beta})
+        )
+
+    np.testing.assert_array_equal(log_prob(0.0), [-np.inf, -3.0])
+    np.testing.assert_array_equal(log_prob(0.5), [-np.inf, -np.inf])
+    np.testing.assert_array_equal(log_prob(1.0), [-2.0, -np.inf])
