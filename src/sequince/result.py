@@ -99,6 +99,7 @@ def _warn_if_resampling_is_not_multinomial(
 def _supported_output_record_types() -> tuple[type[Any], ...]:
     from .steps.control import ConditionalStepOutput
     from .steps.mutation.blackjax import BlackJAXOutput
+    from .steps.mutation.metrics import MutationMetricsOutput
     from .steps.mutation.minipcn import MiniPCNOutput
     from .steps.resampling import ResamplingOutput
 
@@ -107,6 +108,7 @@ def _supported_output_record_types() -> tuple[type[Any], ...]:
         ResamplingOutput,
         MiniPCNOutput,
         BlackJAXOutput,
+        MutationMetricsOutput,
     )
 
 

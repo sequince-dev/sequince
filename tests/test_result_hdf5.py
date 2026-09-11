@@ -422,3 +422,30 @@ def test_cupy_source_arrays_load_as_numpy(tmp_path) -> None:
         loaded = ParticleState.load(h5_file)
     assert isinstance(loaded.particles, np.ndarray)
     np.testing.assert_array_equal(loaded.particles, np.array([[1.0], [2.0]]))
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.filterwarnings("error:Converting unrecognized result-output")
+def test_mutation_metrics_round_trip_without_warning(tmp_path, strict):
+    metrics = MutationMetricsOutput(
+        n_steps=np.asarray(3),
+        n_attempted=np.asarray(6),
+        n_accepted=np.asarray(2.5),
+        values={"distance": np.array([0.25, 0.75])},
+    )
+    result = SMCResult(
+        [make_state()],
+        StepContext(t=0),
+        outputs=(({"steps": 3, "chain": None, "metrics": metrics},),),
+    )
+    with h5py.File(tmp_path / "mutation-metrics.h5", "w") as h5_file:
+        result.save(h5_file, strict=strict)
+    with h5py.File(tmp_path / "mutation-metrics.h5", "r") as h5_file:
+        loaded = SMCResult.load(h5_file)
+    restored = loaded.outputs[0][0]["metrics"]
+    assert restored["n_steps"] == 3
+    assert restored["n_attempted"] == 6
+    assert restored["n_accepted"] == 2.5
+    np.testing.assert_array_equal(
+        restored["values"]["distance"], metrics.values["distance"]
+    )
