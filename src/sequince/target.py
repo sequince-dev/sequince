@@ -650,7 +650,11 @@ class TemperedTarget(SequentialTarget):
                 )
         initial = self.log_initial(particles, context, evaluation=evaluation)
         terminal = self.log_terminal(particles, context, evaluation=evaluation)
-        return initial + beta * (terminal - initial)
+        xp = namespace(particles)
+        beta = asarray(beta, xp=xp, like=particles)
+        initial = xp.where(beta == 1.0, 0.0, initial)
+        terminal = xp.where(beta == 0.0, 0.0, terminal)
+        return (1.0 - beta) * initial + beta * terminal
 
     def log_increment(
         self,
