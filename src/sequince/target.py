@@ -422,6 +422,23 @@ class Target(ABC):
             self.evaluation_key(context),
         )
 
+    def evaluation_components(
+        self, context: StepContext
+    ) -> Collection[str] | None:
+        """Components needed for a full density evaluation, when known.
+
+        These are the components used to compute ``log_prob``, such as during
+        MCMC. They need not include every component the target supports:
+        ``log_increment`` is included only when the density itself requires it.
+        Other components can still be requested explicitly through
+        ``prepare_evaluation(components=...)``.
+
+        When ``components=None``, preparation uses this declaration to complete
+        a partial cache and retain only these components. Returning None
+        preserves the default full-evaluation contract for custom targets.
+        """
+        return None
+
     @overload
     def prepare_evaluation(
         self,
@@ -458,10 +475,16 @@ class Target(ABC):
     ) -> TargetEvaluation | tuple[TargetEvaluation, EvaluationCounts]:
         """Return a compatible evaluation, optionally with new work counts.
 
-        ``components`` limits a fresh evaluation. ``refresh_components``
+        ``components`` requests named values, filling any missing cached values.
+        Full requests use ``evaluation_components`` when declared. ``refresh_components``
         requests recomputation when a compatible cached evaluation is supplied.
         """
         xp = namespace(particles)
+        required = (
+            self.evaluation_components(context)
+            if components is None
+            else components
+        )
         if evaluation is None:
             prepared, counts = self._evaluate(
                 particles,
@@ -483,19 +506,35 @@ class Target(ABC):
                 context,
                 components=components,
             )
-        elif refresh_components:
-            evaluation.validate_for(particles)
-            prepared, counts = self._evaluate(
-                particles,
-                context,
-                evaluation=evaluation,
-                components=refresh_components,
-                refresh=True,
-            )
         else:
             evaluation.validate_for(particles)
-            counts = EvaluationCounts.zeros(xp=xp)
-            return (evaluation, counts) if return_counts else evaluation
+            missing = (
+                set()
+                if required is None
+                else set(required).difference(evaluation.components)
+            )
+            needed = missing | set(refresh_components)
+            if refresh_components and components is not None:
+                needed.update(components)
+            if not needed:
+                prepared = evaluation
+                counts = EvaluationCounts.zeros(xp=xp)
+            else:
+                prepared, counts = self._evaluate(
+                    particles,
+                    context,
+                    evaluation=evaluation,
+                    components=needed,
+                    refresh=bool(refresh_components),
+                )
+        if (
+            components is None
+            and required is not None
+            and set(prepared.components).difference(required)
+        ):
+            prepared = TargetEvaluation(
+                {name: prepared[name] for name in required}
+            )
         prepared.validate_for(particles)
         prepared = self.bind_evaluation(prepared, context)
         return (prepared, counts) if return_counts else prepared

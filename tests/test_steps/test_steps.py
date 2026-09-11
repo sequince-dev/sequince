@@ -301,23 +301,23 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
             evaluation=None,
         ):
             requested = (
-                {"base", "increment"} if components is None else components
+                {"base", "log_increment"} if components is None else components
             )
             values = {} if evaluation is None else dict(evaluation.components)
             if "base" in requested:
                 values["base"] = -np.sum(particles**2, axis=1)
-            if "increment" in requested:
-                values["increment"] = particles[:, 0]
+            if "log_increment" in requested:
+                values["log_increment"] = particles[:, 0]
             return TargetEvaluation(values)
 
         def log_increment(self, particles, context, *, evaluation=None):
             evaluation = evaluation or self.evaluate(particles, context)
-            return evaluation["increment"]
+            return evaluation["log_increment"]
 
         def log_prob(self, particles, context, *, evaluation=None):
             evaluation = evaluation or self.evaluate(particles, context)
             beta = float(context.metadata.get("beta", 0.0))
-            return evaluation["base"] + beta * evaluation["increment"]
+            return evaluation["base"] + beta * evaluation["log_increment"]
 
     context = context_factory(metadata={"beta": 0.0})
     initial_log_weights = particle_state.log_weights.copy()
@@ -341,7 +341,7 @@ def test_incremental_weighting_accepts_a_general_sequential_target(
     )
     assert updated.log_evidence == pytest.approx(particle_state.log_evidence)
     assert updated.evaluation is not None
-    assert updated.evaluation.components.keys() == {"base", "increment"}
+    assert updated.evaluation.components.keys() == {"log_increment"}
     assert context.evaluation_counts.log_increment_evaluations == len(
         particle_state.particles
     )
