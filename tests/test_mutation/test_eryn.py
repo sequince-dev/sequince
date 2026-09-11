@@ -380,3 +380,38 @@ def test_cupy_rng_is_replaced_and_restored_without_reseeding_caller(fail):
     original.seed.assert_not_called()
     for previous, current in zip(before, np.random.get_state()):
         np.testing.assert_equal(previous, current)
+
+
+@pytest.mark.parametrize("vectorize", [False, True])
+def test_eryn_rejects_proposals_outside_prior_support(
+    vectorize, context_factory
+):
+    from eryn.moves import GaussianMove
+
+    rejected_positions = []
+
+    def log_prior(x):
+        inside = np.all(np.abs(x) < 1, axis=-1)
+        rejected_positions.extend(np.atleast_1d(~inside))
+        return np.where(inside, 0.0, -np.inf)
+
+    # Exercise Eryn rejection independently of tempered-target interpolation.
+    def target(x):
+        return log_prior(x) - 0.125 * np.sum(x * x, axis=-1)
+
+    state = ParticleState(np.random.default_rng(1).uniform(-0.9, 0.9, (20, 2)))
+    step = ErynMutation(
+        target,
+        n_steps=5,
+        vectorize=vectorize,
+        move=GaussianMove({"model_0": np.eye(2)}),
+    )
+    with np.errstate(invalid="raise"):
+        result, _, output = step(
+            state,
+            context_factory(metadata={"beta": 0.25}),
+            RandomGenerator(seed=7),
+        )
+    assert any(rejected_positions)
+    assert np.all(np.abs(result.particles) < 1)
+    assert 0 < output["metrics"].acceptance < 1

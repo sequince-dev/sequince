@@ -55,17 +55,25 @@ def _seed_eryn_rng(seed: int, *, cupy: Any = None):
             cupy.random.set_random_state(cupy_state)
 
 
-class _ZeroLogPrior:
-    """Eryn prior that returns zero log probability for any input.
+class _TargetPrior:
+    """Route the full target through Eryn's support-aware prior bookkeeping.
 
-    The actual prior is handled by Sequince's target.
+    Eryn safely rejects -inf priors, but its likelihood state update would
+    multiply a rejected -inf likelihood by zero and produce NaN. With one
+    temperature, a full-density prior and zero likelihood give the same target.
     """
 
-    def __init__(self, ndim: int):
+    def __init__(self, ndim: int, log_prob: Callable, *, vectorize: bool):
         self.key_order = list(range(ndim))
+        self.log_prob = log_prob
+        self.vectorize = vectorize
 
     def logpdf(self, values):
-        return np.zeros(values.shape[:-1])
+        if self.vectorize:
+            # Eryn masks these values in place; backend conversions (notably
+            # from JAX) can otherwise expose a read-only NumPy view.
+            return np.array(self.log_prob(values), copy=True)
+        return np.asarray([self.log_prob(value) for value in values])
 
 
 class ErynMutation(MutationStep):
@@ -280,8 +288,14 @@ class ErynMutation(MutationStep):
         sampler = EnsembleSampler(
             n_walkers,
             ndim,
-            log_prob_callable,
-            priors={"model_0": _ZeroLogPrior(ndim)},
+            lambda positions: (
+                np.zeros(positions.shape[0]) if self._vectorize else 0.0
+            ),
+            priors={
+                "model_0": _TargetPrior(
+                    ndim, log_prob_callable, vectorize=self._vectorize
+                )
+            },
             moves=deepcopy(self._move),
             vectorize=self._vectorize,
         )
