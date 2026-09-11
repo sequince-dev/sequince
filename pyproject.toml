@@ -48,6 +48,10 @@ blackjax = [
 emcee = [
     "emcee>=3.0",
 ]
+eryn = [
+    "eryn>=1.2.6",
+    "numpy<2.4", # Eryn uses np.in1d, removed in NumPy 2.4.
+]
 corner = [
     "corner",
 ]
@@ -65,7 +69,7 @@ test-core = [
 ]
 test = [
     {include-group = "test-core"},
-    "sequince[jax,blackjax]",
+    "sequince[jax,blackjax,eryn]",
 ]
 lint = [
     "pre-commit",
@@ -114,7 +118,8 @@ default = { features = ["cpu", "py313", "test-core", "lint"], solve-group = "py3
 py311 = ["cpu", "py311", "test-core"]
 py312 = ["cpu", "py312", "test-core"]
 py313 = { features = ["cpu", "py313", "test-core"], solve-group = "py313" }
-all-backends = ["cpu", "py313", "test-core", "jax", "blackjax", "jax-cpu", "torch-cpu"]
+all-backends = ["cpu", "py313", "test-core", "jax", "blackjax", "jax-cpu", "torch-cpu", "eryn"]
+eryn = ["cpu", "py313", "test-core", "eryn"]
 docs = ["cpu", "py313", "doc"]
 jax = ["cpu", "py313", "test-core", "jax", "blackjax", "jax-cpu"]
 jax-cuda12 = ["py313", "test-core", "cuda12", "jax", "blackjax", "jax-gpu", "jax-cuda12"]
@@ -143,6 +148,13 @@ python = "3.13.*"
 [tool.pixi.feature.test-core.tasks]
 test = "python -m pytest"
 test-backends = "python -m pytest tests/test_array_api.py tests/test_array_backends.py"
+
+[tool.pixi.feature.eryn.dependencies]
+# Match the extra's bound in the conda solve when PyTorch brings in NumPy.
+numpy = "<2.4"
+
+[tool.pixi.feature.eryn.tasks]
+test-eryn = "python -m pytest tests/test_mutation/test_eryn.py"
 
 [tool.pixi.feature.lint.tasks]
 lint = "ruff check ."

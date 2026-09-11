@@ -20,6 +20,7 @@ from .emcee import (
     get_emcee_move,
     resolve_emcee_moves,
 )
+from .eryn import ErynMutation
 from .factory import get_mutation_step
 from .kernels import (
     COMPLEMENTARY_ENSEMBLE_KERNELS,
@@ -68,6 +69,7 @@ __all__ = [
     "DifferentialEvolutionMutation",
     "EMCEE_MOVES",
     "EmceeMutation",
+    "ErynMutation",
     "FixedLengthMutation",
     "GaussianRandomWalk",
     "GenerativeProposal",
