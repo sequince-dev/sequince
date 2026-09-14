@@ -135,6 +135,25 @@ def test_apply_log_weight_increment_normalizes_vector() -> None:
     assert updated.log_evidence == pytest.approx(-0.4 + expected_log_norm)
 
 
+def test_increment_copies_population_once(monkeypatch) -> None:
+    state = ParticleState(np.zeros((4, 2)))
+    calls = 0
+    original = ParticleState.copy
+
+    def copy(self):
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(ParticleState, "copy", copy)
+    updated, log_norm = _apply_log_weight_increment(state, np.ones(4))
+    assert calls == 1
+    assert log_norm == pytest.approx(1.0)
+    assert updated.log_normalizing_constant == pytest.approx(1.0)
+    updated.particles[0, 0] = 2.0
+    assert state.particles[0, 0] == 0.0
+
+
 def test_apply_log_weight_increment_can_defer_normalization() -> None:
     state = ParticleState(
         particles=np.arange(6.0).reshape(3, 2),
@@ -558,6 +577,27 @@ def test_adaptive_tempered_weighting_reaches_max_beta(
     assert "delta_beta" in context.metadata
     assert context.stop_requested
     assert not context.stop_immediately
+
+
+def test_adaptive_endpoint_skips_bisection(monkeypatch) -> None:
+    step = AdaptiveTemperedWeighting(lambda _: np.zeros(4), min_delta=1e-8)
+    calls = 0
+    original = step._ess_ratio_for_delta
+
+    def ratio(*args):
+        nonlocal calls
+        calls += 1
+        return original(*args)
+
+    monkeypatch.setattr(step, "_ess_ratio_for_delta", ratio)
+    delta = step._find_delta(
+        np.full(4, -np.log(4)),
+        np.zeros(4),
+        np.asarray(1.0),
+        target_ess_ratio=np.asarray(0.7),
+    )
+    assert delta == 1.0
+    assert calls == 2
 
 
 @pytest.mark.parametrize("criterion", ["ess", "cess"])

@@ -487,26 +487,18 @@ class SequentialMonteCarlo:
             outputs.append(iteration_outputs)
             produced_states.append(state)
 
-            result = SMCResult(
-                states=list(produced_states),
-                context=context,
-                initial_state=runtime.initial_state,
-                outputs=tuple(outputs),
-            )
-
-            context = self._run_callbacks(
-                state=state,
-                context=context,
-                result=result,
-            )
-
-            # Rebuild the result with any callback-updated context.
-            result = SMCResult(
-                states=result.states,
-                context=context,
-                initial_state=result.initial_state,
-                outputs=result.outputs,
-            )
+            if self._callbacks:
+                result = SMCResult(
+                    states=list(produced_states),
+                    context=context,
+                    initial_state=runtime.initial_state,
+                    outputs=tuple(outputs),
+                )
+                context = self._run_callbacks(
+                    state=state,
+                    context=context,
+                    result=result,
+                )
 
             next_iteration = context.t + 1
             checkpoint_writers = [
@@ -516,6 +508,12 @@ class SequentialMonteCarlo:
             ]
 
             if checkpoint_writers:
+                result = SMCResult(
+                    states=list(produced_states),
+                    context=context,
+                    initial_state=runtime.initial_state,
+                    outputs=tuple(outputs),
+                )
                 save_rng = any(
                     writer.save_rng for writer in checkpoint_writers
                 )

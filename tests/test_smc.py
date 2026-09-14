@@ -260,6 +260,26 @@ def test_smc_invokes_callbacks_with_incremental_results(
     assert result.outputs == ((0,), (1,), (2,))
 
 
+def test_runner_without_observers_builds_only_final_result(
+    monkeypatch,
+) -> None:
+    from sequince.result import SMCResult
+
+    calls = 0
+
+    def result_factory(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return SMCResult(*args, **kwargs)
+
+    monkeypatch.setattr("sequince.smc.SMCResult", result_factory)
+    result = SequentialMonteCarlo([]).run(
+        ParticleState(np.zeros((4, 1))), num_steps=100, rng=0
+    )
+    assert len(result.states) == 100
+    assert calls == 1
+
+
 def test_callback_can_request_stop(particle_state: ParticleState, rng) -> None:
     class StopViaCallback:
         def __init__(self) -> None:
