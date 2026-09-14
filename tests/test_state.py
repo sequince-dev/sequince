@@ -13,6 +13,18 @@ from sequince.state import (
 from sequince.target import TargetEvaluation
 
 
+@pytest.mark.parametrize("shape", [(3, 1), (2,), (3, 3), ()])
+def test_rejects_malformed_log_weights(shape: tuple[int, ...]) -> None:
+    particles = np.zeros((3, 2))
+    weights = np.zeros(shape)
+    with pytest.raises(ValueError, match="Log weights must match"):
+        ParticleState(particles, log_weights=weights)
+    state = ParticleState(particles)
+    with pytest.raises(ValueError, match="Log weights must match"):
+        state.with_updates(log_weights=weights)
+    assert state.log_weights.shape == (3,)
+
+
 def test_normalize_log_weights():
     log_weights = np.log([1.0, 3.0]).tolist()
 
