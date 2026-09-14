@@ -343,6 +343,29 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
     )
 
 
+def test_persistent_zero_support_preserves_evidence(rng) -> None:
+    smc, _, metadata = make_persistent_bayesian_smc(
+        _zero_log_likelihood,
+        lambda p: np.where(p[:, 0] > 0, 0.0, -np.inf),
+        n_particles=4,
+        target_ess=2,
+        mutation="none",
+        logging_frequency=0,
+    )
+    result = smc.run(
+        ParticleState(np.arange(4.0)[:, None]),
+        num_steps=2,
+        rng=rng,
+        metadata=metadata,
+    )
+    assert result.context.stop_requested
+    assert result.context.metadata["beta"] == 1.0
+    np.testing.assert_allclose(
+        result.final_state.weights, [0, 1 / 3, 1 / 3, 1 / 3]
+    )
+    assert result.final_state.log_evidence == pytest.approx(np.log(0.75))
+
+
 @pytest.mark.parametrize(
     ("resampling_kwargs", "message"),
     [

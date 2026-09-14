@@ -36,6 +36,14 @@ TargetESSRatio = float | Callable[..., float]
 logger = logging.getLogger(__name__)
 
 
+def _scale_log_increment(increments: Array, delta: Array | float) -> Array:
+    """Scale log increments, treating a zero temperature as no update."""
+    xp = namespace(increments)
+    zero_delta = asarray(delta == 0, xp=xp, dtype=bool, like=increments)
+    # Mask before multiplying: zero times a log density of -inf is undefined.
+    return xp.where(zero_delta, 0.0, increments) * delta
+
+
 def _tempering_diagnostics(
     base_log_weights: Array,
     log_increments: Array,
