@@ -201,11 +201,15 @@ class ResamplingStep(SMCStep):
         from orng import RandomGenerator
 
         xp = namespace(state.log_weights, random_state)
-        normalized, _ = normalize_log_weights(
+        normalized, log_norm = normalize_log_weights(
             state.log_weights,
             xp=xp,
         )
-        weights = xp.exp(normalized)
+        weights = xp.where(
+            xp.isfinite(log_norm),
+            xp.exp(normalized),
+            xp.full_like(normalized, 1.0 / normalized.shape[0]),
+        )
         ess = 1.0 / xp.sum(xp.square(weights))
         rng = RandomGenerator.from_xp(xp, generator=random_state)
         n_particles = state.log_weights.shape[0]
@@ -214,6 +218,10 @@ class ResamplingStep(SMCStep):
         )
         indices = self._choose_ancestors(weights, n_samples, rng)
         updated = state.resample(indices)
+        # Preserve invalid weights for validation at the functional host boundary.
+        updated.log_normalizing_constant = xp.where(
+            xp.isfinite(log_norm), state.log_normalizing_constant, log_norm
+        )
         context = context.with_metadata(ess=ess, resampled=xp.asarray(True))
         output = ResamplingOutput(
             ess=ess,

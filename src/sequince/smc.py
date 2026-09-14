@@ -14,7 +14,11 @@ from .checkpoint import (
     restore_steps,
 )
 from .result import SMCResult
-from .state import ParticleState, normalize_log_weights
+from .state import (
+    ParticleState,
+    _validate_log_normalizer,
+    normalize_log_weights,
+)
 from .steps.base import StepContext
 from .steps.context import EVALUATION_COUNTS_KEY
 from .target import EvaluationCounts
@@ -435,6 +439,7 @@ class SequentialMonteCarlo:
         evaluation_counts = runtime.evaluation_counts
         outputs = list(runtime.outputs)
         execution_state = runtime.rng
+        validate_functional = initialize_functional
         context: StepContext | None = None
 
         while steps_remaining is None or steps_remaining > 0:
@@ -483,6 +488,12 @@ class SequentialMonteCarlo:
                 context,
                 execution_state,
             )
+
+            if validate_functional:
+                xp = namespace(state.log_weights)
+                _, log_norm = normalize_log_weights(state.log_weights, xp=xp)
+                _validate_log_normalizer(log_norm, xp=xp)
+                _validate_log_normalizer(state.log_normalizing_constant, xp=xp)
 
             outputs.append(iteration_outputs)
             produced_states.append(state)

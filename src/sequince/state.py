@@ -110,6 +110,8 @@ class ParticleState:
             log_weights = xp.full(
                 (n,), value, device=get_device(self.particles)
             )
+        elif log_weights.shape != (n,):
+            raise ValueError("Log weights must match the particle population.")
         self.log_weights = log_weights
 
     @property
@@ -165,6 +167,10 @@ class ParticleState:
 
     def with_updates(self, **kwargs: Any) -> "ParticleState":
         """Return a copy of the state with selective updates applied."""
+        particles = kwargs.get("particles", self.particles)
+        log_weights = kwargs.get("log_weights", self.log_weights)
+        if log_weights.shape != (particles.shape[0],):
+            raise ValueError("Log weights must match the particle population.")
         updated = self.copy()
         if "particles" in kwargs and "evaluation" not in kwargs:
             updated.evaluation = None

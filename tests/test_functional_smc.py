@@ -23,6 +23,37 @@ compile_functional_iteration = pytest.importorskip(
 ).compile_functional_iteration
 
 
+@pytest.mark.parametrize("invalid", [-np.inf, np.inf, np.nan])
+@pytest.mark.parametrize("resample", [False, True])
+def test_jitted_runner_rejects_invalid_second_iteration(
+    invalid: float, resample: bool
+) -> None:
+    from sequince import DegenerateWeightsError
+    from sequince.smc import SequentialMonteCarlo
+    from sequince.steps import SystematicResampling
+
+    def increment(particles, context):
+        return jnp.full(
+            particles.shape[0], jnp.where(context.t == 0, 0.0, invalid)
+        )
+
+    callbacks = []
+    steps = [FixedTemperedWeighting(increment, beta_increment=0.5)]
+    if resample:
+        steps.append(SystematicResampling(always_resample=True))
+    smc = SequentialMonteCarlo(
+        steps, callbacks=[lambda *args: callbacks.append(args)]
+    )
+    state = ParticleState(jnp.zeros((4, 1)))
+    key = jax.random.key(0)
+    iteration = compile_functional_iteration(smc, state, key)
+    with pytest.raises(DegenerateWeightsError):
+        smc.run_functional(
+            state, num_steps=2, random_state=key, iteration=iteration
+        )
+    assert len(callbacks) == 1
+
+
 def test_monotone_bisection_uses_jittable_control_flow() -> None:
     def solve():
         return bisect_monotone_decreasing(
