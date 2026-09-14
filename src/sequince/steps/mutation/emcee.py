@@ -471,6 +471,9 @@ class EmceeMutation(MutationStep):
                 like=latent_particles,
             )
 
+        if stored_chain is not None and squeeze_last:
+            stored_chain = stored_chain[..., 0]
+
         logger.debug(
             "EmceeMutation completed: acceptance=%.3f after %d steps.",
             acceptance,
