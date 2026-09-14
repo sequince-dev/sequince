@@ -221,6 +221,40 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     )
 
 
+@pytest.mark.parametrize("beta", [0.8, 1.0])
+@pytest.mark.parametrize("functional", [False, True])
+def test_fixed_tempering_clips_final_increment(
+    beta: float, functional: bool, rng
+) -> None:
+    increments = np.array([-np.inf, 2.0, 2.0, 2.0])
+    state = ParticleState(np.zeros((4, 1)))
+    step = FixedTemperedWeighting(
+        lambda _: increments, beta_increment=0.5, max_beta=1.0
+    )
+    context = StepContext(t=0, metadata={"beta": beta})
+    with np.errstate(invalid="raise"):
+        if functional:
+            updated, context, _, output = step.apply_functional(
+                state, context, None
+            )
+        else:
+            updated, context, output = step(state, context, rng)
+    assert output["beta"] == 1.0
+    assert output["delta_beta"] == pytest.approx(1.0 - beta)
+    assert context.stop_requested
+    assert bool(context.stop_immediately) == (beta == 1.0)
+    expected = np.log(0.75) + 0.4 if beta < 1 else 0.0
+    assert updated.log_evidence == pytest.approx(expected)
+
+
+def test_fixed_tempering_preserves_float32_increments(rng) -> None:
+    increments = np.array([-np.inf, 2.0], dtype=np.float32)
+    step = FixedTemperedWeighting(lambda _: increments, beta_increment=0.0)
+    _, _, output = step(ParticleState(np.zeros((2, 1))), StepContext(t=0), rng)
+    assert output["log_weight_increment"].dtype == np.float32
+    np.testing.assert_array_equal(output["log_weight_increment"], 0.0)
+
+
 def test_tempering_diagnostics_support_weighted_particles(
     particle_state: ParticleState, context_factory, rng
 ) -> None:

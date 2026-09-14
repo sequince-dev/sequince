@@ -569,24 +569,34 @@ class TemperedWeighting(BaseTemperedStep):
 
 
 class FixedTemperedWeighting(BaseTemperedStep):
-    """Apply tempering with a fixed beta increment."""
+    """Apply fixed beta increments, optionally stopping at ``max_beta``.
+
+    When a maximum is supplied, clip the final increment and request a stop
+    after that iteration. Without a maximum, the schedule is unbounded.
+    """
 
     def __init__(
         self,
         log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         beta_increment: float,
+        max_beta: float | None = None,
         normalize_after: bool = True,
         refresh_components: Collection[str] = (),
     ):
         if beta_increment < 0.0:
             raise ValueError("beta_increment must be non-negative.")
+        if max_beta is not None and (
+            not math.isfinite(max_beta) or max_beta <= 0.0
+        ):
+            raise ValueError("max_beta must be finite and positive.")
         super().__init__(
             log_increment_fn,
             normalize_after=normalize_after,
             refresh_components=refresh_components,
         )
         self._beta_increment = beta_increment
+        self._max_beta = max_beta
 
     def apply(
         self,
@@ -608,12 +618,16 @@ class FixedTemperedWeighting(BaseTemperedStep):
             )
 
         metadata = dict(state.metadata)
-        max_beta = float(context.metadata.get("max_beta", 1.0))
+        max_beta = (
+            self._max_beta
+            if self._max_beta is not None
+            else float(context.metadata.get("max_beta", 1.0))
+        )
         metadata.update(
             _tempering_diagnostics(
                 base_state.log_weights,
                 raw_increments,
-                delta=self._beta_increment,
+                delta=output["delta_beta"],
                 terminal_delta=max(
                     max_beta - current_beta,
                     0.0,
@@ -621,7 +635,7 @@ class FixedTemperedWeighting(BaseTemperedStep):
             )
         )
         metadata["beta"] = output["beta"]
-        metadata["delta_beta"] = self._beta_increment
+        metadata["delta_beta"] = output["delta_beta"]
         updated_state = updated_state.with_updates(metadata=metadata)
         logger.debug(
             "FixedTemperedWeighting: increment %.4f -> beta %.4f.",
@@ -658,19 +672,45 @@ class FixedTemperedWeighting(BaseTemperedStep):
         log_increments, state, context, xp = self._prepare_log_increments(
             state, context
         )
-        increments = log_increments * self._beta_increment
         target_beta = current_beta + self._beta_increment
+        delta = self._beta_increment
+        if self._max_beta is not None:
+            current_beta = asarray(current_beta, xp=xp, like=state.log_weights)
+            maximum = asarray(self._max_beta, xp=xp, like=state.log_weights)
+            tolerance = 8 * xp.finfo(current_beta.dtype).eps * self._max_beta
+            target_beta = xp.where(
+                target_beta >= maximum - tolerance, maximum, target_beta
+            )
+            delta = xp.maximum(target_beta - current_beta, 0.0)
+            context = replace(
+                context,
+                stop_requested=asarray(
+                    context.stop_requested,
+                    xp=xp,
+                    dtype=bool,
+                    like=state.log_weights,
+                )
+                | (target_beta >= maximum),
+                stop_immediately=asarray(
+                    context.stop_immediately,
+                    xp=xp,
+                    dtype=bool,
+                    like=state.log_weights,
+                )
+                | (current_beta >= maximum),
+            )
+        increments = _scale_log_increment(log_increments, delta)
         updated_state, log_norm = self._update_log_weights(
             state,
             increments,
         )
         context = context.with_metadata(
             beta=target_beta,
-            delta_beta=self._beta_increment,
+            delta_beta=delta,
         )
         output = {
             "beta": target_beta,
-            "delta_beta": self._beta_increment,
+            "delta_beta": delta,
             "log_weight_increment": increments,
         }
         return updated_state, context, output, log_increments, log_norm
