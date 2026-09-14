@@ -79,14 +79,6 @@ The sampler must therefore be reconstructed with the same ordered step
 pipeline before loading a checkpoint. Shared inputs and observations must also
 be supplied again when resuming.
 
-Mutation steps save their fitted particle transform and the iteration and
-observation indices identifying its fit. This preserves ``transform_refit``
-policies such as ``"once"`` across resumption. Older checkpoints that did not
-record fitted transforms still load, but the transform is fitted again on the
-first resumed mutation.
-Functional runs retain their fitted transform in the checkpoint's context
-metadata and reuse it when resuming with ``transform_refit="once"``.
-
 Resuming a run
 --------------
 
