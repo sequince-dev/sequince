@@ -69,7 +69,7 @@ class SMCStep:
         context: StepContext,
         random_state: Any,
     ) -> tuple["ParticleState", StepContext, Any, Any]:
-        """Apply the functional step that.
+        """Apply a functional step to particle step.
 
         This returns the updated state, context, next random state, and any
         additional outputs.

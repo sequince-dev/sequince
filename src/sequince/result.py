@@ -434,10 +434,7 @@ class SMCResult:
         ``"lee-whiteley"`` uses the particle genealogy to estimate relative
         normalizing-constant variance, which is also a delta-method estimate of
         log normalizing-constant variance. This estimator requires constant
-        particle count and multinomial resampling at every iteration. The
-        resampling scheme is not currently retained by :class:`SMCResult`, so
-        callers are responsible for ensuring that multinomial resampling was
-        used.
+        particle count and multinomial resampling at every iteration.
 
         ``"fixed-lag-lee-whiteley"`` This estimator truncates the Lee-Whiteley
         genealogical normalizing-constant variance estimate to the most recent
