@@ -205,6 +205,7 @@ def make_standard_bayesian_smc(
         weighting_step = FixedTemperedWeighting(
             posterior,
             beta_increment=max_beta / num_steps,
+            max_beta=max_beta,
             **weighting_kwargs or {},
         )
 

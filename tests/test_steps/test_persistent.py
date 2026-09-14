@@ -54,6 +54,22 @@ def test_single_initial_target() -> None:
     np.testing.assert_allclose(log_weights, beta * log_increment)
 
 
+@pytest.mark.parametrize("beta", [0.0, 0.5, 1.0])
+def test_zero_support_with_initial_target(beta: float) -> None:
+    increments = np.array([-np.inf, 0.0])
+    betas = np.array([0.0, 1.0])
+    normalizers = np.zeros(2)
+    with np.errstate(invalid="raise"):
+        denominator = persistent_log_mixture_denominator(
+            increments, betas, normalizers
+        )
+        weights = persistent_log_weights(increments, betas, normalizers, beta)
+    np.testing.assert_allclose(denominator, [-np.log(2), 0.0])
+    np.testing.assert_allclose(
+        weights, [np.log(2) if beta == 0 else -np.inf, 0.0]
+    )
+
+
 @pytest.mark.parametrize(
     ("betas", "log_normalizing_constants"),
     [

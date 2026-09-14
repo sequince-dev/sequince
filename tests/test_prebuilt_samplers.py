@@ -138,6 +138,35 @@ def test_make_standard_bayesian_smc_requires_fixed_step_count() -> None:
         )
 
 
+@pytest.mark.parametrize("runtime_steps", [None, 20])
+@pytest.mark.parametrize("schedule_steps", [2, 10])
+def test_fixed_schedule_stops_and_resamples_at_end(
+    runtime_steps: int | None, schedule_steps: int, rng
+) -> None:
+    smc, _, metadata = make_standard_bayesian_smc(
+        _quadratic_log_prior,
+        lambda particles: -(particles[:, 0] ** 2),
+        adaptive=False,
+        num_steps=schedule_steps,
+        weighting_criterion="cess",
+        resampling_ess_threshold=None,
+        mutation="none",
+        always_mutate=True,
+        logging_frequency=0,
+    )
+    result = smc.run(
+        ParticleState(np.arange(4.0)[:, None]),
+        num_steps=runtime_steps,
+        rng=rng,
+        metadata=metadata,
+    )
+    assert len(result.states) == schedule_steps
+    assert result.context.stop_requested
+    assert result.context.metadata["beta"] == 1.0
+    assert result.context.metadata["resampled"]
+    np.testing.assert_allclose(result.final_state.log_weights, -np.log(4))
+
+
 def test_make_standard_bayesian_smc_validates_resampling_name() -> None:
     with pytest.raises(ValueError):
         make_standard_bayesian_smc(
@@ -341,6 +370,29 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
     assert (
         result.final_state.n_particles == persist.persistent_state.n_particles
     )
+
+
+def test_persistent_zero_support_preserves_evidence(rng) -> None:
+    smc, _, metadata = make_persistent_bayesian_smc(
+        _zero_log_likelihood,
+        lambda p: np.where(p[:, 0] > 0, 0.0, -np.inf),
+        n_particles=4,
+        target_ess=2,
+        mutation="none",
+        logging_frequency=0,
+    )
+    result = smc.run(
+        ParticleState(np.arange(4.0)[:, None]),
+        num_steps=2,
+        rng=rng,
+        metadata=metadata,
+    )
+    assert result.context.stop_requested
+    assert result.context.metadata["beta"] == 1.0
+    np.testing.assert_allclose(
+        result.final_state.weights, [0, 1 / 3, 1 / 3, 1 / 3]
+    )
+    assert result.final_state.log_evidence == pytest.approx(np.log(0.75))
 
 
 @pytest.mark.parametrize(

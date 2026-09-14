@@ -36,6 +36,16 @@ TargetESSRatio = float | Callable[..., float]
 logger = logging.getLogger(__name__)
 
 
+def _safe_tempered_log_increment(
+    increments: Array, delta: Array | float
+) -> Array:
+    """Compute tempered log increments safely when the temperature is zero."""
+    xp = namespace(increments)
+    zero_delta = asarray(delta == 0, xp=xp, dtype=bool, like=increments)
+    # Mask before multiplying: zero times a log density of -inf is undefined.
+    return xp.where(zero_delta, 0.0, increments) * delta
+
+
 def _tempering_diagnostics(
     base_log_weights: Array,
     log_increments: Array,
@@ -47,17 +57,18 @@ def _tempering_diagnostics(
     xp = namespace(base_log_weights, log_increments)
     base_log_norm = logsumexp(base_log_weights, xp=xp)
     normalized_base_log_weights = base_log_weights - base_log_norm
-    updated_log_weights = base_log_weights + delta * log_increments
+    scaled_log_ratios = _safe_tempered_log_increment(log_increments, delta)
+    updated_log_weights = base_log_weights + scaled_log_ratios
 
     log_normalizing_constant_increment = float(
         logsumexp(updated_log_weights, xp=xp) - base_log_norm
     )
     ess = ess_from_log_weights(updated_log_weights)
     terminal_ess = ess_from_log_weights(
-        base_log_weights + terminal_delta * log_increments
+        base_log_weights
+        + _safe_tempered_log_increment(log_increments, terminal_delta)
     )
 
-    scaled_log_ratios = delta * log_increments
     max_log_ratio = xp.max(scaled_log_ratios)
     scaled_ratios = xp.exp(scaled_log_ratios - max_log_ratio)
     base_weights = xp.exp(normalized_base_log_weights)
@@ -523,9 +534,11 @@ class TemperedWeighting(BaseTemperedStep):
             state, context
         )
         xp = namespace(state.log_weights)
-        increments = (
-            _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
-            * delta_beta
+        increments = _safe_tempered_log_increment(
+            _weights_as_1d_array(
+                log_increments, xp=xp, like=state.log_weights
+            ),
+            delta_beta,
         )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
@@ -559,24 +572,32 @@ class TemperedWeighting(BaseTemperedStep):
 
 
 class FixedTemperedWeighting(BaseTemperedStep):
-    """Apply tempering with a fixed beta increment."""
+    """Apply fixed beta increments up to ``max_beta`` (default 1.0).
+
+    Clip the final increment and request a stop after that iteration.
+    The maximum must be finite and positive.
+    """
 
     def __init__(
         self,
         log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         beta_increment: float,
+        max_beta: float = 1.0,
         normalize_after: bool = True,
         refresh_components: Collection[str] = (),
-    ):
+    ) -> None:
         if beta_increment < 0.0:
             raise ValueError("beta_increment must be non-negative.")
+        if not math.isfinite(max_beta) or max_beta <= 0.0:
+            raise ValueError("max_beta must be finite and positive.")
         super().__init__(
             log_increment_fn,
             normalize_after=normalize_after,
             refresh_components=refresh_components,
         )
         self._beta_increment = beta_increment
+        self._max_beta = max_beta
 
     def apply(
         self,
@@ -598,20 +619,19 @@ class FixedTemperedWeighting(BaseTemperedStep):
             )
 
         metadata = dict(state.metadata)
-        max_beta = float(context.metadata.get("max_beta", 1.0))
         metadata.update(
             _tempering_diagnostics(
                 base_state.log_weights,
                 raw_increments,
-                delta=self._beta_increment,
+                delta=output["delta_beta"],
                 terminal_delta=max(
-                    max_beta - current_beta,
+                    self._max_beta - current_beta,
                     0.0,
                 ),
             )
         )
         metadata["beta"] = output["beta"]
-        metadata["delta_beta"] = self._beta_increment
+        metadata["delta_beta"] = output["delta_beta"]
         updated_state = updated_state.with_updates(metadata=metadata)
         logger.debug(
             "FixedTemperedWeighting: increment %.4f -> beta %.4f.",
@@ -648,19 +668,56 @@ class FixedTemperedWeighting(BaseTemperedStep):
         log_increments, state, context, xp = self._prepare_log_increments(
             state, context
         )
-        increments = log_increments * self._beta_increment
         target_beta = current_beta + self._beta_increment
+        current_beta = asarray(
+            current_beta,
+            xp=xp,
+            dtype=state.log_weights.dtype,
+            like=state.log_weights,
+        )
+        maximum = asarray(
+            self._max_beta,
+            xp=xp,
+            dtype=state.log_weights.dtype,
+            like=state.log_weights,
+        )
+        tolerance = 8 * xp.finfo(current_beta.dtype).eps * self._max_beta
+        target_beta = xp.where(
+            target_beta >= maximum - tolerance, maximum, target_beta
+        )
+        delta = xp.maximum(target_beta - current_beta, 0.0)
+        context = replace(
+            context,
+            stop_requested=asarray(
+                context.stop_requested,
+                xp=xp,
+                dtype=bool,
+                like=state.log_weights,
+            )
+            | (target_beta >= maximum),
+            stop_immediately=asarray(
+                context.stop_immediately,
+                xp=xp,
+                dtype=bool,
+                like=state.log_weights,
+            )
+            | (current_beta >= maximum),
+        )
+        increments = _safe_tempered_log_increment(
+            log_increments,
+            asarray(delta, xp=xp, dtype=log_increments.dtype),
+        )
         updated_state, log_norm = self._update_log_weights(
             state,
             increments,
         )
         context = context.with_metadata(
             beta=target_beta,
-            delta_beta=self._beta_increment,
+            delta_beta=delta,
         )
         output = {
             "beta": target_beta,
-            "delta_beta": self._beta_increment,
+            "delta_beta": delta,
             "log_weight_increment": increments,
         }
         return updated_state, context, output, log_increments, log_norm
@@ -930,7 +987,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         )
         already_at_max = remaining <= 0.0
         delta = xp.where(already_at_max, zero, selected_delta)
-        scaled_increments = delta * increments
+        scaled_increments = _safe_tempered_log_increment(increments, delta)
         new_log_weights = state.log_weights + scaled_increments
         new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
         new_cess_ratio = cess_ratio_from_log_weights_and_increments(

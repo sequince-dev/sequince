@@ -221,6 +221,88 @@ def test_fixed_tempered_weighting_updates_metadata_and_context(
     )
 
 
+@pytest.mark.parametrize("beta", [0.8, 1.0])
+@pytest.mark.parametrize("functional", [False, True])
+def test_fixed_tempering_clips_final_increment(
+    beta: float, functional: bool, rng
+) -> None:
+    increments = np.array([-np.inf, 2.0, 2.0, 2.0])
+    state = ParticleState(np.zeros((4, 1)))
+    step = FixedTemperedWeighting(lambda _: increments, beta_increment=0.5)
+    context = StepContext(t=0, metadata={"beta": beta})
+    with np.errstate(invalid="raise"):
+        if functional:
+            updated, context, _, output = step.apply_functional(
+                state, context, None
+            )
+        else:
+            updated, context, output = step(state, context, rng)
+    assert output["beta"] == 1.0
+    assert output["delta_beta"] == pytest.approx(1.0 - beta)
+    assert context.stop_requested
+    assert bool(context.stop_immediately) == (beta == 1.0)
+    expected = np.log(0.75) + 0.4 if beta < 1 else 0.0
+    assert updated.log_evidence == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("beta_increment", [0.0, 0.5])
+def test_fixed_tempering_preserves_float32_increments(
+    beta_increment: float, rng
+) -> None:
+    increments = np.array([-np.inf, 2.0], dtype=np.float32)
+    step = FixedTemperedWeighting(
+        lambda _: increments, beta_increment=beta_increment
+    )
+    _, _, output = step(ParticleState(np.zeros((2, 1))), StepContext(t=0), rng)
+    assert output["log_weight_increment"].dtype == np.float32
+    expected = [0.0, 0.0] if beta_increment == 0.0 else [-np.inf, 1.0]
+    np.testing.assert_array_equal(output["log_weight_increment"], expected)
+
+
+@pytest.mark.parametrize("max_beta", [0.5, 2.0])
+def test_fixed_tempering_supports_custom_maximum(max_beta: float, rng) -> None:
+    state = ParticleState(np.zeros((4, 1)))
+    step = FixedTemperedWeighting(
+        lambda _: np.ones(4), beta_increment=3.0, max_beta=max_beta
+    )
+    updated, context, output = step(state, StepContext(t=0), rng)
+    assert context.stop_requested
+    assert output["beta"] == max_beta
+    assert updated.log_evidence == pytest.approx(max_beta)
+
+
+@pytest.mark.parametrize("max_beta", [0.0, -1.0, np.inf, -np.inf, np.nan])
+def test_fixed_tempering_rejects_invalid_maximum(max_beta: float) -> None:
+    with pytest.raises(
+        ValueError, match="max_beta must be finite and positive"
+    ):
+        FixedTemperedWeighting(
+            lambda _: np.ones(4), beta_increment=0.5, max_beta=max_beta
+        )
+
+
+def test_fixed_tempering_rejects_unbounded_maximum() -> None:
+    with pytest.raises(TypeError):
+        FixedTemperedWeighting(
+            lambda _: np.ones(4), beta_increment=0.5, max_beta=None
+        )
+
+
+def test_fixed_tempering_default_stops_runner(rng) -> None:
+    from sequince.smc import SequentialMonteCarlo
+
+    sampler = SequentialMonteCarlo(
+        [FixedTemperedWeighting(lambda _: np.ones(4), beta_increment=0.4)]
+    )
+    result = sampler.run(
+        ParticleState(np.zeros((4, 1))), rng=rng, metadata={"beta": 0}
+    )
+    assert len(result.states) == 3
+    assert result.context.stop_requested
+    assert result.context.metadata["beta"] == 1.0
+    assert result.final_state.log_evidence == pytest.approx(1.0)
+
+
 def test_tempering_diagnostics_support_weighted_particles(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
@@ -591,6 +673,21 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
         output["log_weight_increment"],
         np.zeros_like(state.log_weights),
     )
+
+
+def test_terminal_adaptive_weighting_with_zero_support(rng) -> None:
+    state = ParticleState(np.zeros((4, 1)))
+    increments = np.array([-np.inf, 0.0, 0.0, 0.0])
+    step = AdaptiveTemperedWeighting(lambda _: increments)
+    with np.errstate(invalid="raise"):
+        updated, context, output = step(
+            state, StepContext(t=0, metadata={"beta": 1.0}), rng
+        )
+    np.testing.assert_allclose(updated.log_weights, state.log_weights)
+    assert updated.log_normalizing_constant == pytest.approx(0.0)
+    assert context.stop_immediately
+    assert output["delta_beta"] == 0.0
+    assert updated.metadata["ess_at_max_beta"] == pytest.approx(4.0)
 
 
 def test_tempered_posterior_custom_increment_is_used_by_weighting(
