@@ -8,6 +8,7 @@ from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts, Target
 from ...transforms import ParticleTransform, _repeat_transform_auxiliary
+from ...utils.callables import call_with_optional_context
 from ..base import SMCStep
 from ..context import StepContext
 from .metrics import (
@@ -35,10 +36,7 @@ def call_log_prob(
     position: Array,
     context: StepContext,
 ) -> Any:
-    try:
-        return fn(position, context)
-    except TypeError:
-        return fn(position)
+    return call_with_optional_context(fn, (position,), context)
 
 
 def as_scalar_log_prob(value: Any) -> float:
