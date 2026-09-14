@@ -175,11 +175,13 @@ class MiniPCNMutation(MutationStep):
                 mutation_state, latent_particles, context
             )
         )
+        return_last_only = not (self._store_chains or self.metrics)
         chain, history = sampler.sample(
             latent_particles,
             n_steps=n_steps,
             verbose=self._verbose,
             rng=rng,
+            return_last_only=return_last_only,
         )
 
         acceptance_by_step = asarray(
@@ -190,9 +192,9 @@ class MiniPCNMutation(MutationStep):
         return self._complete_mutation(
             state,
             context,
-            latent_last=chain[-1],
+            latent_last=chain if return_last_only else chain[-1],
             latent_chain=chain[-n_steps:] if self._store_chains else None,
-            diagnostic_chain=chain[-n_steps:],
+            diagnostic_chain=None if return_last_only else chain[-n_steps:],
             latent_particles=latent_particles,
             transform=transform,
             transform_auxiliary=transform_auxiliary,
@@ -399,9 +401,10 @@ class MiniPCNMutation(MutationStep):
             n_particles = latent_particles.shape[0]
             mutation_state = replace(
                 mutation_state,
-                n_steps=xp.asarray(n_steps),
-                n_attempted=xp.asarray(n_steps * n_particles),
-                n_accepted=xp.asarray(
+                n_steps=mutation_state.n_steps + n_steps,
+                n_attempted=mutation_state.n_attempted + n_steps * n_particles,
+                n_accepted=mutation_state.n_accepted
+                + xp.asarray(
                     xp.round(xp.sum(acceptance_by_step) * n_particles),
                     dtype=mutation_state.n_accepted.dtype,
                 ),
