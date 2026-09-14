@@ -1006,7 +1006,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         *,
         target_ess_ratio: Array,
     ) -> Array:
-        """Find a beta increment with fixed-count bisection."""
+        """Bisect only when neither endpoint determines the increment."""
         xp = namespace(base_log_weights, increments, max_delta)
         low = xp.zeros_like(max_delta)
         high = max_delta
@@ -1024,6 +1024,10 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
 
         base_ratio = ratio_fn(base_log_weights, increments, low)
         high_ratio = ratio_fn(base_log_weights, increments, high)
+        needs_bisection = ~(
+            (base_ratio <= target_ess_ratio) | (high_ratio >= target_ess_ratio)
+        )
+        high = xp.where(needs_bisection, high, low)
         low, high = bisect_monotone_decreasing(
             lambda delta: ratio_fn(base_log_weights, increments, delta),
             low,

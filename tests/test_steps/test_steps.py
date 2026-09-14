@@ -497,6 +497,27 @@ def test_adaptive_tempered_weighting_reaches_max_beta(
     assert not context.stop_immediately
 
 
+def test_adaptive_endpoint_skips_bisection(monkeypatch) -> None:
+    step = AdaptiveTemperedWeighting(lambda _: np.zeros(4), min_delta=1e-8)
+    calls = 0
+    original = step._ess_ratio_for_delta
+
+    def ratio(*args):
+        nonlocal calls
+        calls += 1
+        return original(*args)
+
+    monkeypatch.setattr(step, "_ess_ratio_for_delta", ratio)
+    delta = step._find_delta(
+        np.full(4, -np.log(4)),
+        np.zeros(4),
+        np.asarray(1.0),
+        target_ess_ratio=np.asarray(0.7),
+    )
+    assert delta == 1.0
+    assert calls == 2
+
+
 @pytest.mark.parametrize("criterion", ["ess", "cess"])
 def test_adaptive_tempered_weighting_supports_evolving_target(
     particle_state: ParticleState,
