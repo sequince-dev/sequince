@@ -246,6 +246,40 @@ def test_standard_smc_rejects_redundant_conditional_mutation() -> None:
         )
 
 
+@pytest.mark.parametrize("weighting_criterion", ["ess", "cess"])
+@pytest.mark.parametrize("always_resample", [None, True, False])
+@pytest.mark.parametrize("always_mutate", [None, True, False])
+def test_standard_smc_without_mutation_accepts_mutation_flags(
+    weighting_criterion, always_resample, always_mutate
+) -> None:
+    kwargs = dict(
+        mutation="none",
+        weighting_criterion=weighting_criterion,
+        always_resample=always_resample,
+        always_mutate=always_mutate,
+        logging_frequency=0,
+    )
+    if weighting_criterion == "ess" and always_resample is False:
+        with pytest.raises(
+            ValueError, match="always_resample cannot be False"
+        ):
+            make_standard_bayesian_smc(
+                _quadratic_log_prior, _zero_log_likelihood, **kwargs
+            )
+        return
+
+    smc, _, metadata = make_standard_bayesian_smc(
+        _quadratic_log_prior, _zero_log_likelihood, **kwargs
+    )
+    particles = np.arange(4.0)[:, None]
+    result = smc.run(ParticleState(particles), metadata=metadata, rng=123)
+
+    assert result.context.metadata["beta"] == pytest.approx(1.0)
+    assert len(result.outputs[-1]) == 2
+    np.testing.assert_allclose(result.final_state.weights, 0.25)
+    assert result.log_evidence() == pytest.approx(0.0)
+
+
 def test_make_standard_bayesian_smc_accepts_proposal_distribution(
     analytic_proposal_factory,
 ) -> None:
