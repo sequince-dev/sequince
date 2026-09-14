@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from copy import copy as shallow_copy
 from dataclasses import dataclass, field
 from numbers import Real
 from typing import TYPE_CHECKING, Any, MutableMapping, Self, cast
@@ -121,35 +122,30 @@ class ParticleState:
 
     def copy(self) -> "ParticleState":
         """Return a copy of the state preserving the array backend."""
-        xp = namespace(
-            self.particles,
-            self.log_weights,
-            self.initial_ancestor_indices,
-        )
-        return ParticleState(
-            particles=array_copy(self.particles, xp=xp),
-            log_weights=array_copy(self.log_weights, xp=xp),
-            log_normalizing_constant=self.log_normalizing_constant,
-            initial_ancestor_indices=array_copy(
-                self.initial_ancestor_indices,
-                xp=xp,
-            ),
-            evaluation=(
-                None if self.evaluation is None else self.evaluation.copy()
-            ),
-            metadata=array_safe_copy(self.metadata),
-        )
+        return self._copy_with_updates({})
+
+    def _copy_with_updates(self, updates: dict[str, Any]) -> Self:
+        copied = shallow_copy(self)
+        for name in ("particles", "log_weights", "initial_ancestor_indices"):
+            if name not in updates:
+                setattr(copied, name, array_copy(getattr(self, name)))
+        if "evaluation" not in updates and self.evaluation is not None:
+            copied.evaluation = self.evaluation.copy()
+        if "metadata" not in updates:
+            copied.metadata = array_safe_copy(self.metadata)
+        for name, value in updates.items():
+            setattr(copied, name, value)
+        return copied
 
     def normalize(self) -> tuple["ParticleState", float]:
         """Return a new state and its incremental log normalizing constant."""
-        state = self.copy()
-        xp = namespace(state.log_weights)
-        state.log_weights, log_norm = normalize_log_weights(
-            state.log_weights,
+        xp = namespace(self.log_weights)
+        log_weights, log_norm = normalize_log_weights(
+            self.log_weights,
             xp=xp,
         )
         _validate_log_normalizer(log_norm, xp=xp)
-        return state, log_norm
+        return self.with_updates(log_weights=log_weights), log_norm
 
     @property
     def weights(self) -> Array:
@@ -171,12 +167,9 @@ class ParticleState:
         log_weights = kwargs.get("log_weights", self.log_weights)
         if log_weights.shape != (particles.shape[0],):
             raise ValueError("Log weights must match the particle population.")
-        updated = self.copy()
         if "particles" in kwargs and "evaluation" not in kwargs:
-            updated.evaluation = None
-        for key, value in kwargs.items():
-            setattr(updated, key, value)
-        return updated
+            kwargs["evaluation"] = None
+        return self._copy_with_updates(kwargs)
 
     def replace_particles(
         self,
@@ -556,30 +549,13 @@ class PersistentParticleState(ParticleState):
 
     def copy(self) -> "PersistentParticleState":
         """Return an independent copy preserving the persistent structure."""
-        xp = namespace(
-            self.particles,
-            self.log_weights,
-            self.initial_ancestor_indices,
-            self.betas,
-            self.log_normalizing_constants,
-        )
-        copied = type(self)(
-            particles=array_copy(self.particles, xp=xp),
-            betas=array_copy(self.betas, xp=xp),
-            log_normalizing_constants=array_copy(
-                self.log_normalizing_constants, xp=xp
-            ),
-            batch_size=self.batch_size,
-            log_weights=array_copy(self.log_weights, xp=xp),
-            log_normalizing_constant=self.log_normalizing_constant,
-            initial_ancestor_indices=array_copy(
-                self.initial_ancestor_indices,
-                xp=xp,
-            ),
-            evaluation=(
-                None if self.evaluation is None else self.evaluation.copy()
-            ),
-            metadata=array_safe_copy(self.metadata),
+        return self._copy_with_updates({})
+
+    def _copy_with_updates(self, updates: dict[str, Any]) -> Self:
+        copied = super()._copy_with_updates(updates)
+        copied.betas = array_copy(self.betas)
+        copied.log_normalizing_constants = array_copy(
+            self.log_normalizing_constants
         )
         return copied
 
@@ -622,10 +598,7 @@ class PersistentParticleState(ParticleState):
                     "Target evaluation must match the persistent particle "
                     "population."
                 )
-        updated = self.copy()
-        for key, value in kwargs.items():
-            setattr(updated, key, value)
-        return updated
+        return self._copy_with_updates(kwargs)
 
     def append(
         self,
