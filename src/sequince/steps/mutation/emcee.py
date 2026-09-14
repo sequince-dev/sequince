@@ -302,12 +302,8 @@ class EmceeMutation(MutationStep):
             n_particles=state.particles.shape[0],
         ):
             raise NotImplementedError(
-                "The transform requires walker-specific auxiliary data, but "
-                "emcee evaluates internally selected walker subsets and its "
-                "standard log-probability callback does not expose the "
-                "original walker selection or context. Sequince therefore "
-                "cannot guarantee that the correct auxiliary entry is "
-                "supplied. Use a batch-preserving mutation implementation."
+                "Emcee does not support transforms with walker-specific "
+                "auxiliary data."
             )
         particles = to_numpy(latent_particles)
         if particles.ndim == 1:
@@ -460,7 +456,6 @@ class EmceeMutation(MutationStep):
             )
         context = context.add_evaluation_counts(counts)
 
-        acceptance = float(np.mean(sampler.acceptance_fraction))
         stored_chain = None
         if self._store_chains:
             stored_chain = self._inverse_chain(
@@ -474,11 +469,12 @@ class EmceeMutation(MutationStep):
         if stored_chain is not None and squeeze_last:
             stored_chain = stored_chain[..., 0]
 
-        logger.debug(
-            "EmceeMutation completed: acceptance=%.3f after %d steps.",
-            acceptance,
-            n_steps,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "EmceeMutation completed: acceptance=%.3f after %d steps.",
+                float(np.mean(sampler.acceptance_fraction)),
+                n_steps,
+            )
         output = {
             "steps": n_steps,
             "chain": stored_chain,

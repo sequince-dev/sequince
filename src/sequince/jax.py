@@ -58,10 +58,11 @@ def compile_functional_iteration(
         context,
     )
     carry = (prepared_state, prepared_context, random_state)
-    logger.debug(
-        "Lowering functional iteration with carry structure: %s",
-        jax.tree_util.tree_structure(carry),
-    )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "Lowering functional iteration with carry structure: %s",
+            jax.tree_util.tree_structure(carry),
+        )
     lowered = jax.jit(smc.functional_iteration).lower(*carry)
     output_state, output_context, output_key, _ = lowered.out_info
     output_carry = (output_state, output_context, output_key)

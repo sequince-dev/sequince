@@ -289,11 +289,12 @@ class IncrementalWeighting(SMCStep):
             increments,
             normalize=self._normalize_after,
         )
-        logger.debug(
-            "IncrementalWeighting: mean increment %.6f (normalize_after=%s).",
-            float(to_numpy(xp.sum(increments) / increments.shape[0])),
-            self._normalize_after,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "IncrementalWeighting: mean increment %.6f (normalize_after=%s).",
+                float(to_numpy(xp.sum(increments) / increments.shape[0])),
+                self._normalize_after,
+            )
         return updated_state, context, {"log_weight_increment": increments}
 
 
@@ -539,12 +540,13 @@ class TemperedWeighting(BaseTemperedStep):
                 "Increment function must return one value per particle."
             )
 
-        logger.debug(
-            "TemperedWeighting: beta %.4f -> %.4f applied; mean increment %.6f.",
-            current_beta,
-            target_beta,
-            float(to_numpy(xp.sum(increments) / increments.shape[0])),
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "TemperedWeighting: beta %.4f -> %.4f applied; mean increment %.6f.",
+                current_beta,
+                target_beta,
+                float(to_numpy(xp.sum(increments) / increments.shape[0])),
+            )
         metadata = dict(state.metadata)
         metadata["beta"] = target_beta
         metadata["delta_beta"] = delta_beta

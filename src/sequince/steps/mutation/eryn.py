@@ -225,12 +225,8 @@ class ErynMutation(MutationStep):
             n_particles=state.particles.shape[0],
         ):
             raise NotImplementedError(
-                "The transform requires walker-specific auxiliary data, but "
-                "eryn evaluates internally selected walker subsets and its "
-                "standard log-probability callback does not expose the "
-                "original walker selection or context. Sequince therefore "
-                "cannot guarantee that the correct auxiliary entry is "
-                "supplied. Use a batch-preserving mutation implementation."
+                "Eryn does not support transforms with walker-specific "
+                "auxiliary data."
             )
         # Eryn requires host coordinates even for GPU-enabled moves. The
         # callback below restores the particle backend before evaluation.
@@ -357,7 +353,6 @@ class ErynMutation(MutationStep):
             counts = counts + delta
         context = context.add_evaluation_counts(counts)
 
-        acceptance = float(np.mean(sampler.acceptance_fraction))
         stored_chain = None
         if self._store_chains:
             stored_chain = self._inverse_chain(
@@ -371,11 +366,12 @@ class ErynMutation(MutationStep):
         if stored_chain is not None and squeeze_last:
             stored_chain = stored_chain[..., 0]
 
-        logger.debug(
-            "ErynMutation completed: acceptance=%.3f after %d steps.",
-            acceptance,
-            n_steps,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "ErynMutation completed: acceptance=%.3f after %d steps.",
+                float(np.mean(sampler.acceptance_fraction)),
+                n_steps,
+            )
         output = {
             "steps": n_steps,
             "chain": stored_chain,
