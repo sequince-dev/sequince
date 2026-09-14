@@ -135,6 +135,25 @@ def test_apply_log_weight_increment_normalizes_vector() -> None:
     assert updated.log_evidence == pytest.approx(-0.4 + expected_log_norm)
 
 
+def test_increment_copies_population_once(monkeypatch) -> None:
+    state = ParticleState(np.zeros((4, 2)))
+    calls = 0
+    original = ParticleState.copy
+
+    def copy(self):
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(ParticleState, "copy", copy)
+    updated, log_norm = _apply_log_weight_increment(state, np.ones(4))
+    assert calls == 1
+    assert log_norm == pytest.approx(1.0)
+    assert updated.log_normalizing_constant == pytest.approx(1.0)
+    updated.particles[0, 0] = 2.0
+    assert state.particles[0, 0] == 0.0
+
+
 def test_apply_log_weight_increment_can_defer_normalization() -> None:
     state = ParticleState(
         particles=np.arange(6.0).reshape(3, 2),

@@ -165,26 +165,20 @@ def _apply_log_weight_increment(
     Functional callers can defer normalizer validation to an eager boundary so
     that this operation remains compatible with traced array scalars.
     """
-    updated_state = state.with_updates(
-        log_weights=state.log_weights + log_increment
-    )
+    log_weights = state.log_weights + log_increment
     if not normalize:
-        return updated_state, None
+        return state.with_updates(log_weights=log_weights), None
 
+    xp = namespace(log_weights)
+    normalized, log_norm = normalize_log_weights(log_weights, xp=xp)
     if validate_normalizer:
-        updated_state, log_norm = updated_state.normalize()
-    else:
-        xp = namespace(updated_state.log_weights)
-        normalized, log_norm = normalize_log_weights(
-            updated_state.log_weights,
-            xp=xp,
-        )
-        updated_state = updated_state.with_updates(log_weights=normalized)
+        _validate_log_normalizer(log_norm, xp=xp)
     return (
-        updated_state.with_updates(
+        state.with_updates(
+            log_weights=normalized,
             log_normalizing_constant=(
-                updated_state.log_normalizing_constant + log_norm
-            )
+                state.log_normalizing_constant + log_norm
+            ),
         ),
         log_norm,
     )
