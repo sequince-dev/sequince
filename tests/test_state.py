@@ -624,3 +624,58 @@ def test_persistent_state_supports_jax_pytree_round_trip() -> None:
     assert type(restored) is PersistentParticleState
     assert restored.n_batches == 1
     np.testing.assert_allclose(to_numpy(restored.log_weights), [-0.25, -1.5])
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_with_updates_skips_discarded_copies(persistent, monkeypatch) -> None:
+    import sequince.state as state_module
+
+    state = _persistent_batch(1.0)
+    state.metadata["nested"] = [1.0]
+    if persistent:
+        state = PersistentParticleState.from_state(
+            state, beta=0.0, log_normalizing_constant=0.0
+        )
+    original_copy = state_module.array_copy
+    copied_arrays = []
+
+    def record_copy(value, **kwargs):
+        copied_arrays.append(value)
+        return original_copy(value, **kwargs)
+
+    monkeypatch.setattr(state_module, "array_copy", record_copy)
+    replacement = np.zeros_like(state.log_weights)
+    updated = state.with_updates(log_weights=replacement, evaluation=None)
+
+    assert not any(value is state.log_weights for value in copied_arrays)
+    assert updated.log_weights is replacement
+    assert updated.evaluation is None
+    assert state.evaluation is not None
+    updated.particles[0, 0] = 9.0
+    updated.initial_ancestor_indices[0] = 2
+    updated.metadata["nested"].append(2.0)
+    assert state.particles[0, 0] == 1.0
+    assert state.initial_ancestor_indices[0] == 0
+    assert state.metadata["nested"] == [1.0]
+    if persistent:
+        updated.betas[0] = 0.5
+        updated.log_normalizing_constants[0] = 1.0
+        assert state.betas[0] == 0.0
+        assert state.log_normalizing_constants[0] == 0.0
+
+
+def test_replacing_particles_does_not_copy_discarded_evaluation(
+    monkeypatch,
+) -> None:
+    state = _persistent_batch(1.0)
+
+    def unexpected_copy(self):
+        raise AssertionError("Discarded evaluation was copied")
+
+    monkeypatch.setattr(TargetEvaluation, "copy", unexpected_copy)
+    particles = np.zeros_like(state.particles)
+    metadata = {"replacement": True}
+    updated = state.with_updates(particles=particles, metadata=metadata)
+    assert updated.particles is particles
+    assert updated.evaluation is None
+    assert updated.metadata is metadata

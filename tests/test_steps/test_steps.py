@@ -136,16 +136,19 @@ def test_apply_log_weight_increment_normalizes_vector() -> None:
 
 
 def test_increment_copies_population_once(monkeypatch) -> None:
+    import sequince.state as state_module
+
     state = ParticleState(np.zeros((4, 2)))
     calls = 0
-    original = ParticleState.copy
+    original = state_module.array_copy
 
-    def copy(self):
+    def copy(value, **kwargs):
         nonlocal calls
-        calls += 1
-        return original(self)
+        if value is state.particles:
+            calls += 1
+        return original(value, **kwargs)
 
-    monkeypatch.setattr(ParticleState, "copy", copy)
+    monkeypatch.setattr(state_module, "array_copy", copy)
     updated, log_norm = _apply_log_weight_increment(state, np.ones(4))
     assert calls == 1
     assert log_norm == pytest.approx(1.0)

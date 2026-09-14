@@ -122,7 +122,9 @@ def test_emcee_rejects_particle_aligned_transform_auxiliary(
         transform=ParticleAlignedAuxiliaryTransform(),
     )
 
-    with pytest.raises(NotImplementedError, match="walker subsets"):
+    with pytest.raises(
+        NotImplementedError, match="walker-specific auxiliary data"
+    ):
         step(particle_state, context_factory(), ArrayRNG(seed=2468))
 
 

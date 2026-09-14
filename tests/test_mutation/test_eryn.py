@@ -198,7 +198,9 @@ def test_particle_auxiliary_rejected(particle_state, context_factory):
         def forward(self, values, context=None, *, rng=None):
             return values, np.zeros(len(values)), np.arange(len(values))
 
-    with pytest.raises(NotImplementedError, match="walker subsets"):
+    with pytest.raises(
+        NotImplementedError, match="walker-specific auxiliary data"
+    ):
         ErynMutation(lambda x: 0, transform=WalkerTransform())(
             particle_state,
             context_factory(),
