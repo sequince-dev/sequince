@@ -492,15 +492,16 @@ class Target(ABC):
                 components=components,
             )
         elif not self.accepts_evaluation(evaluation, context):
-            logger.debug(
-                "Discarding evaluation from target %s at key %r; "
-                "current %s target is %s at key %r.",
-                evaluation.target_id,
-                evaluation.evaluation_key,
-                type(self).__name__,
-                self.evaluation_id,
-                self.evaluation_key(context),
-            )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "Discarding evaluation from target %s at key %r; "
+                    "current %s target is %s at key %r.",
+                    evaluation.target_id,
+                    evaluation.evaluation_key,
+                    type(self).__name__,
+                    self.evaluation_id,
+                    self.evaluation_key(context),
+                )
             prepared, counts = self._evaluate(
                 particles,
                 context,

@@ -237,12 +237,13 @@ class ResamplingStep(SMCStep):
         if self._always_resample:
             return True
         if self._resample_at_end and context.stop_requested:
-            logger.debug(
-                "Iteration %d: %s resampling at end of run (ESS ratio=%.4f).",
-                context.t,
-                self.__class__.__name__,
-                state.effective_sample_size() / state.log_weights.shape[0],
-            )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "Iteration %d: %s resampling at end of run (ESS ratio=%.4f).",
+                    context.t,
+                    self.__class__.__name__,
+                    state.effective_sample_size() / state.log_weights.shape[0],
+                )
             return True
         if self._ess_threshold is None:
             return False

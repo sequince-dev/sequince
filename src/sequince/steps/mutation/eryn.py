@@ -353,7 +353,6 @@ class ErynMutation(MutationStep):
             counts = counts + delta
         context = context.add_evaluation_counts(counts)
 
-        acceptance = float(np.mean(sampler.acceptance_fraction))
         stored_chain = None
         if self._store_chains:
             stored_chain = self._inverse_chain(
@@ -367,11 +366,12 @@ class ErynMutation(MutationStep):
         if stored_chain is not None and squeeze_last:
             stored_chain = stored_chain[..., 0]
 
-        logger.debug(
-            "ErynMutation completed: acceptance=%.3f after %d steps.",
-            acceptance,
-            n_steps,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "ErynMutation completed: acceptance=%.3f after %d steps.",
+                float(np.mean(sampler.acceptance_fraction)),
+                n_steps,
+            )
         output = {
             "steps": n_steps,
             "chain": stored_chain,
