@@ -203,7 +203,7 @@ class IntermediateParticlesPlot(PlotCallback):
 
         filename = f"{self.base_filename}_{context.iteration}.png"
         self.full_path = self.outdir / filename
-        logger.debug(f"Plotting intermediate particles to {self.full_path}")
+        logger.debug("Plotting intermediate particles to %s", self.full_path)
         plot_corner(
             state.particles,
             filename=self.full_path,
@@ -532,7 +532,7 @@ class MutationChainPlot(PlotCallback):
                 )
             filename = f"{self.base_filename}_{context.iteration}.png"
             self.full_path = self.outdir / filename
-            logger.debug(f"Plotting mutation chains to {self.full_path}")
+            logger.debug("Plotting mutation chains to %s", self.full_path)
             from .plot import plot_chains
 
             plot_kwargs = dict(self.plot_kwargs)
@@ -675,7 +675,7 @@ class ParticleTransformPlot(PlotCallback):
         if transform is not None:
             filename = f"{self.base_filename}_{context.iteration}.png"
             self.full_path = self.outdir / filename
-            logger.debug(f"Plotting particle transform to {self.full_path}")
+            logger.debug("Plotting particle transform to %s", self.full_path)
 
             particles = state.particles
             transformed_particles, _, _ = transform.forward(
