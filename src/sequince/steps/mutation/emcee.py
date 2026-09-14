@@ -302,12 +302,8 @@ class EmceeMutation(MutationStep):
             n_particles=state.particles.shape[0],
         ):
             raise NotImplementedError(
-                "The transform requires walker-specific auxiliary data, but "
-                "emcee evaluates internally selected walker subsets and its "
-                "standard log-probability callback does not expose the "
-                "original walker selection or context. Sequince therefore "
-                "cannot guarantee that the correct auxiliary entry is "
-                "supplied. Use a batch-preserving mutation implementation."
+                "Emcee does not support transforms with walker-specific "
+                "auxiliary data."
             )
         particles = to_numpy(latent_particles)
         if particles.ndim == 1:

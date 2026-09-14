@@ -225,12 +225,8 @@ class ErynMutation(MutationStep):
             n_particles=state.particles.shape[0],
         ):
             raise NotImplementedError(
-                "The transform requires walker-specific auxiliary data, but "
-                "eryn evaluates internally selected walker subsets and its "
-                "standard log-probability callback does not expose the "
-                "original walker selection or context. Sequince therefore "
-                "cannot guarantee that the correct auxiliary entry is "
-                "supplied. Use a batch-preserving mutation implementation."
+                "Eryn does not support transforms with walker-specific "
+                "auxiliary data."
             )
         # Eryn requires host coordinates even for GPU-enabled moves. The
         # callback below restores the particle backend before evaluation.
