@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sequince.array_api import namespace
+from sequince.array_api import asarray, get_device, namespace
 from sequince.state import ParticleState
 from sequince.steps.resampling import (
     MultinomialResampling,
@@ -13,6 +13,56 @@ from sequince.steps.resampling import (
     SystematicResampling,
 )
 from sequince.target import TargetEvaluation
+from sequince.utils.random import resolve_rng
+
+
+@pytest.mark.parametrize(
+    ("step_type", "seed"),
+    [(SystematicResampling, 82), (StratifiedResampling, 93)],
+)
+def test_float32_resampling_roundoff(step_type, seed, context_factory) -> None:
+    n = 1000
+    state = ParticleState(
+        np.arange(n, dtype=np.float32)[:, None],
+        log_weights=np.full(n, -np.log(n), dtype=np.float32),
+    )
+    updated, _, output = step_type(always_resample=True)(
+        state, context_factory(), resolve_rng(seed)
+    )
+    assert updated.particles.shape == (n, 1)
+    assert np.all((output.ancestors >= 0) & (output.ancestors < n))
+
+
+@pytest.mark.parametrize(
+    "step_type", [SystematicResampling, StratifiedResampling]
+)
+@pytest.mark.parametrize("backend", ["numpy", "torch"])
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_rounded_endpoint_does_not_select_zero_weight_particle(
+    step_type, backend: str, dtype: str, backend_factory
+) -> None:
+    case = backend_factory(backend)
+    xp = case.xp
+    probs = asarray(
+        [0.25, 0.75, 0.0, 0.0],
+        xp=xp,
+        dtype=getattr(xp, dtype),
+        like=case.particles,
+    )
+
+    class EndpointRNG:
+        def random(self, size=()):
+            return xp.full(
+                size,
+                1.0 - xp.finfo(probs.dtype).eps / 2,
+                dtype=probs.dtype,
+                device=get_device(probs),
+            )
+
+    ancestors = step_type()._choose_ancestors(probs, 4, EndpointRNG())
+    assert namespace(ancestors) is namespace(probs)
+    assert get_device(ancestors) == get_device(probs)
+    assert bool(xp.all((ancestors >= 0) & (ancestors < 2)))
 
 
 def test_systematic_resampling_skips_when_not_required(
