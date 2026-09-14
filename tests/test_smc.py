@@ -5,10 +5,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
+from sequince.exceptions import DegenerateWeightsError
 from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState
 from sequince.steps.base import SMCStep, StepContext
-from sequince.steps.weighting import AdaptiveTemperedWeighting
+from sequince.steps.weighting import (
+    AdaptiveTemperedWeighting,
+    FixedTemperedWeighting,
+)
 from sequince.target import EvaluationCounts
 
 if TYPE_CHECKING:
@@ -214,6 +218,29 @@ def test_smc_with_adaptive_tempering_stops_at_max_beta(
         "resampling",
         "mutation",
     ]
+
+
+@pytest.mark.parametrize("invalid", [-np.inf, np.inf, np.nan])
+@pytest.mark.parametrize("functional", [False, True])
+def test_runner_rejects_degenerate_weights(
+    invalid: float, functional: bool
+) -> None:
+    callbacks = []
+    smc = SequentialMonteCarlo(
+        [
+            FixedTemperedWeighting(
+                lambda _: np.full(4, invalid), beta_increment=1
+            )
+        ],
+        callbacks=[lambda *args: callbacks.append(args)],
+    )
+    state = ParticleState(np.zeros((4, 1)))
+    with pytest.raises(DegenerateWeightsError):
+        if functional:
+            smc.run_functional(state, num_steps=1, random_state=np.array([0]))
+        else:
+            smc.run(state, num_steps=1, rng=0)
+    assert not callbacks
 
 
 def test_smc_invokes_callbacks_with_incremental_results(
