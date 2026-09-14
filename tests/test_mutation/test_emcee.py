@@ -5,12 +5,60 @@ import numpy as np
 import pytest
 from orng import ArrayRNG
 
+from sequince.state import ParticleState
+from sequince.steps.context import StepContext
 from sequince.steps.mutation import (
     EmceeMutation,
     get_emcee_move,
     resolve_emcee_moves,
 )
-from sequince.transforms import ParticleTransform
+from sequince.steps.waste_free import WasteFreeResampleMove
+from sequince.transforms import AffineTransform, ParticleTransform
+
+
+@pytest.mark.parametrize("scalar_particles", [False, True])
+@pytest.mark.parametrize("transform", [None, AffineTransform()])
+@pytest.mark.parametrize("vectorize", [False, True])
+def test_emcee_chain_matches_particle_shape(
+    scalar_particles, transform, vectorize, standard_normal_log_prob
+) -> None:
+    particles = np.linspace(-2.0, 2.0, 20)
+    if not scalar_particles:
+        particles = particles[:, None]
+    step = EmceeMutation(
+        standard_normal_log_prob,
+        n_steps=3,
+        store_chains=True,
+        transform=transform,
+        vectorize=vectorize,
+    )
+
+    result, _, output = step(
+        ParticleState(particles), StepContext(t=0), rng=123
+    )
+
+    assert result.particles.shape == particles.shape
+    assert output["chain"].shape == (3, *particles.shape)
+    np.testing.assert_array_equal(output["chain"][-1], result.particles)
+
+
+def test_waste_free_emcee_accepts_scalar_chains(
+    standard_normal_log_prob,
+) -> None:
+    particles = np.linspace(-2.0, 2.0, 20)
+    step = WasteFreeResampleMove(
+        EmceeMutation(standard_normal_log_prob), chain_length=2
+    )
+
+    result, _, output = step(
+        ParticleState(particles), StepContext(t=0), rng=123
+    )
+
+    assert result.particles.shape == particles.shape
+    np.testing.assert_array_equal(
+        result.particles[10:], output["mutation"]["chain"][0]
+    )
+    np.testing.assert_allclose(result.weights, 1.0 / particles.size)
 
 
 class ParticleAlignedAuxiliaryTransform(ParticleTransform):

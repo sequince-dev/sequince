@@ -3,6 +3,7 @@ import warnings
 import numpy as np
 import pytest
 
+from sequince.array_api import to_numpy
 from sequince.result import MetaSMCResult, SMCResult
 from sequince.state import ParticleState
 from sequince.steps.context import StepContext
@@ -97,6 +98,40 @@ def test_posterior_samples_returns_final_particles_and_weights(
     )
     np.testing.assert_allclose(weights, [0.1, 0.2, 0.3, 0.4])
     np.testing.assert_allclose(weights.sum(), 1.0)
+
+
+@pytest.mark.parametrize("method", ["weights", "multinomial", "rejection"])
+@pytest.mark.parametrize("n_samples", [None, 2])
+def test_posterior_samples_preserves_scalar_population_axis(
+    backend, backend_factory, method, n_samples
+) -> None:
+    case = backend_factory(backend)
+    particles = case.particles[:, 0]
+    scalar_result = SMCResult(
+        [ParticleState(particles, log_weights=case.log_weights)],
+        StepContext(t=0),
+    )
+    column_result = SMCResult(
+        [ParticleState(particles[:, None], log_weights=case.log_weights)],
+        StepContext(t=0),
+    )
+
+    samples, weights = scalar_result.posterior_samples(
+        method=method, n_samples=n_samples, rng=1234
+    )
+    expected_samples, expected_weights = column_result.posterior_samples(
+        method=method, n_samples=n_samples, rng=1234
+    )
+
+    assert samples.shape == (weights.shape[0], 1)
+    assert case.matches_namespace(samples)
+    assert case.matches_namespace(weights)
+    np.testing.assert_array_equal(
+        to_numpy(samples), to_numpy(expected_samples)
+    )
+    np.testing.assert_array_equal(
+        to_numpy(weights), to_numpy(expected_weights)
+    )
 
 
 def test_posterior_samples_downselects_and_renormalizes_weights(

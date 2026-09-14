@@ -812,14 +812,17 @@ class SMCResult:
         Returns
         -------
         samples
-            Posterior samples.
+            Posterior samples. Scalar particles are returned as a column
+            with shape ``(n_samples, 1)``.
         sample_weights
             Normalized weights associated with ``samples``.
         """
         final_state = self.final_state
         xp = namespace(final_state.particles, final_state.weights)
 
-        particles = xp.atleast_2d(final_state.particles)
+        particles = final_state.particles
+        if particles.ndim == 1:
+            particles = xp.reshape(particles, (-1, 1))
         weights = asarray(final_state.weights, xp=xp)
         weights = weights / xp.sum(weights)
 

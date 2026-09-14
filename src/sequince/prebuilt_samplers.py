@@ -172,18 +172,9 @@ def make_standard_bayesian_smc(
         )
 
     if always_mutate is None:
-        if always_resample:
-            always_mutate = True
-        else:
-            always_mutate = False
+        always_mutate = always_resample
 
-    if always_mutate is False and mutation == "none":
-        raise ValueError(
-            "always_mutate cannot be False when mutation is not 'none' "
-            "since mutation moves are required to maintain particle diversity."
-        )
-
-    if always_resample and not always_mutate:
+    if mutation != "none" and always_resample and not always_mutate:
         raise ValueError(
             "always_mutate=False is incompatible with always_resample=True."
         )

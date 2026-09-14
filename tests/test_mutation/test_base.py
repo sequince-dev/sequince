@@ -17,6 +17,55 @@ from sequince.steps.mutation import (
 from sequince.transforms import FlowTransform, ParticleTransform
 
 
+def test_mutation_propagates_target_type_error(
+    particle_state, context_factory, rng
+) -> None:
+    calls = []
+    failure = TypeError("target calculation failed")
+
+    def log_prob(particles, context=None):
+        calls.append(context)
+        if context is not None:
+            raise failure
+        return np.zeros(particles.shape[0])
+
+    step = MetropolisHastingsMutation(
+        log_prob,
+        CallableMutationKernel(lambda p, r: p, symmetric=True),
+    )
+    context = context_factory()
+
+    with pytest.raises(TypeError, match="target calculation failed") as exc:
+        step(particle_state, context, rng)
+
+    assert exc.value is failure
+    assert calls == [context]
+
+
+@pytest.mark.parametrize(
+    "log_prob",
+    [
+        lambda p: np.zeros(p.shape[0]),
+        lambda p, context: np.zeros(p.shape[0]),
+        lambda p, context=None: np.zeros(p.shape[0]),
+    ],
+    ids=["particles-only", "required-context", "optional-context"],
+)
+def test_mutation_accepts_target_signatures(
+    log_prob, particle_state, context_factory, rng
+) -> None:
+    step = MetropolisHastingsMutation(
+        log_prob,
+        CallableMutationKernel(lambda p, r: p + 1, symmetric=True),
+    )
+
+    result, _, _ = step(particle_state, context_factory(), rng)
+
+    np.testing.assert_array_equal(
+        result.particles, particle_state.particles + 1
+    )
+
+
 class CountingTransform(ParticleTransform):
     def __init__(
         self, fits: list[np.ndarray], fit_rngs: list[object] | None = None
