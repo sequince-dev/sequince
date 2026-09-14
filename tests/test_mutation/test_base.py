@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -115,8 +117,9 @@ def test_always_refits_transform_for_each_application(
     assert len(fits) == 2
 
 
+@pytest.mark.parametrize(("iteration", "observation_index"), [(4, 0), (3, 1)])
 def test_restored_per_context_transform_refits_at_next_context(
-    particle_state, context_factory, rng
+    particle_state, context_factory, rng, iteration, observation_index
 ) -> None:
     original = _mutation("per-context", [])
     context = context_factory(t=3)
@@ -131,7 +134,10 @@ def test_restored_per_context_transform_refits_at_next_context(
         same_context.metadata["particle_transform"], CountingTransform
     )
 
-    restored(particle_state, context_factory(t=4), rng)
+    next_context = replace(
+        context, t=iteration, next_observation_index=observation_index
+    )
+    restored(particle_state, next_context, rng)
     assert len(fits) == 1
 
 

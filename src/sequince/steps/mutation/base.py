@@ -101,7 +101,8 @@ class MutationStep(SMCStep):
         self._transform = transform
         self._transform_refit = transform_refit
         self._prepared_transform: ParticleTransform | None = None
-        self._transform_fit_indices: tuple[int, int] | None = None
+        self._transform_fit_iteration: int | None = None
+        self._transform_fit_observation_index: int | None = None
         self._store_chains = store_chains
         self._chain: Array | None = None
 
@@ -166,27 +167,31 @@ class MutationStep(SMCStep):
         """Return the fitted transform and the context identifying its fit."""
         return {
             "prepared_transform": array_safe_copy(self._prepared_transform),
-            "prepared_context_key": self._transform_fit_indices,
+            "transform_fit_iteration": self._transform_fit_iteration,
+            "transform_fit_observation_index": (
+                self._transform_fit_observation_index
+            ),
         }
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
         """Restore the transform cache; legacy empty state clears the cache."""
         transform = state.get("prepared_transform")
-        fit_indices = state.get("prepared_context_key")
+        fit_iteration = state.get("transform_fit_iteration")
+        fit_observation_index = state.get("transform_fit_observation_index")
         if transform is not None and not isinstance(
             transform, ParticleTransform
         ):
             raise TypeError("Prepared transform must be a ParticleTransform.")
-        if fit_indices is not None and (
-            not isinstance(fit_indices, tuple) or len(fit_indices) != 2
+        if transform is not None and (
+            fit_iteration is None or fit_observation_index is None
         ):
-            raise TypeError("Prepared context key must be a pair of indices.")
-        if (transform is None) != (fit_indices is None):
             raise ValueError(
-                "Prepared transform and context key must be paired."
+                "Prepared transform requires its fit iteration and "
+                "observation index."
             )
         self._prepared_transform = array_safe_copy(transform)
-        self._transform_fit_indices = fit_indices
+        self._transform_fit_iteration = fit_iteration
+        self._transform_fit_observation_index = fit_observation_index
 
     def _evaluate_target(
         self,
@@ -316,20 +321,26 @@ class MutationStep(SMCStep):
             if callable(self._transform_refit)
             else False
         )
-        fit_indices = (context.t, context.next_observation_index)
         should_fit = (
             self._transform_refit == "always"
             or self._prepared_transform is None
             or triggered
             or (
                 self._transform_refit == "per-context"
-                and self._transform_fit_indices != fit_indices
+                and (
+                    self._transform_fit_iteration != context.t
+                    or self._transform_fit_observation_index
+                    != context.next_observation_index
+                )
             )
         )
         if should_fit:
             transform = self._fit_transform(particles, context, rng=rng)
             self._prepared_transform = transform
-            self._transform_fit_indices = fit_indices
+            self._transform_fit_iteration = context.t
+            self._transform_fit_observation_index = (
+                context.next_observation_index
+            )
         else:
             cached_transform = self._prepared_transform
             if cached_transform is None:  # pragma: no cover - guarded above
