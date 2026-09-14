@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 import numpy as np
@@ -9,6 +10,7 @@ from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts, Target
 from ...transforms import ParticleTransform, _repeat_transform_auxiliary
 from ...utils.callables import call_with_optional_context
+from ...utils.copying import array_safe_copy
 from ..base import SMCStep
 from ..context import StepContext
 from .metrics import (
@@ -97,7 +99,8 @@ class MutationStep(SMCStep):
         self._transform = transform
         self._transform_refit = transform_refit
         self._prepared_transform: ParticleTransform | None = None
-        self._prepared_context: StepContext | None = None
+        self._transform_fit_iteration: int | None = None
+        self._transform_fit_observation_index: int | None = None
         self._store_chains = store_chains
         self._chain: Array | None = None
 
@@ -157,6 +160,36 @@ class MutationStep(SMCStep):
     @store_chains.setter
     def store_chains(self, value: bool) -> None:
         self._store_chains = bool(value)
+
+    def state_dict(self) -> dict[str, Any]:
+        """Return the fitted transform and the context identifying its fit."""
+        return {
+            "prepared_transform": array_safe_copy(self._prepared_transform),
+            "transform_fit_iteration": self._transform_fit_iteration,
+            "transform_fit_observation_index": (
+                self._transform_fit_observation_index
+            ),
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore the transform cache; legacy empty state clears the cache."""
+        transform = state.get("prepared_transform")
+        fit_iteration = state.get("transform_fit_iteration")
+        fit_observation_index = state.get("transform_fit_observation_index")
+        if transform is not None and not isinstance(
+            transform, ParticleTransform
+        ):
+            raise TypeError("Prepared transform must be a ParticleTransform.")
+        if transform is not None and (
+            fit_iteration is None or fit_observation_index is None
+        ):
+            raise ValueError(
+                "Prepared transform requires its fit iteration and "
+                "observation index."
+            )
+        self._prepared_transform = array_safe_copy(transform)
+        self._transform_fit_iteration = fit_iteration
+        self._transform_fit_observation_index = fit_observation_index
 
     def _evaluate_target(
         self,
@@ -224,6 +257,12 @@ class MutationStep(SMCStep):
                 "Callable transform_refit policies are not supported by the "
                 "functional API. Use 'always', 'per-context', or 'once'."
             )
+        if (
+            self._transform_refit == "once"
+            and _FUNCTIONAL_TRANSFORM_MARKER_KEY in context.metadata
+            and PARTICLE_TRANSFORM_KEY in context.metadata
+        ):
+            return state, context
         transform = self._fit_transform(state.particles, context)
         context = context.with_metadata(
             **{
@@ -287,9 +326,8 @@ class MutationStep(SMCStep):
             or (
                 self._transform_refit == "per-context"
                 and (
-                    self._prepared_context is None
-                    or self._prepared_context.t != context.t
-                    or self._prepared_context.next_observation_index
+                    self._transform_fit_iteration != context.t
+                    or self._transform_fit_observation_index
                     != context.next_observation_index
                 )
             )
@@ -297,7 +335,10 @@ class MutationStep(SMCStep):
         if should_fit:
             transform = self._fit_transform(particles, context, rng=rng)
             self._prepared_transform = transform
-            self._prepared_context = context
+            self._transform_fit_iteration = context.t
+            self._transform_fit_observation_index = (
+                context.next_observation_index
+            )
         else:
             cached_transform = self._prepared_transform
             if cached_transform is None:  # pragma: no cover - guarded above

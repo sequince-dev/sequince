@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -159,6 +161,44 @@ def test_always_refits_transform_for_each_application(
     context = context_factory()
 
     mutation(particle_state, context, rng)
+    mutation(particle_state, context, rng)
+
+    assert len(fits) == 2
+
+
+@pytest.mark.parametrize(("iteration", "observation_index"), [(4, 0), (3, 1)])
+def test_restored_per_context_transform_refits_at_next_context(
+    particle_state, context_factory, rng, iteration, observation_index
+) -> None:
+    original = _mutation("per-context", [])
+    context = context_factory(t=3)
+    original(particle_state, context, rng)
+    fits = []
+    restored = _mutation("per-context", fits)
+    restored.load_state_dict(original.state_dict())
+
+    _, same_context, _ = restored(particle_state, context, rng)
+    assert fits == []
+    assert isinstance(
+        same_context.metadata["particle_transform"], CountingTransform
+    )
+
+    next_context = replace(
+        context, t=iteration, next_observation_index=observation_index
+    )
+    restored(particle_state, next_context, rng)
+    assert len(fits) == 1
+
+
+def test_loading_legacy_empty_mutation_state_clears_transform_cache(
+    particle_state, context_factory, rng
+) -> None:
+    fits = []
+    mutation = _mutation("once", fits)
+    context = context_factory()
+    mutation(particle_state, context, rng)
+
+    mutation.load_state_dict({})
     mutation(particle_state, context, rng)
 
     assert len(fits) == 2

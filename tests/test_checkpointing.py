@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Sequence
+from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
 
 import sequince.checkpoint as checkpoint_module
+from sequince.array_api import namespace, to_numpy
 from sequince.checkpoint import (
     CheckpointWriter,
     HDF5CheckpointWriter,
@@ -18,7 +20,13 @@ from sequince.result import SMCResult
 from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState
 from sequince.steps.base import SMCStep, StepContext
+from sequince.steps.mutation import (
+    GaussianRandomWalk,
+    MetropolisHastingsMutation,
+)
+from sequince.steps.mutation.base import TransformRefit
 from sequince.target import EvaluationCounts
+from sequince.transforms import AffineTransform
 from sequince.utils.random import resolve_rng
 
 
@@ -113,6 +121,72 @@ class CheckpointRecorder(CheckpointWriter):
 
     def _write(self, checkpoint: SMCCheckpoint) -> None:
         self.checkpoints.append(checkpoint)
+
+
+def _never_refit(particles, context) -> bool:
+    return False
+
+
+@pytest.mark.parametrize("storage", ["dict", "pickle", "hdf5"])
+@pytest.mark.parametrize(
+    "refit", ["once", "per-context", "always", _never_refit]
+)
+def test_resume_preserves_mutation_transform_cache(
+    tmp_path: Path,
+    storage: str,
+    refit: TransformRefit,
+    backend,
+    backend_factory,
+) -> None:
+    case = backend_factory(backend)
+
+    def make_runner(*writers: CheckpointWriter) -> SequentialMonteCarlo:
+        return SequentialMonteCarlo(
+            steps=[
+                MetropolisHastingsMutation(
+                    lambda p: -0.5 * namespace(p).sum(p**2, axis=1),
+                    GaussianRandomWalk(0.5),
+                    transform=AffineTransform(),
+                    transform_refit=refit,
+                )
+            ],
+            checkpoint_writers=writers,
+        )
+
+    initial = ParticleState(case.particles)
+    full = make_runner().run(initial, num_steps=4, rng=case.rng(10))
+    recorder = CheckpointRecorder()
+    make_runner(recorder).run(initial, num_steps=2, rng=case.rng(10))
+    checkpoint = recorder.checkpoints[-1]
+    if storage == "pickle":
+        path = tmp_path / "checkpoint.pkl"
+        checkpoint.save_pickle(path)
+        checkpoint = SMCCheckpoint.load_pickle(path)
+    elif storage == "hdf5":
+        with h5py.File(tmp_path / "checkpoint.h5", "w") as handle:
+            checkpoint.save_hdf5(handle)
+            checkpoint = SMCCheckpoint.load_hdf5(handle)
+    else:
+        checkpoint = SMCCheckpoint.from_dict(checkpoint.to_dict())
+
+    resumed_runner = make_runner()
+    resumed = resumed_runner.run(
+        runtime=resumed_runner.resume_from(checkpoint), num_steps=2
+    )
+
+    for expected, actual in zip(full.states, resumed.states, strict=True):
+        assert case.matches_namespace(actual.particles)
+        np.testing.assert_array_equal(
+            to_numpy(expected.particles), to_numpy(actual.particles)
+        )
+        np.testing.assert_array_equal(
+            to_numpy(expected.log_weights), to_numpy(actual.log_weights)
+        )
+        assert expected.log_evidence == actual.log_evidence
+    np.testing.assert_array_equal(
+        to_numpy(full.context.metadata["particle_transform"]._scale),
+        to_numpy(resumed.context.metadata["particle_transform"]._scale),
+    )
 
 
 def _assert_states_equal(left: ParticleState, right: ParticleState) -> None:

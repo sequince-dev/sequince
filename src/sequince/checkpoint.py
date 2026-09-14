@@ -338,10 +338,12 @@ class SMCCheckpoint:
                 "Checkpoint state must be the final state in the result."
             )
         states = tuple(item.copy() if detach else item for item in states)
+        # Functional transforms live in context; eager caches live on steps.
         metadata = {
             key: value
             for key, value in context.metadata.items()
             if key != "particle_transform"
+            or "_functional_particle_transform" in context.metadata
         }
         return cls(
             states=states,
