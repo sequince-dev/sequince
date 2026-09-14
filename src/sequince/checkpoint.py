@@ -570,22 +570,43 @@ class SMCCheckpoint:
         *,
         replace_states: bool = False,
     ) -> None:
-        """Save runtime state and append result states in HDF5."""
+        """Append states and commit their count with the runtime payload.
+
+        Interrupted writes leave the previous runtime readable. This protects
+        against incomplete writes in a readable HDF5 file, not file corruption.
+        """
         protocol = (
             pickle.HIGHEST_PROTOCOL if protocol is None else int(protocol)
         )
         group = h5_file.require_group(path)
         runtime_payload = self._runtime_dict()
 
-        states_group = group.require_group("states")
-        if replace_states:
-            del group["states"]
-            states_group = group.require_group("states")
-        existing = len(states_group)
-        if existing > len(self.states):
-            del group["states"]
-            states_group = group.require_group("states")
-            existing = 0
+        previous_name = f"{dsetname}.previous"
+        if dsetname not in group and previous_name in group:
+            group.move(previous_name, dsetname)
+        states_name = "states"
+        existing = 0
+        if dsetname in group:
+            committed_runtime = group[dsetname]
+            states_name = (
+                _read_hdf_value(committed_runtime["states_name"])
+                if "states_name" in committed_runtime
+                else "states"
+            )
+            existing = (
+                _read_hdf_value(committed_runtime["state_count"])
+                if "state_count" in committed_runtime
+                else len(group[states_name])
+            )
+            if replace_states or existing > len(self.states):
+                states_name = (
+                    "states.alternate" if states_name == "states" else "states"
+                )
+                existing = 0
+        states_group = group.require_group(states_name)
+        # Discard uncommitted tails, including partially written state groups.
+        for index in range(existing, len(states_group)):
+            del states_group[f"{index:08d}"]
         for index in range(existing, len(self.states)):
             _write_hdf_value(
                 states_group,
@@ -595,10 +616,21 @@ class SMCCheckpoint:
             )
 
         temporary_name = f"{dsetname}.tmp"
+        runtime_payload["state_count"] = len(self.states)
+        runtime_payload["states_name"] = states_name
         _write_hdf_value(group, temporary_name, runtime_payload, protocol)
+        h5_file.flush()
+        if previous_name in group:
+            del group[previous_name]
         if dsetname in group:
-            del group[dsetname]
+            group.move(dsetname, previous_name)
         group.move(temporary_name, dsetname)
+        h5_file.flush()
+        if previous_name in group:
+            del group[previous_name]
+        for unused in ("states", "states.alternate"):
+            if unused != states_name and unused in group:
+                del group[unused]
 
     @classmethod
     def load_hdf5(
@@ -609,13 +641,17 @@ class SMCCheckpoint:
     ) -> "SMCCheckpoint":
         """Load a checkpoint from its recursive HDF5 representation."""
         group = h5_file[path]
-        checkpoint_payload = _read_hdf_value(group[dsetname])
+        runtime_name = (
+            dsetname if dsetname in group else f"{dsetname}.previous"
+        )
+        checkpoint_payload = _read_hdf_value(group[runtime_name])
         if not isinstance(checkpoint_payload, dict):
             raise TypeError("HDF5 checkpoint runtime must be a mapping.")
-        states_group = group["states"]
+        states_group = group[checkpoint_payload.pop("states_name", "states")]
+        state_count = checkpoint_payload.pop("state_count", len(states_group))
         checkpoint_payload["states"] = [
-            _read_hdf_value(states_group[name])
-            for name in sorted(states_group)
+            _read_hdf_value(states_group[f"{index:08d}"])
+            for index in range(state_count)
         ]
         return cls.from_dict(checkpoint_payload, copy_values=False)
 

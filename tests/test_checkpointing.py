@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import pytest
 
+import sequince.checkpoint as checkpoint_module
 from sequince.checkpoint import (
     CheckpointWriter,
     HDF5CheckpointWriter,
@@ -469,6 +470,79 @@ def test_hdf5_checkpoint_serializes_each_result_state_once(
 
     # Three result states plus the separately retained initial state.
     assert calls == 4
+
+
+@pytest.mark.parametrize("failure", ["state", "runtime", "commit"])
+@pytest.mark.parametrize("replace_states", [False, True])
+def test_interrupted_hdf5_write_preserves_committed_checkpoint(
+    particle_state, monkeypatch, tmp_path, failure, replace_states
+) -> None:
+    recorder = CheckpointRecorder()
+    expected = _make_smc(recorder).run(particle_state, num_steps=3, rng=123)
+    original, pending, retry = recorder.checkpoints
+    if replace_states:
+        replacement_recorder = CheckpointRecorder()
+        expected = _make_smc(replacement_recorder).run(
+            particle_state.with_updates(
+                particles=particle_state.particles + 9
+            ),
+            num_steps=3,
+            rng=456,
+        )
+        _, pending, retry = replacement_recorder.checkpoints
+
+    write = checkpoint_module._write_hdf_value
+    move = h5py.Group.move
+
+    def interrupted_write(group, name, value, protocol):
+        write(group, name, value, protocol)
+        if (failure == "state" and name == "00000001") or (
+            failure == "runtime" and name == "runtime.tmp"
+        ):
+            raise OSError("interrupted write")
+
+    def interrupted_move(group, source, destination):
+        if failure == "commit" and source == "runtime.tmp":
+            raise OSError("interrupted commit")
+        move(group, source, destination)
+
+    path = tmp_path / "interrupted.h5"
+    with h5py.File(path, "w") as h5_file:
+        original.save_hdf5(h5_file)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                checkpoint_module, "_write_hdf_value", interrupted_write
+            )
+            patch.setattr(h5py.Group, "move", interrupted_move)
+            with pytest.raises(OSError, match="interrupted"):
+                pending.save_hdf5(h5_file, replace_states=replace_states)
+
+    with h5py.File(path, "r+") as h5_file:
+        restored = SMCCheckpoint.load_hdf5(h5_file)
+        _assert_results_equal(restored.result(), original.result())
+        assert restored.next_iteration == original.next_iteration
+        np.testing.assert_array_equal(
+            restored.restore_rng().normal(size=4),
+            original.restore_rng().normal(size=4),
+        )
+        retry.save_hdf5(h5_file, replace_states=replace_states)
+        _assert_results_equal(
+            SMCCheckpoint.load_hdf5(h5_file).result(), expected
+        )
+
+
+def test_hdf5_loads_runtime_without_commit_fields(
+    particle_state: ParticleState, tmp_path
+) -> None:
+    recorder = CheckpointRecorder()
+    expected = _make_smc(recorder).run(particle_state, num_steps=1, rng=123)
+    with h5py.File(tmp_path / "legacy.h5", "w") as h5_file:
+        recorder.checkpoints[0].save_hdf5(h5_file)
+        del h5_file["checkpoint/runtime/state_count"]
+        del h5_file["checkpoint/runtime/states_name"]
+        _assert_results_equal(
+            SMCCheckpoint.load_hdf5(h5_file).result(), expected
+        )
 
 
 def test_hdf5_checkpoint_writer_respects_every_and_optional_rng(
