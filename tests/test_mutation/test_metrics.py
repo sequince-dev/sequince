@@ -451,6 +451,60 @@ def test_minipcn_functional_metrics_preserve_sampling():
     assert output.metrics.n_attempted == 48
 
 
+@pytest.mark.parametrize("store_chains", [False, True])
+def test_minipcn_eager_history_and_metrics_preserve_sampling(
+    store_chains, context_factory, monkeypatch
+) -> None:
+    minipcn = pytest.importorskip("minipcn")
+    from sequince.steps.mutation import MiniPCNMutation
+    from sequince.utils.random import resolve_rng
+
+    state = ParticleState(np.random.default_rng(1).normal(size=(16, 2)))
+    context = context_factory()
+    results = []
+    last_only = []
+    sample = minipcn.Sampler.sample
+
+    def record_sample(self, *args, **kwargs):
+        last_only.append(kwargs["return_last_only"])
+        return sample(self, *args, **kwargs)
+
+    monkeypatch.setattr(minipcn.Sampler, "sample", record_sample)
+    for metrics in ([], [CountMetric()]):
+        step = MiniPCNMutation(
+            lambda p, c: -0.5 * np.sum(p**2, axis=-1),
+            n_steps=3,
+            metrics=metrics,
+            store_chains=store_chains,
+        )
+        rng = resolve_rng(42)
+        updated, next_context, output, mutation_state = (
+            step.apply_with_mutation_state(state, context, rng, n_steps=3)
+        )
+        updated, _, second_output, mutation_state = (
+            step.apply_with_mutation_state(
+                updated,
+                next_context,
+                rng,
+                n_steps=2,
+                mutation_state=mutation_state,
+            )
+        )
+        assert mutation_state.n_steps == 5
+        assert mutation_state.n_attempted == 80
+        expected_accepted = 16 * (
+            np.sum(output.acceptance_by_step)
+            + np.sum(second_output.acceptance_by_step)
+        )
+        assert mutation_state.n_accepted == pytest.approx(expected_accepted)
+        results.append((updated, rng.normal(size=4)))
+    assert last_only == [not store_chains, not store_chains, False, False]
+    np.testing.assert_array_equal(
+        results[0][0].particles, results[1][0].particles
+    )
+    np.testing.assert_array_equal(results[0][1], results[1][1])
+
+
 def test_emcee_metrics_count_accepted_zero_displacement(context_factory, rng):
     emcee = pytest.importorskip("emcee")
     from sequince.steps.mutation import EmceeMutation
