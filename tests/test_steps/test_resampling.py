@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sequince.array_api import namespace
+from sequince.array_api import asarray, get_device, namespace
 from sequince.state import ParticleState
 from sequince.steps.resampling import (
     MultinomialResampling,
@@ -36,17 +36,33 @@ def test_float32_resampling_roundoff(step_type, seed, context_factory) -> None:
 @pytest.mark.parametrize(
     "step_type", [SystematicResampling, StratifiedResampling]
 )
+@pytest.mark.parametrize("backend", ["numpy", "torch"])
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
 def test_rounded_endpoint_does_not_select_zero_weight_particle(
-    step_type,
+    step_type, backend: str, dtype: str, backend_factory
 ) -> None:
+    case = backend_factory(backend)
+    xp = case.xp
+    probs = asarray(
+        [0.25, 0.75, 0.0, 0.0],
+        xp=xp,
+        dtype=getattr(xp, dtype),
+        like=case.particles,
+    )
+
     class EndpointRNG:
         def random(self, size=()):
-            return np.full(size, np.nextafter(np.float32(1), np.float32(0)))
+            return xp.full(
+                size,
+                1.0 - xp.finfo(probs.dtype).eps / 2,
+                dtype=probs.dtype,
+                device=get_device(probs),
+            )
 
-    ancestors = step_type()._choose_ancestors(
-        np.array([0.25, 0.75, 0.0, 0.0], dtype=np.float32), 4, EndpointRNG()
-    )
-    assert np.all((ancestors >= 0) & (ancestors < 2))
+    ancestors = step_type()._choose_ancestors(probs, 4, EndpointRNG())
+    assert namespace(ancestors) is namespace(probs)
+    assert get_device(ancestors) == get_device(probs)
+    assert bool(xp.all((ancestors >= 0) & (ancestors < 2)))
 
 
 def test_systematic_resampling_skips_when_not_required(

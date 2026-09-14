@@ -275,9 +275,13 @@ class StratifiedResampling(ResamplingStep):
         cumulative = xp.cumulative_sum(probs)
         cumulative = cumulative / cumulative[-1]
         # Rounding can produce a position of one, even though RNG draws are < 1.
-        positions = xp.minimum(
-            positions, 1.0 - xp.finfo(positions.dtype).eps / 2
+        max_position = asarray(
+            1.0 - xp.finfo(positions.dtype).eps / 2,
+            xp=xp,
+            dtype=positions.dtype,
+            like=positions,
         )
+        positions = xp.minimum(positions, max_position)
         return xpx.searchsorted(cumulative, positions, side="right", xp=xp)
 
 
@@ -298,7 +302,11 @@ class SystematicResampling(ResamplingStep):
         positions = (start + offsets) / n_samples
         cumulative = xp.cumulative_sum(probs)
         cumulative = cumulative / cumulative[-1]
-        positions = xp.minimum(
-            positions, 1.0 - xp.finfo(positions.dtype).eps / 2
+        max_position = asarray(
+            1.0 - xp.finfo(positions.dtype).eps / 2,
+            xp=xp,
+            dtype=positions.dtype,
+            like=positions,
         )
+        positions = xp.minimum(positions, max_position)
         return xpx.searchsorted(cumulative, positions, side="right", xp=xp)
