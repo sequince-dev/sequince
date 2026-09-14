@@ -582,6 +582,63 @@ def test_run_functional_checkpoint_resume_matches_full_run() -> None:
     )
 
 
+def test_functional_resume_preserves_once_transform() -> None:
+    from sequince.smc import SequentialMonteCarlo
+    from sequince.steps.mutation import BlackJAXMutation
+    from sequince.transforms import AffineTransform
+
+    def make_runner(*writers: CheckpointWriter) -> SequentialMonteCarlo:
+        return SequentialMonteCarlo(
+            [
+                BlackJAXMutation(
+                    lambda p: -0.5 * jnp.sum(p**2),
+                    algorithm="random-walk",
+                    algorithm_kwargs={"sigma": 0.5},
+                    transform=AffineTransform(),
+                    transform_refit="once",
+                )
+            ],
+            checkpoint_writers=writers,
+        )
+
+    state = ParticleState(jnp.arange(8.0).reshape(4, 2))
+    key = jax.random.key(42)
+    full_runner = make_runner()
+    full, full_key = full_runner.run_functional(
+        state,
+        num_steps=4,
+        random_state=key,
+        iteration=jax.jit(full_runner.functional_iteration),
+    )
+    recorder = CheckpointRecorder()
+    first_runner = make_runner(recorder)
+    first_runner.run_functional(
+        state,
+        num_steps=2,
+        random_state=key,
+        iteration=jax.jit(first_runner.functional_iteration),
+    )
+    resumed_runner = make_runner()
+    resumed, resumed_key = resumed_runner.run_functional(
+        runtime=resumed_runner.resume_functional_from(
+            recorder.checkpoints[-1].to_dict()
+        ),
+        num_steps=2,
+        iteration=jax.jit(resumed_runner.functional_iteration),
+    )
+
+    np.testing.assert_array_equal(
+        full.final_state.particles, resumed.final_state.particles
+    )
+    np.testing.assert_array_equal(
+        full.context.metadata["particle_transform"]._scale,
+        resumed.context.metadata["particle_transform"]._scale,
+    )
+    np.testing.assert_array_equal(
+        jax.random.key_data(full_key), jax.random.key_data(resumed_key)
+    )
+
+
 def test_functional_resampling_requires_fixed_control_flow() -> None:
     from sequince.steps import SystematicResampling
 

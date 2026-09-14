@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 import numpy as np
@@ -8,6 +9,7 @@ from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts, Target
 from ...transforms import ParticleTransform, _repeat_transform_auxiliary
+from ...utils.copying import array_safe_copy
 from ..base import SMCStep
 from ..context import StepContext
 from .metrics import (
@@ -99,7 +101,7 @@ class MutationStep(SMCStep):
         self._transform = transform
         self._transform_refit = transform_refit
         self._prepared_transform: ParticleTransform | None = None
-        self._prepared_context: StepContext | None = None
+        self._prepared_context_key: tuple[int, int] | None = None
         self._store_chains = store_chains
         self._chain: Array | None = None
 
@@ -159,6 +161,32 @@ class MutationStep(SMCStep):
     @store_chains.setter
     def store_chains(self, value: bool) -> None:
         self._store_chains = bool(value)
+
+    def state_dict(self) -> dict[str, Any]:
+        """Return the fitted transform and the context identifying its fit."""
+        return {
+            "prepared_transform": array_safe_copy(self._prepared_transform),
+            "prepared_context_key": self._prepared_context_key,
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore the transform cache; legacy empty state clears the cache."""
+        transform = state.get("prepared_transform")
+        context_key = state.get("prepared_context_key")
+        if transform is not None and not isinstance(
+            transform, ParticleTransform
+        ):
+            raise TypeError("Prepared transform must be a ParticleTransform.")
+        if context_key is not None and (
+            not isinstance(context_key, tuple) or len(context_key) != 2
+        ):
+            raise TypeError("Prepared context key must be a pair of indices.")
+        if (transform is None) != (context_key is None):
+            raise ValueError(
+                "Prepared transform and context key must be paired."
+            )
+        self._prepared_transform = array_safe_copy(transform)
+        self._prepared_context_key = context_key
 
     def _evaluate_target(
         self,
@@ -226,6 +254,12 @@ class MutationStep(SMCStep):
                 "Callable transform_refit policies are not supported by the "
                 "functional API. Use 'always', 'per-context', or 'once'."
             )
+        if (
+            self._transform_refit == "once"
+            and _FUNCTIONAL_TRANSFORM_MARKER_KEY in context.metadata
+            and PARTICLE_TRANSFORM_KEY in context.metadata
+        ):
+            return state, context
         transform = self._fit_transform(state.particles, context)
         context = context.with_metadata(
             **{
@@ -282,24 +316,20 @@ class MutationStep(SMCStep):
             if callable(self._transform_refit)
             else False
         )
+        context_key = (context.t, context.next_observation_index)
         should_fit = (
             self._transform_refit == "always"
             or self._prepared_transform is None
             or triggered
             or (
                 self._transform_refit == "per-context"
-                and (
-                    self._prepared_context is None
-                    or self._prepared_context.t != context.t
-                    or self._prepared_context.next_observation_index
-                    != context.next_observation_index
-                )
+                and self._prepared_context_key != context_key
             )
         )
         if should_fit:
             transform = self._fit_transform(particles, context, rng=rng)
             self._prepared_transform = transform
-            self._prepared_context = context
+            self._prepared_context_key = context_key
         else:
             cached_transform = self._prepared_transform
             if cached_transform is None:  # pragma: no cover - guarded above
