@@ -42,29 +42,6 @@ class WasteFreeResampleMove(SMCStep):
         Number P of retained states per chain, INCLUDING the start. Must be a
         positive integer dividing N. P=1 only resamples; mutation is not called.
 
-    Notes
-    -----
-    The mutation must preserve the current target and particle ordering, and
-    return chains in original particle coordinates with shape
-    ``(P-1, M, *particle_shape)``. For the paper's independent-chain setting,
-    use per-chain transitions; ensemble samplers couple chains and do not
-    inherit that independence assumption. Fit kernels/transforms before the
-    block and keep them fixed inside it. Put adaptation wrappers OUTSIDE this
-    step to adapt after the entire batch, not between retained transitions.
-
-    Output particles are ordered by chain position, then chain index. Reshape
-    them to ``(P, M, *particle_shape)`` to recover the chains. ``ancestors``
-    maps every state to its input ancestor. ``metrics`` is the mutation's
-    completed metrics; acceptance semantics are those of the chosen sampler.
-    Its full output, including sampler-specific diagnostics, is under
-    ``mutation``. ``acceptance_by_step`` is forwarded when available, otherwise
-    None. Uniform weights do not imply independent samples.
-
-    After mutation, the population evaluation cache is cleared: an endpoint
-    evaluation cannot describe the entire retained chain. Subsequent target
-    preparation (e.g. weighting) evaluates the retained population as needed.
-    Pure resampling (P=1) preserves the resampled cache.
-
     Examples
     --------
     With 1000 input particles, run 20 chains with 50 retained states each:
