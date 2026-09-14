@@ -232,6 +232,7 @@ Choose the prefix that best describes the change:
 | `DOC` | Update documentation |
 | `BLD` | Change packaging, dependencies, or build configuration |
 | `CI` | Change continuous integration workflows |
+| `REL` | Prepare or maintain a release |
 | `STY` | Make formatting-only changes |
 
 Use `BUG` consistently for bug fixes rather than alternating with `FIX`. A bug fix
@@ -268,6 +269,7 @@ for systematic and stratified resampling.
 ```text
 PERF(smc): skip bisection when the terminal ESS is sufficient
 DOC: clarify contribution guidelines
+REL: prepare release 0.1.0
 ```
 
 Make commits in coherent units. Pull requests are squash-merged, so their titles
