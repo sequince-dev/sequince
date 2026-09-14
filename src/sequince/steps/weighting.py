@@ -572,10 +572,10 @@ class TemperedWeighting(BaseTemperedStep):
 
 
 class FixedTemperedWeighting(BaseTemperedStep):
-    """Apply fixed beta increments, optionally stopping at ``max_beta``.
+    """Apply fixed beta increments up to ``max_beta`` (default 1.0).
 
-    When a maximum is supplied, clip the final increment and request a stop
-    after that iteration. Without a maximum, the schedule is unbounded.
+    Clip the final increment and request a stop after that iteration.
+    The maximum must be finite and positive.
     """
 
     def __init__(
@@ -583,15 +583,13 @@ class FixedTemperedWeighting(BaseTemperedStep):
         log_increment_fn: IncrementFn | "TemperedTarget",
         *,
         beta_increment: float,
-        max_beta: float | None = None,
+        max_beta: float = 1.0,
         normalize_after: bool = True,
         refresh_components: Collection[str] = (),
-    ):
+    ) -> None:
         if beta_increment < 0.0:
             raise ValueError("beta_increment must be non-negative.")
-        if max_beta is not None and (
-            not math.isfinite(max_beta) or max_beta <= 0.0
-        ):
+        if not math.isfinite(max_beta) or max_beta <= 0.0:
             raise ValueError("max_beta must be finite and positive.")
         super().__init__(
             log_increment_fn,
@@ -621,18 +619,13 @@ class FixedTemperedWeighting(BaseTemperedStep):
             )
 
         metadata = dict(state.metadata)
-        max_beta = (
-            self._max_beta
-            if self._max_beta is not None
-            else float(context.metadata.get("max_beta", 1.0))
-        )
         metadata.update(
             _tempering_diagnostics(
                 base_state.log_weights,
                 raw_increments,
                 delta=output["delta_beta"],
                 terminal_delta=max(
-                    max_beta - current_beta,
+                    self._max_beta - current_beta,
                     0.0,
                 ),
             )
@@ -676,33 +669,44 @@ class FixedTemperedWeighting(BaseTemperedStep):
             state, context
         )
         target_beta = current_beta + self._beta_increment
-        delta = self._beta_increment
-        if self._max_beta is not None:
-            current_beta = asarray(current_beta, xp=xp, like=state.log_weights)
-            maximum = asarray(self._max_beta, xp=xp, like=state.log_weights)
-            tolerance = 8 * xp.finfo(current_beta.dtype).eps * self._max_beta
-            target_beta = xp.where(
-                target_beta >= maximum - tolerance, maximum, target_beta
+        current_beta = asarray(
+            current_beta,
+            xp=xp,
+            dtype=state.log_weights.dtype,
+            like=state.log_weights,
+        )
+        maximum = asarray(
+            self._max_beta,
+            xp=xp,
+            dtype=state.log_weights.dtype,
+            like=state.log_weights,
+        )
+        tolerance = 8 * xp.finfo(current_beta.dtype).eps * self._max_beta
+        target_beta = xp.where(
+            target_beta >= maximum - tolerance, maximum, target_beta
+        )
+        delta = xp.maximum(target_beta - current_beta, 0.0)
+        context = replace(
+            context,
+            stop_requested=asarray(
+                context.stop_requested,
+                xp=xp,
+                dtype=bool,
+                like=state.log_weights,
             )
-            delta = xp.maximum(target_beta - current_beta, 0.0)
-            context = replace(
-                context,
-                stop_requested=asarray(
-                    context.stop_requested,
-                    xp=xp,
-                    dtype=bool,
-                    like=state.log_weights,
-                )
-                | (target_beta >= maximum),
-                stop_immediately=asarray(
-                    context.stop_immediately,
-                    xp=xp,
-                    dtype=bool,
-                    like=state.log_weights,
-                )
-                | (current_beta >= maximum),
+            | (target_beta >= maximum),
+            stop_immediately=asarray(
+                context.stop_immediately,
+                xp=xp,
+                dtype=bool,
+                like=state.log_weights,
             )
-        increments = _safe_tempered_log_increment(log_increments, delta)
+            | (current_beta >= maximum),
+        )
+        increments = _safe_tempered_log_increment(
+            log_increments,
+            asarray(delta, xp=xp, dtype=log_increments.dtype),
+        )
         updated_state, log_norm = self._update_log_weights(
             state,
             increments,

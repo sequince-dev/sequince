@@ -228,9 +228,7 @@ def test_fixed_tempering_clips_final_increment(
 ) -> None:
     increments = np.array([-np.inf, 2.0, 2.0, 2.0])
     state = ParticleState(np.zeros((4, 1)))
-    step = FixedTemperedWeighting(
-        lambda _: increments, beta_increment=0.5, max_beta=1.0
-    )
+    step = FixedTemperedWeighting(lambda _: increments, beta_increment=0.5)
     context = StepContext(t=0, metadata={"beta": beta})
     with np.errstate(invalid="raise"):
         if functional:
@@ -247,12 +245,62 @@ def test_fixed_tempering_clips_final_increment(
     assert updated.log_evidence == pytest.approx(expected)
 
 
-def test_fixed_tempering_preserves_float32_increments(rng) -> None:
+@pytest.mark.parametrize("beta_increment", [0.0, 0.5])
+def test_fixed_tempering_preserves_float32_increments(
+    beta_increment: float, rng
+) -> None:
     increments = np.array([-np.inf, 2.0], dtype=np.float32)
-    step = FixedTemperedWeighting(lambda _: increments, beta_increment=0.0)
+    step = FixedTemperedWeighting(
+        lambda _: increments, beta_increment=beta_increment
+    )
     _, _, output = step(ParticleState(np.zeros((2, 1))), StepContext(t=0), rng)
     assert output["log_weight_increment"].dtype == np.float32
-    np.testing.assert_array_equal(output["log_weight_increment"], 0.0)
+    expected = [0.0, 0.0] if beta_increment == 0.0 else [-np.inf, 1.0]
+    np.testing.assert_array_equal(output["log_weight_increment"], expected)
+
+
+@pytest.mark.parametrize("max_beta", [0.5, 2.0])
+def test_fixed_tempering_supports_custom_maximum(max_beta: float, rng) -> None:
+    state = ParticleState(np.zeros((4, 1)))
+    step = FixedTemperedWeighting(
+        lambda _: np.ones(4), beta_increment=3.0, max_beta=max_beta
+    )
+    updated, context, output = step(state, StepContext(t=0), rng)
+    assert context.stop_requested
+    assert output["beta"] == max_beta
+    assert updated.log_evidence == pytest.approx(max_beta)
+
+
+@pytest.mark.parametrize("max_beta", [0.0, -1.0, np.inf, -np.inf, np.nan])
+def test_fixed_tempering_rejects_invalid_maximum(max_beta: float) -> None:
+    with pytest.raises(
+        ValueError, match="max_beta must be finite and positive"
+    ):
+        FixedTemperedWeighting(
+            lambda _: np.ones(4), beta_increment=0.5, max_beta=max_beta
+        )
+
+
+def test_fixed_tempering_rejects_unbounded_maximum() -> None:
+    with pytest.raises(TypeError):
+        FixedTemperedWeighting(
+            lambda _: np.ones(4), beta_increment=0.5, max_beta=None
+        )
+
+
+def test_fixed_tempering_default_stops_runner(rng) -> None:
+    from sequince.smc import SequentialMonteCarlo
+
+    sampler = SequentialMonteCarlo(
+        [FixedTemperedWeighting(lambda _: np.ones(4), beta_increment=0.4)]
+    )
+    result = sampler.run(
+        ParticleState(np.zeros((4, 1))), rng=rng, metadata={"beta": 0}
+    )
+    assert len(result.states) == 3
+    assert result.context.stop_requested
+    assert result.context.metadata["beta"] == 1.0
+    assert result.final_state.log_evidence == pytest.approx(1.0)
 
 
 def test_tempering_diagnostics_support_weighted_particles(
