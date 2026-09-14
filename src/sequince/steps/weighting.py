@@ -55,17 +55,17 @@ def _tempering_diagnostics(
     xp = namespace(base_log_weights, log_increments)
     base_log_norm = logsumexp(base_log_weights, xp=xp)
     normalized_base_log_weights = base_log_weights - base_log_norm
-    updated_log_weights = base_log_weights + delta * log_increments
+    scaled_log_ratios = _scale_log_increment(log_increments, delta)
+    updated_log_weights = base_log_weights + scaled_log_ratios
 
     log_normalizing_constant_increment = float(
         logsumexp(updated_log_weights, xp=xp) - base_log_norm
     )
     ess = ess_from_log_weights(updated_log_weights)
     terminal_ess = ess_from_log_weights(
-        base_log_weights + terminal_delta * log_increments
+        base_log_weights + _scale_log_increment(log_increments, terminal_delta)
     )
 
-    scaled_log_ratios = delta * log_increments
     max_log_ratio = xp.max(scaled_log_ratios)
     scaled_ratios = xp.exp(scaled_log_ratios - max_log_ratio)
     base_weights = xp.exp(normalized_base_log_weights)
@@ -531,9 +531,11 @@ class TemperedWeighting(BaseTemperedStep):
             state, context
         )
         xp = namespace(state.log_weights)
-        increments = (
-            _weights_as_1d_array(log_increments, xp=xp, like=state.log_weights)
-            * delta_beta
+        increments = _scale_log_increment(
+            _weights_as_1d_array(
+                log_increments, xp=xp, like=state.log_weights
+            ),
+            delta_beta,
         )
         if increments.shape[0] != state.log_weights.shape[0]:
             raise ValueError(
@@ -938,7 +940,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         )
         already_at_max = remaining <= 0.0
         delta = xp.where(already_at_max, zero, selected_delta)
-        scaled_increments = delta * increments
+        scaled_increments = _scale_log_increment(increments, delta)
         new_log_weights = state.log_weights + scaled_increments
         new_ess_ratio = ess_ratio_from_log_weights(new_log_weights)
         new_cess_ratio = cess_ratio_from_log_weights_and_increments(

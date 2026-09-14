@@ -593,6 +593,21 @@ def test_adaptive_tempered_weighting_no_op_when_max_reached(
     )
 
 
+def test_terminal_adaptive_weighting_with_zero_support(rng) -> None:
+    state = ParticleState(np.zeros((4, 1)))
+    increments = np.array([-np.inf, 0.0, 0.0, 0.0])
+    step = AdaptiveTemperedWeighting(lambda _: increments)
+    with np.errstate(invalid="raise"):
+        updated, context, output = step(
+            state, StepContext(t=0, metadata={"beta": 1.0}), rng
+        )
+    np.testing.assert_allclose(updated.log_weights, state.log_weights)
+    assert updated.log_normalizing_constant == pytest.approx(0.0)
+    assert context.stop_immediately
+    assert output["delta_beta"] == 0.0
+    assert updated.metadata["ess_at_max_beta"] == pytest.approx(4.0)
+
+
 def test_tempered_posterior_custom_increment_is_used_by_weighting(
     particle_state: ParticleState, context_factory, rng
 ) -> None:
