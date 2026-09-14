@@ -78,75 +78,90 @@ def make_standard_bayesian_smc(
 
     Parameters
     ----------
-    log_prior:
+    log_prior : callable
         Callable evaluating the log prior density ``log p(x)``.
-    log_likelihood:
+    log_likelihood : callable
         Callable evaluating the log likelihood ``log l(x)``.
-    log_proposal:
+    log_proposal : callable or ProposalDistribution or None, optional
         Optional callable or proposal object providing ``log q(x)`` when
         importance sampling proposals are used.
-    target_ess_ratio:
+    target_ess_ratio : float or callable, optional
         Target effective sample size ratio used by adaptive tempering, or a
         callable of the current beta and optional ``StepContext`` that
         returns the target for each iteration.
-    max_beta:
+    max_beta : float, optional
         Final tempering beta; typically ``1.0`` for full posterior.
-    min_delta:
+    min_delta : float, optional
         Minimum beta increment allowed in adaptive tempering.
-    max_delta:
+    max_delta : float or None, optional
         Optional maximum beta increment allowed in adaptive tempering.
-    adaptive:
+    adaptive : bool, optional
         Whether to adapt the beta schedule using the target ESS.
-    num_steps:
+    num_steps : int or None, optional
         Number of fixed beta steps. Required when ``adaptive=False``.
-    weighting_criterion:
+    weighting_criterion : {"ess", "cess"}, optional
         Criterion for adaptive tempering; one of ``"ess"`` (default) or ``"cess"``.
-    weighting_kwargs:
+    weighting_kwargs : dict[str, Any] or None, optional
         Extra keyword arguments forwarded to the weighting step constructor.
-    resampling:
+    resampling : {"systematic", "stratified", "multinomial"}, optional
         Resampling strategy to use; one of ``"systematic"``, ``"stratified"``,
         or ``"multinomial"``.
-    resampling_ess_threshold:
+    resampling_ess_threshold : float or None, optional
         ESS ratio threshold triggering resampling. Set to ``None`` to disable
         ESS-triggered resampling (useful with ``always_resample=True``).
-    always_resample:
+    always_resample : bool or None, optional
         Force resampling at every iteration regardless of ESS. If set to
         ``None``, defaults to ``True`` if ``weighting_criterion=="ess"`` and
         ``False`` if ``weighting_criterion=="cess"``.
-    resample_at_end:
+    resample_at_end : bool, optional
         If ``True`` (default) will always resample when the inverse
         temperature β reaches 1.0, regardless of ESS. If ``False``, the final
         resampling may be skipped if ``always_resample`` is ``False`` and the
         ESS ratio is above ``ess_threshold``.
-    resampling_kwargs:
+    resampling_kwargs : dict[str, Any] or None, optional
         Extra keyword arguments forwarded to the resampling step constructor.
-    mutation:
+    mutation : str or SMCStep, optional
         Mutation strategy to use. Accepts ``"blackjax"``, ``"emcee"``, ``"eryn"``,
         ``"metropolis-hastings"``, ``"minipcn"`` (default), ``"none"``, or a
         pre-built ``SMCStep`` instance.
-    mutation_n_steps:
+    mutation_n_steps : int, optional
         Number of mutation steps to run per iteration.
-    mutation_kwargs:
+    mutation_kwargs : dict[str, Any] or None, optional
         Extra keyword arguments forwarded to the mutation step constructor.
         ``"metropolis-hastings"`` requires ``kernel`` and accepts optional
         ``kernel_kwargs``. For ``"emcee"``, ``move`` may be a named move,
         weighted move configuration, or the ``"bilby-de"`` preset.
         For ``"blackjax"``, use ``algorithm`` and ``algorithm_kwargs`` to
         configure the JAX mutation kernel.
-    always_mutate:
+    always_mutate : bool or None, optional
         Force mutation at every iteration regardless of resampling. If set to
         ``None``, defaults to ``True`` if ``always_resample=True`` and ``False``
         if ``always_resample=False``.
-    particle_transform:
-    logging_frequency:
+    particle_transform : ParticleTransform or str or None, optional
+        Transform applied to particles before mutation. Accepts a string
+        identifier for a prebuilt transform, a ``ParticleTransform`` instance,
+        or ``None`` to skip transformation.
+    particle_transform_kwargs : dict[str, Any] or None, optional
+        Extra keyword arguments forwarded to the particle transform
+        constructor.
+    logging_frequency : int, optional
         Frequency (in SMC iterations) at which to log sampler status.
         Defaults to 1 (log every iteration). If set to 0, logging is disabled.
-    auto_normalize:
+    auto_normalize : bool, optional
         Normalize log weights after every iteration (default ``True``).
-    callbacks:
+    callbacks : sequence of callable or None, optional
         Optional (initialised) callbacks to attach to the sampler.
-    checkpoint_writers:
+    checkpoint_writers : sequence of CheckpointWriter or None, optional
         Optional checkpoint writers attached to the sampler.
+
+    Returns
+    -------
+    sampler : SequentialMonteCarlo
+        Sampler configured with weighting, resampling, and mutation steps.
+    posterior : TemperedPosterior
+        Target shared by the sampler's steps.
+    metadata : dict[str, Any]
+        Initial run metadata containing ``max_beta``.
     """
     posterior = TemperedPosterior(
         log_prior=log_prior,
