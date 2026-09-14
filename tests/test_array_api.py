@@ -106,6 +106,20 @@ def test_to_numpy_detaches_torch_gradients():
     np.testing.assert_allclose(result, [1.0, 2.0])
 
 
+@pytest.mark.filterwarnings("error")
+def test_copy_preserves_torch_gradients() -> None:
+    torch = pytest.importorskip("torch")
+    x = torch.tensor([1.0, 2.0], requires_grad=True)
+    values = x.square()  # Non-leaf tensor.
+
+    copied = copy(values)
+
+    assert copied.data_ptr() != values.data_ptr()
+    torch.testing.assert_close(copied, values)
+    copied.sum().backward()
+    torch.testing.assert_close(x.grad, torch.tensor([2.0, 4.0]))
+
+
 def test_asarray_converts_between_torch_and_jax():
     torch = pytest.importorskip("torch")
     jnp = pytest.importorskip("jax.numpy")

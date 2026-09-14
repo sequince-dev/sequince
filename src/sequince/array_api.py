@@ -204,9 +204,15 @@ def asarray(
 
 
 def copy(array: Any, *, xp: Any | None = None):
-    """Copy an array without changing its namespace or device."""
+    """Copy an array without changing its namespace or device.
+
+    For JAX and PyTorch arrays, this will create a new array on the same device
+    and preserves gradient tracking.
+    """
     if xp is None:
         xp = _namespace_or_numpy(array)
+    if is_torch_array(array):
+        return array.clone()
     return xp.asarray(array, copy=True)
 
 
