@@ -20,7 +20,7 @@ from ..target import EvaluationCounts, Target, TemperedTarget
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep
 from .context import StepContext
-from .weighting import _scale_log_increment
+from .weighting import _safe_tempered_log_increment
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -93,7 +93,7 @@ def persistent_log_mixture_denominator(
         xp=xp,
     )
     terms = (
-        _scale_log_increment(increments[:, None], betas[None, :])
+        _safe_tempered_log_increment(increments[:, None], betas[None, :])
         - log_normalizing_constants[None, :]
     )
     n_targets = asarray(
@@ -131,7 +131,10 @@ def persistent_log_weights(
         log_normalizing_constants,
         xp=xp,
     )
-    return _scale_log_increment(increments, candidate_beta) - log_denominator
+    return (
+        _safe_tempered_log_increment(increments, candidate_beta)
+        - log_denominator
+    )
 
 
 class PersistParticles(SMCStep):
@@ -308,7 +311,7 @@ class BasePersistentTemperedWeighting(SMCStep):
                 xp=xp,
             )
         unnormalized = (
-            _scale_log_increment(log_increment, beta) - log_denominator
+            _safe_tempered_log_increment(log_increment, beta) - log_denominator
         )
         log_norm = logsumexp(unnormalized, xp=xp)
         _validate_log_normalizer(log_norm, xp=xp)
@@ -473,7 +476,8 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
 
         def effective_sample_size(beta: Array) -> Array:
             candidate_log_weights = (
-                _scale_log_increment(log_increment, beta) - log_denominator
+                _safe_tempered_log_increment(log_increment, beta)
+                - log_denominator
             )
             return ess_from_log_weights(candidate_log_weights)
 
