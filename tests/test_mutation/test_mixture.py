@@ -177,3 +177,103 @@ def test_displacement_zero_for_rejections(particle_state, context_factory):
     )
     _, _, output = mixture(state, context_factory(), 2)
     assert output.moves["rejected"].scaled_squared_displacement == 0
+
+
+def test_backends(backend, backend_factory, context_factory):
+    from sequince.array_api import namespace
+    from sequince.steps import DifferentialEvolutionMutation
+
+    case = backend_factory(backend)
+
+    def target(x):
+        return -0.5 * namespace(x).sum(x**2, axis=-1)
+
+    mixture = MixtureMutation(
+        {
+            "walk": MetropolisHastingsMutation(
+                target, GaussianRandomWalk(scale=0.5)
+            ),
+            "de": DifferentialEvolutionMutation(target),
+        },
+        n_steps=8,
+    )
+    state, _, out = mixture(case.state(), context_factory(), case.rng(5))
+    assert case.matches_namespace(state.particles)
+    assert state.particles.dtype == case.particles.dtype
+    assert case.matches_namespace(out.coordinate_scale)
+    assert out.metrics.n_attempted == 8 * len(case.particles)
+    assert all(move.selections for move in out.moves.values())
+
+
+def test_interleaving_and_metric_isolation(particle_state, context_factory):
+    from sequince.steps.mutation import CallableMutationKernel
+
+    order = []
+    results = []
+
+    class Metric:
+        name = "custom"
+
+        def __init__(self, label):
+            self.label = label
+
+        def initialize(self, particles, log_weights, context):
+            return 0
+
+        def prepare(self, state, particles, context):
+            return state
+
+        def update(self, state, particles, accepted, context):
+            return state + 1
+
+        def result(self, state, context):
+            results.append(self.label)
+            return self.label, state
+
+    def kernel(label):
+        def sample(x, rng):
+            order.append(label)
+            return x
+
+        return CallableMutationKernel(sample, symmetric=True)
+
+    mixture = MixtureMutation(
+        {
+            name: MetropolisHastingsMutation(
+                log_prob, kernel(name), metrics=[Metric(name)]
+            )
+            for name in ("a", "b")
+        },
+        n_steps=30,
+    )
+    _, _, output = mixture(particle_state, context_factory(), 33)
+    assert sum(a != b for a, b in zip(order, order[1:])) > 2
+    assert results == ["a", "b"]
+    assert output.metrics.values == {}
+    for name, move in output.moves.items():
+        assert move.metrics.values["custom"] == (name, order.count(name))
+
+
+@pytest.mark.parametrize(
+    "invalid", ["empty", "name", "target", "factory", "child", "duplicate"]
+)
+def test_child_validation(invalid):
+    moves = make_mixture().moves
+    if invalid == "empty":
+        moves = {}
+    elif invalid == "name":
+        moves[" "] = moves.pop("small")
+    elif invalid == "target":
+        moves["small"] = MetropolisHastingsMutation(
+            lambda x: log_prob(x), GaussianRandomWalk()
+        )
+    elif invalid == "factory":
+        moves["small"] = MetropolisHastingsMutation(
+            log_prob, lambda x, context: GaussianRandomWalk()
+        )
+    elif invalid == "child":
+        moves["small"] = object()
+    elif invalid == "duplicate":
+        moves["small"] = moves["large"]
+    with pytest.raises((ValueError, TypeError)):
+        MixtureMutation(moves)

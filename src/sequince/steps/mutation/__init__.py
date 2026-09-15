@@ -4,9 +4,12 @@ from ..base import FixedLengthMutation
 from .adaptive import (
     AdaptiveGaussianProposal,
     AdaptiveMutationStep,
+    AdaptMoveWeights,
     AdaptMutationSteps,
+    MoveWeightPolicy,
     MutationStepPolicy,
 )
+from .adaptive.policies.jump import JumpDistancePerEvaluation
 from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
 from .blackjax import BlackJAXAlgorithmFactory, BlackJAXMutation
 from .blocked import (
@@ -51,6 +54,7 @@ from .metropolis import (
     RedBlueMetropolisHastingsMutation,
 )
 from .minipcn import MiniPCNMutation
+from .mixture import MixtureMutation, MixtureMutationOutput, MoveDiagnostics
 from .rejuvenation import GenerativeProposal, ProposalRejuvenation
 from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
@@ -58,6 +62,12 @@ __all__ = [
     "AdaptiveGaussianProposal",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",
+    "AdaptMoveWeights",
+    "MoveWeightPolicy",
+    "JumpDistancePerEvaluation",
+    "MixtureMutation",
+    "MixtureMutationOutput",
+    "MoveDiagnostics",
     "AdaptiveMaskedGaussianRandomWalk",
     "BlockedMetropolisHastingsMutation",
     "BlackJAXAlgorithmFactory",
