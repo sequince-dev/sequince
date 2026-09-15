@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 from orng import RandomGenerator
 
 from ...state import ParticleState
+from ...target import EvaluationCounts
 from ..base import SMCStep, validate_n_steps
 from ..context import StepContext
 from .metrics import MutationMetricsOutput, MutationStepState
@@ -43,6 +44,7 @@ class MoveDiagnostics:
 
     selections: int
     metrics: MutationMetricsOutput
+    evaluation_counts: EvaluationCounts
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class MixtureMutationOutput:
     metrics: MutationMetricsOutput
     moves: Mapping[str, MoveDiagnostics]
     weights: tuple[float, ...]
+    evaluation_counts: EvaluationCounts
 
 
 class MixtureMutation(SMCStep):
@@ -149,15 +152,24 @@ class MixtureMutation(SMCStep):
         )
         states: dict[str, MutationStepState | None] = dict.fromkeys(self.names)
         selections = dict.fromkeys(self.names, 0)
+        costs = {name: EvaluationCounts() for name in self.names}
         for _ in range(n_steps):
             index = int(
                 rng.choice(len(self.names), size=(1,), p=probabilities)[0]
             )
             name = self.names[index]
+            before_counts = context.evaluation_counts
             state, context, _, states[name] = self.moves[
                 name
             ].apply_with_mutation_state(
                 state, context, rng, n_steps=1, mutation_state=states[name]
+            )
+            costs[name] = costs[name] + EvaluationCounts(
+                **{
+                    field.name: getattr(context.evaluation_counts, field.name)
+                    - getattr(before_counts, field.name)
+                    for field in fields(EvaluationCounts)
+                }
             )
             selections[name] += 1
         diagnostics = {
@@ -165,6 +177,7 @@ class MixtureMutation(SMCStep):
                 selections[name],
                 self.moves[name].metrics.result(states[name], context)
                 or MutationMetricsOutput(0, 0, 0),
+                costs[name],
             )
             for name in self.names
         }
@@ -173,11 +186,39 @@ class MixtureMutation(SMCStep):
             sum(item.metrics.n_attempted for item in diagnostics.values()),
             sum(item.metrics.n_accepted for item in diagnostics.values()),
         )
+        total_cost = EvaluationCounts()
+        for cost in costs.values():
+            total_cost = total_cost + cost
         return (
             state,
             context,
-            MixtureMutationOutput(metrics, diagnostics, probabilities),
+            MixtureMutationOutput(
+                metrics, diagnostics, probabilities, total_cost
+            ),
         )
+
+    def state_dict(self) -> dict[str, Any]:
+        """Save child state with names and order for compatibility checking."""
+        return {
+            "names": self.names,
+            "children": {
+                name: child.state_dict() for name, child in self.moves.items()
+            },
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore children, rejecting a different ordered composition."""
+        if tuple(state.get("names", ())) != self.names:
+            raise ValueError("Checkpoint move names/order do not match.")
+        children = state.get("children")
+        if not isinstance(children, Mapping) or set(children) != set(
+            self.names
+        ):
+            raise ValueError("Checkpoint must contain all named children.")
+        if any(not isinstance(value, Mapping) for value in children.values()):
+            raise TypeError("Child checkpoint states must be mappings.")
+        for name, child in self.moves.items():
+            child.load_state_dict(children[name])
 
     def apply_functional(
         self, state: ParticleState, context: StepContext, random_state: Any

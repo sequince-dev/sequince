@@ -67,3 +67,63 @@ def test_override_and_functional_rejection(
     assert mixture.weights == (0.5, 0.5)
     with pytest.raises(NotImplementedError, match="eager"):
         mixture.apply_functional(particle_state, context_factory(), None)
+
+
+def test_counts_and_adaptive_length(particle_state, context_factory, rng):
+    from sequince.steps.mutation import AdaptMutationSteps
+    from sequince.steps.mutation.adaptive.policies.acceptance import (
+        AcceptanceRatePolicy,
+    )
+    from sequince.target import EvaluationCounts
+
+    mixture = make_mixture()
+    adaptive = AdaptMutationSteps(
+        mixture,
+        AcceptanceRatePolicy(2, min_steps=1, max_steps=100),
+        initial_steps=5,
+        min_steps=1,
+        max_steps=100,
+    )
+    initial = context_factory().add_evaluation_counts(
+        EvaluationCounts(log_target_evaluations=123)
+    )
+    _, context, output = adaptive(particle_state, initial, rng)
+    total = output.evaluation_counts.log_target_evaluations
+    assert total == 2 * 5 * len(particle_state.particles)
+    assert context.evaluation_counts.log_target_evaluations == total + 123
+    assert (
+        sum(
+            x.evaluation_counts.log_target_evaluations
+            for x in output.moves.values()
+        )
+        == total
+    )
+    assert output.metrics.n_accepted == sum(
+        x.metrics.n_accepted for x in output.moves.values()
+    )
+    assert adaptive.next_n_steps == min(
+        100, int(np.ceil(2 / max(float(output.metrics.acceptance), 1e-6)))
+    )
+
+
+def test_checkpoint_and_order(particle_state, context_factory):
+    import copy
+
+    from orng import RandomGenerator
+
+    mixture = make_mixture()
+    rng = RandomGenerator(seed=17)
+    state, context, _ = mixture(particle_state, context_factory(), rng)
+    checkpoint = copy.deepcopy(mixture.state_dict())
+    saved_rng = RandomGenerator.from_state_dict(
+        copy.deepcopy(rng.state_dict())
+    )
+    a, _, out_a = mixture(state, context, rng)
+    restored = make_mixture()
+    restored.load_state_dict(checkpoint)
+    b, _, out_b = restored(state, context, saved_rng)
+    np.testing.assert_array_equal(a.particles, b.particles)
+    assert out_a == out_b
+    checkpoint["names"] = tuple(reversed(checkpoint["names"]))
+    with pytest.raises(ValueError, match="order"):
+        restored.load_state_dict(checkpoint)
