@@ -112,7 +112,11 @@ def test_minipcn_mixture_normal_target(step_fn: str, adaptive: bool) -> None:
     for iteration in range(8):
         state, _, output = mutation(state, StepContext(iteration), rng)
         assert output.evaluation_counts.log_target_evaluations == (
-            2 * 6000 * output.metrics.n_steps
+            6000
+            * (
+                2 * output.moves["walk"].selections
+                + 3 * output.moves["minipcn"].selections
+            )
         )
     # Roughly four standard errors for independent standard-normal draws.
     np.testing.assert_allclose(np.mean(state.particles, axis=0), 0, atol=0.055)

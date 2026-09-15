@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
     from ...state import ParticleState
     from ...target import Target
-    from .metropolis import MetropolisHastingsMutation
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +68,23 @@ class MiniPCNOutput(Mapping[str, Any]):
         return 5
 
 
+@dataclass(frozen=True)
+class _MiniPCNMutationState(MutationStepState):
+    """Eager block state, including the fit and its coordinate transform."""
+
+    step_state: Any
+    transform: ParticleTransform | None
+
+
 class MiniPCNMutation(MutationStep):
     """Run MiniPCN MCMC moves to rejuvenate particles.
 
     By default uses the 'tpcn' step function and targets an acceptance rate of 0.234.
     Also sets 'verbose' to False by default.
+
+    Eager continuation reuses fitted proposal state across calls within a
+    block. A new block or a refitted transform starts a new fit. This requires
+    MiniPCN's ``init_step_state`` and explicit ``step_state`` sampling API.
     """
 
     def __init__(
@@ -121,70 +132,31 @@ class MiniPCNMutation(MutationStep):
         }:
             raise ValueError("MiniPCN mixture children require pcn or tpcn.")
 
-    def _prepare_mixture_mutation(
+    def _initialize_mixture_state(
         self,
         state: ParticleState,
         context: StepContext,
-        rng: RandomGenerator,
-    ) -> MetropolisHastingsMutation:
-        """Fit a block-local MiniPCN proposal for interleaved MH transitions.
-
-        Fit from the population at block entry, before any child transitions.
-        The returned mutation reuses that fit, while evaluating the latest
-        particles on each selection. Nothing is cached on this child between
-        blocks, so runner checkpoints need no additional proposal state.
-        """
-        from minipcn.step import step_factory
-
-        from .kernels import CallableMutationKernel
-        from .metropolis import MetropolisHastingsMutation
-
+    ) -> MutationStepState:
+        """Fit at block entry, before any interleaved child transitions."""
         self._validate_mixture_support()
         particles = state.particles
         if particles.ndim != 2 or particles.shape[0] < 2:
             raise ValueError(
                 "MiniPCN mixtures require particles with shape (n, d), n >= 2."
             )
-        rng_backend, _ = rng.to_functional()
-        kwargs = dict(self._kwargs)
-        # Sampler-level settings do not belong to the frozen proposal. As in
-        # standalone execution, the explicitly supplied RNG takes precedence.
-        kwargs.pop("target_acceptance_rate", None)
-        kwargs.pop("rng", None)
-        step = step_factory(
-            self._step_fn,
-            dims=particles.shape[1],
-            xp=namespace(particles),
-            rng_backend=rng_backend,
-            **kwargs,
+        sampler, particles, transform, _, context = self._prepare_sampler(
+            state, context
         )
-        prepared = step.init_state(particles)
-        correction: Array | None = None
-
-        def sample(particles: Array, rng: RandomGenerator) -> Array:
-            nonlocal correction
-            next_random_state, proposals, correction = step.propose(
-                prepared, rng.state(), particles
-            )
-            rng.set_state(next_random_state)
-            return proposals
-
-        def log_transition_ratio(start: Array, end: Array) -> Array:
-            # MH consumes this correction immediately after its proposal.
-            if correction is None:  # pragma: no cover - call order guard
-                raise RuntimeError("MiniPCN proposal has not been sampled.")
-            return correction
-
-        target = (
-            self._target if self._target is not None else self._log_prob_fn
+        metrics = self.metrics.initialize(
+            particles, state.log_weights, context
         )
-        assert target is not None
-        return MetropolisHastingsMutation(
-            target,
-            CallableMutationKernel(
-                sample, log_transition_ratio_fn=log_transition_ratio
-            ),
-            metrics=list(self.metrics),
+        return _MiniPCNMutationState(
+            metrics.states,
+            metrics.n_steps,
+            metrics.n_attempted,
+            metrics.n_accepted,
+            sampler.init_step_state(particles),
+            transform,
         )
 
     def apply(
@@ -249,6 +221,17 @@ class MiniPCNMutation(MutationStep):
             context,
         ) = self._prepare_sampler(state, context, rng=rng)
 
+        step_state = None
+        if isinstance(mutation_state, _MiniPCNMutationState):
+            if mutation_state.transform is transform:
+                step_state = mutation_state.step_state
+            # Metric scans carry only metric arrays, not the eager transform.
+            mutation_state = MutationStepState(
+                mutation_state.states,
+                mutation_state.n_steps,
+                mutation_state.n_attempted,
+                mutation_state.n_accepted,
+            )
         mutation_state = (
             self.metrics.initialize(
                 latent_particles, state.log_weights, context
@@ -259,12 +242,14 @@ class MiniPCNMutation(MutationStep):
             )
         )
         return_last_only = not (self._store_chains or self.metrics)
-        chain, history = sampler.sample(
+        chain, history, step_state = sampler.sample(
             latent_particles,
             n_steps=n_steps,
             verbose=self._verbose,
             rng=rng,
             return_last_only=return_last_only,
+            step_state=step_state,
+            return_step_state=True,
         )
 
         acceptance_by_step = asarray(
@@ -272,7 +257,7 @@ class MiniPCNMutation(MutationStep):
             xp=namespace(latent_particles),
             like=latent_particles,
         )
-        return self._complete_mutation(
+        state, context, output, mutation_state = self._complete_mutation(
             state,
             context,
             latent_last=chain if return_last_only else chain[-1],
@@ -284,6 +269,20 @@ class MiniPCNMutation(MutationStep):
             acceptance_by_step=acceptance_by_step,
             n_steps=n_steps,
             mutation_state=mutation_state,
+        )
+        assert mutation_state is not None
+        return (
+            state,
+            context,
+            output,
+            _MiniPCNMutationState(
+                mutation_state.states,
+                mutation_state.n_steps,
+                mutation_state.n_attempted,
+                mutation_state.n_accepted,
+                step_state,
+                transform,
+            ),
         )
 
     def apply_functional(

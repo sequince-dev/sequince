@@ -84,7 +84,8 @@ def test_preparation_once_from_block_entry(
     count = output.moves["minipcn"].selections
     assert 1 < count < 12
     assert len(proposals) == count
-    assert all(prepared is proposals[0] for prepared in proposals)
+    assert all(prepared.cov is proposals[0].cov for prepared in proposals)
+    assert [prepared.iteration for prepared in proposals] == list(range(count))
     assert output.moves["minipcn"].metrics.n_attempted == count * 128
     # A subsequent block fits afresh; no block-local proposal leaks into it.
     mixture(updated, StepContext(1), 23)
@@ -103,8 +104,7 @@ def test_one_transition_matches_standalone(step_fn: str) -> None:
     expected, _, standalone = child(state, StepContext(0), rng)
     np.testing.assert_array_equal(actual.particles, expected.particles)
     assert out.metrics.n_accepted == standalone.metrics.n_accepted
-    # The MH adapter avoids standalone MiniPCN's final target reevaluation.
-    assert out.evaluation_counts.log_target_evaluations == 2 * 128
+    assert out.evaluation_counts.log_target_evaluations == 3 * 128
 
 
 @pytest.mark.parametrize("n_steps,weights", [(0, (1, 1)), (4, (1, 0))])
@@ -114,7 +114,7 @@ def test_zero_budget_or_weight_does_not_prepare(
     def fail(*args: Any, **kwargs: Any) -> Any:
         pytest.fail("An inactive MiniPCN child was prepared.")
 
-    monkeypatch.setattr(MiniPCNMutation, "_prepare_mixture_mutation", fail)
+    monkeypatch.setattr(MiniPCNMutation, "_initialize_mixture_state", fail)
     _, _, out = make_mixture().apply_with_n_steps(
         initial_state(),
         StepContext(0),
@@ -271,7 +271,11 @@ def test_target_cache_and_likelihood_costs() -> None:
     state, context, out = mixture(
         initial_state(), StepContext(0, metadata={"temperature": 0.5}), 16
     )
-    assert likelihood_calls == 11 * 128
+    assert out.moves[
+        "minipcn"
+    ].evaluation_counts.log_likelihood_evaluations == (
+        3 * 128 * out.moves["minipcn"].selections
+    )
     assert out.evaluation_counts.log_likelihood_evaluations == likelihood_calls
     assert out.evaluation_counts.log_target_evaluations == likelihood_calls
     assert (

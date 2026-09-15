@@ -174,7 +174,6 @@ class MixtureMutation(SMCStep):
         variance = xp.var(state.particles, axis=0)
         valid = xp.isfinite(variance) & (variance > 0)
         scale = xp.sqrt(xp.where(valid, variance, xp.ones_like(variance)))
-        prepared: dict[str, MetropolisHastingsMutation] = {}
         if n_steps:
             for name, probability in zip(
                 self.names, probabilities, strict=True
@@ -182,11 +181,10 @@ class MixtureMutation(SMCStep):
                 move = self.moves[name]
                 if probability == 0:
                     continue
-                prepared[name] = (
-                    move._prepare_mixture_mutation(state, context, rng)
-                    if isinstance(move, MiniPCNMutation)
-                    else move
-                )
+                if isinstance(move, MiniPCNMutation):
+                    states[name] = move._initialize_mixture_state(
+                        state, context
+                    )
         for _ in range(n_steps):
             index = int(
                 rng.choice(len(self.names), size=(1,), p=probabilities)[0]
@@ -194,7 +192,7 @@ class MixtureMutation(SMCStep):
             name = self.names[index]
             before_counts = context.evaluation_counts
             before = xp.asarray(state.particles, copy=True)
-            state, context, _, states[name] = prepared[
+            state, context, _, states[name] = self.moves[
                 name
             ].apply_with_mutation_state(
                 state, context, rng, n_steps=1, mutation_state=states[name]
