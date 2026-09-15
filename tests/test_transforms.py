@@ -300,6 +300,99 @@ def test_bounded_to_unit_hypercube_round_trip(particles):
     assert_allclose(log_det + restore_log_det, 0.0, atol=1e-6)
 
 
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_periodic_circular_mean(particles, dtype: str) -> None:
+    xp = namespace(particles)
+    cloud = xp.asarray(
+        [[9.8, 42.0, 1.8], [2.2, -7.0, -1.8]],
+        dtype=getattr(xp, dtype),
+    )
+    transform = PeriodicBoundaryTransform(
+        {2: (-2.0, 2.0), 0: (2.0, 10.0)}, centering="circular_mean"
+    )
+    fitted = transform.fit(cloud)
+    assert fitted is not transform
+    assert transform._center is None
+    latent, log_det, auxiliary = fitted.forward(cloud)
+    assert auxiliary is None
+    assert_preserves_namespace(latent, cloud)
+    assert latent.dtype == cloud.dtype
+    assert_allclose(latent, [[-0.2, 42, -0.2], [0.2, -7, 0.2]], atol=2e-6)
+    restored, inverse_log_det = fitted.inverse(latent)
+    assert_allclose(restored, cloud, atol=2e-6)
+    assert_allclose(log_det + inverse_log_det, 0.0)
+    vector, vector_log_det, _ = fitted.forward(cloud[0])
+    assert vector_log_det.ndim == 0
+    assert_allclose(vector, latent[0], atol=2e-6)
+    # Inverse also wraps proposals that cross multiple periods.
+    displaced = latent + xp.asarray([24.0, 0.0, -12.0], dtype=cloud.dtype)
+    wrapped, _ = fitted.inverse(displaced)
+    assert_allclose(wrapped, cloud, atol=3e-6)
+
+
+def test_periodic_circular_mean_degenerate(particles) -> None:
+    xp = namespace(particles)
+    cloud = xp.asarray([[0.0], [0.5]], dtype=particles.dtype)
+    fitted = PeriodicBoundaryTransform(
+        {0: (0.0, 1.0)}, centering="circular_mean"
+    ).fit(cloud)
+    latent, _, _ = fitted.forward(cloud)
+    assert np.all(np.isfinite(to_numpy(latent)))
+    restored, _ = fitted.inverse(latent)
+    assert_allclose(restored, cloud, atol=1e-6)
+
+
+def test_periodic_circular_mean_validation() -> None:
+    with pytest.raises(ValueError, match="centering"):
+        PeriodicBoundaryTransform({0: (0, 1)}, centering="invalid")
+    transform = PeriodicBoundaryTransform(
+        {0: (0, 1)}, centering="circular_mean"
+    )
+    for method in (transform.forward, transform.inverse):
+        with pytest.raises(ValueError, match="Call fit"):
+            method(np.array([[0.2]]))
+    for cloud in (np.empty((0, 1)), np.array([0.2])):
+        with pytest.raises(ValueError, match="nonempty 2D"):
+            transform.fit(cloud)
+
+
+@pytest.mark.parametrize(
+    "centering",
+    ["circular-mean", "angular-mean", "circular_mean", "angular_mean"],
+)
+def test_periodic_circular_mean_jit(centering: str) -> None:
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    cloud = jnp.asarray([[0.95], [0.05]])
+    transform = PeriodicBoundaryTransform({0: (0.0, 1.0)}, centering=centering)
+    fitted = jax.jit(lambda t, x: t.fit(x))(transform, cloud)
+    latent, _, _ = jax.jit(lambda t, x: t.forward(x))(fitted, cloud)
+    restored, _ = jax.jit(lambda t, x: t.inverse(x))(fitted, latent)
+    assert_allclose(latent, [[-0.05], [0.05]], atol=1e-6)
+    assert_allclose(restored, cloud, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "centering",
+    ["circular-mean", "angular-mean", "circular_mean", "angular_mean"],
+)
+def test_periodic_angular_mean_alias(particles, centering: str) -> None:
+    bounds = {0: (-1.0, 2.0), 2: (0.0, 1.0)}
+    circular = PeriodicBoundaryTransform(
+        bounds, centering="circular_mean"
+    ).fit(particles)
+    angular = PeriodicBoundaryTransform(bounds, centering=centering).fit(
+        particles
+    )
+    assert angular.centering == "circular-mean"
+    expected, expected_log_det, _ = circular.forward(particles)
+    actual, actual_log_det, _ = angular.forward(particles)
+    assert_allclose(actual, expected)
+    assert_allclose(actual_log_det, expected_log_det)
+    restored, _ = angular.inverse(actual)
+    assert_allclose(restored, particles, atol=1e-6)
+
+
 def test_periodic_boundary_transform(particles):
     bounds = {1: (-np.pi, np.pi)}
     transform = PeriodicBoundaryTransform(bounds)

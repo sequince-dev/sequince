@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping, Protocol, Sequence, cast
+from functools import cached_property
+from typing import Any, Literal, Mapping, Protocol, Sequence, cast
 
 import array_api_extra as xpx
 import optree
 from array_api_compat import is_array_api_obj
 from scipy.special import ndtr, ndtri
+from scipy.stats import circmean
 
+from ._typing import Array
 from .array_api import asarray, namespace, to_numpy
 from .flows import (
     NormalizingFlow,
@@ -797,21 +800,46 @@ class BoundedToUnboundedTransform(BoundedToUnitHypercubeTransform):
         return restored, log_abs_det
 
 
-@pytree_dataclass(data_fields=(), meta_fields=("bounds",))
+@pytree_dataclass(
+    data_fields=("_center",), meta_fields=("bounds", "centering")
+)
 @dataclass(frozen=True)
 class PeriodicBoundaryTransform(ParticleTransform):
-    """Wrap selected coordinates so they stay within ``[lower, upper)``.
+    """Wrap selected periodic coordinates, optionally centering their mean.
 
     Parameters
     ----------
     bounds : Mapping[int, tuple[float, float]]
         Map from index to ``(lower, upper)`` bounds defining the periodic
         interval for each coordinate.
+    centering : {None, "circular-mean", "angular-mean"}, optional
+        With ``None`` (default), only wrap into the configured interval.
+        With ``"circular-mean"``, first call :meth:`fit` to estimate the
+        unweighted circular mean of each selected coordinate. Forward values
+        are offsets from that mean in ``[-width / 2, width / 2)``; inverse
+        values are restored to ``[lower, upper)``. Uses
+        :func:`scipy.stats.circmean`; when the mean resultant vector is zero,
+        the center is implementation-defined, as in SciPy.
+        ``"angular-mean"`` is an alias for ``"circular-mean"``. Underscore
+        spellings (``"circular_mean"`` and ``"angular_mean"``) are also accepted.
     """
 
     bounds: Bounds
+    centering: (
+        Literal[
+            "circular-mean", "angular-mean", "circular_mean", "angular_mean"
+        ]
+        | None
+    ) = field(default=None, kw_only=True)
+    _center: Array | None = field(default=None, repr=False, kw_only=True)
 
     def __post_init__(self) -> None:
+        if self.centering in ("angular-mean", "angular_mean", "circular_mean"):
+            object.__setattr__(self, "centering", "circular-mean")
+        if self.centering not in (None, "circular-mean"):
+            raise ValueError(
+                "centering must be None, 'circular-mean', or 'angular-mean'."
+            )
         if not self.bounds:
             raise ValueError("bounds must contain at least one entry.")
         normalized = []
@@ -828,13 +856,44 @@ class PeriodicBoundaryTransform(ParticleTransform):
             normalized.append((int(idx), (float(lo), float(hi))))
         object.__setattr__(self, "bounds", tuple(normalized))
 
-    @property
+    @cached_property
     def _bounds(self) -> dict[int, tuple[float, float]]:
         return dict(self.bounds)
 
-    @property
+    @cached_property
     def _indices(self) -> tuple[int, ...]:
         return tuple(self._bounds)
+
+    @cached_property
+    def _lower(self) -> tuple[float, ...]:
+        return tuple(lo for lo, _ in self._bounds.values())
+
+    @cached_property
+    def _upper(self) -> tuple[float, ...]:
+        return tuple(hi for _, hi in self._bounds.values())
+
+    def fit(
+        self, particles: Array, context: Any = None, *, rng: RNGLike = None
+    ) -> PeriodicBoundaryTransform:
+        """Return a fitted copy using a cloud of shape (n_particles, n_dims).
+
+        Circular-mean fitting requires a nonempty floating-point cloud and
+        uses the configured interval width as the period.
+        """
+        del context, rng
+        if self.centering is None:
+            return self
+        xp = namespace(particles)
+        arr = asarray(particles, xp=xp)
+        if arr.ndim != 2 or arr.shape[0] == 0:
+            raise ValueError("fit requires a nonempty 2D particle cloud.")
+        lower = asarray(self._lower, like=arr, dtype=arr.dtype)
+        upper = asarray(self._upper, like=arr, dtype=arr.dtype)
+        width = upper - lower
+        unit_values = (arr[..., list(self._indices)] - lower) / width
+        mean = circmean(unit_values, low=0.0, high=1.0, axis=0)
+        center = lower + width * asarray(mean, like=arr, dtype=arr.dtype)
+        return replace(self, _center=center)
 
     def forward(self, particles, context=None, *, rng: RNGLike = None):
         del rng
@@ -842,15 +901,16 @@ class PeriodicBoundaryTransform(ParticleTransform):
         arr = asarray(particles, xp=xp)
         idx = list(self._indices)
         if idx:
-            lower = xp.asarray(
-                [self._bounds[i][0] for i in idx], dtype=arr.dtype
-            )
-            upper = xp.asarray(
-                [self._bounds[i][1] for i in idx], dtype=arr.dtype
-            )
+            lower = asarray(self._lower, like=arr, dtype=arr.dtype)
+            upper = asarray(self._upper, like=arr, dtype=arr.dtype)
             width = upper - lower
             subset = arr[..., idx]
             shifted = subset - lower
+            if self.centering is not None:
+                if self._center is None:
+                    raise ValueError("Call fit before using circular-mean.")
+                shifted = subset - asarray(self._center, like=arr) + width / 2
+                lower = -width / 2
             wrapped_subset = (
                 lower + shifted - width * xp.floor(shifted / width)
             )
@@ -862,8 +922,25 @@ class PeriodicBoundaryTransform(ParticleTransform):
         self, values, context=None, *, auxiliary=None, rng: RNGLike = None
     ):
         del auxiliary
-        restored, log_det, _ = self.forward(values, context=context, rng=rng)
-        return restored, log_det
+        if self.centering is not None:
+            if self._center is None:
+                raise ValueError("Call fit before using circular-mean.")
+            xp = namespace(values)
+            arr = asarray(values, xp=xp)
+            idx = list(self._indices)
+            values = _replace_columns(
+                arr, idx, arr[..., idx] + asarray(self._center, like=arr)
+            )
+        xp = namespace(values)
+        arr = asarray(values, xp=xp)
+        idx = list(self._indices)
+        lower = asarray(self._lower, like=arr, dtype=arr.dtype)
+        upper = asarray(self._upper, like=arr, dtype=arr.dtype)
+        width = upper - lower
+        shifted = arr[..., idx] - lower
+        wrapped = lower + shifted - width * xp.floor(shifted / width)
+        restored = _replace_columns(arr, idx, wrapped)
+        return restored, xp.zeros_like(arr[..., 0])
 
 
 @pytree_dataclass(data_fields=("transforms",))
