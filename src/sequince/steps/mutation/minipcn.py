@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from ...state import ParticleState
     from ...target import Target
+    from .metropolis import MetropolisHastingsMutation
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,88 @@ class MiniPCNMutation(MutationStep):
         self._kwargs = kwargs
         self._kwargs.setdefault("target_acceptance_rate", 0.234)
         self._kwargs.setdefault("adaptive", False)
+
+    def _validate_mixture_support(self) -> None:
+        """Reject options that violate a frozen mixture proposal."""
+        if self._transform is not None:
+            raise ValueError(
+                "MiniPCN mixture children do not support transforms."
+            )
+        if self._kwargs.get("adaptive", False):
+            raise ValueError(
+                "MiniPCN mixture children require adaptive=False."
+            )
+        if not isinstance(self._step_fn, str) or self._step_fn.lower() not in {
+            "pcn",
+            "tpcn",
+        }:
+            raise ValueError("MiniPCN mixture children require pcn or tpcn.")
+
+    def _prepare_mixture_mutation(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: RandomGenerator,
+    ) -> MetropolisHastingsMutation:
+        """Fit a block-local MiniPCN proposal for interleaved MH transitions.
+
+        Fit from the population at block entry, before any child transitions.
+        The returned mutation reuses that fit, while evaluating the latest
+        particles on each selection. Nothing is cached on this child between
+        blocks, so runner checkpoints need no additional proposal state.
+        """
+        from minipcn.step import step_factory
+
+        from .kernels import CallableMutationKernel
+        from .metropolis import MetropolisHastingsMutation
+
+        self._validate_mixture_support()
+        particles = state.particles
+        if particles.ndim != 2 or particles.shape[0] < 2:
+            raise ValueError(
+                "MiniPCN mixtures require particles with shape (n, d), n >= 2."
+            )
+        rng_backend, _ = rng.to_functional()
+        kwargs = dict(self._kwargs)
+        # Sampler-level settings do not belong to the frozen proposal. As in
+        # standalone execution, the explicitly supplied RNG takes precedence.
+        kwargs.pop("target_acceptance_rate", None)
+        kwargs.pop("rng", None)
+        step = step_factory(
+            self._step_fn,
+            dims=particles.shape[1],
+            xp=namespace(particles),
+            rng_backend=rng_backend,
+            **kwargs,
+        )
+        prepared = step.init_state(particles)
+        correction: Array | None = None
+
+        def sample(particles: Array, rng: RandomGenerator) -> Array:
+            nonlocal correction
+            next_random_state, proposals, correction = step.propose(
+                prepared, rng.state(), particles
+            )
+            rng.set_state(next_random_state)
+            return proposals
+
+        def log_transition_ratio(start: Array, end: Array) -> Array:
+            # MH consumes this correction immediately after its proposal.
+            if correction is None:  # pragma: no cover - call order guard
+                raise RuntimeError("MiniPCN proposal has not been sampled.")
+            return correction
+
+        target = (
+            self._target if self._target is not None else self._log_prob_fn
+        )
+        assert target is not None
+        return MetropolisHastingsMutation(
+            target,
+            CallableMutationKernel(
+                sample, log_transition_ratio_fn=log_transition_ratio
+            ),
+            metrics=list(self.metrics),
+        )
 
     def apply(
         self,

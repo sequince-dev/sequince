@@ -75,3 +75,47 @@ def test_asymmetric_normal_target(mode):
     assert abs(np.var(state.particles) - 1) < 0.07
     assert cost > 0
     np.testing.assert_array_equal(state.log_weights, np.zeros(8000))
+
+
+@pytest.mark.parametrize("step_fn", ["pcn", "tpcn"])
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_minipcn_mixture_normal_target(step_fn: str, adaptive: bool) -> None:
+    from sequince._typing import Array
+    from sequince.steps.mutation import MiniPCNMutation
+
+    def target(particles: Array) -> Array:
+        return -0.5 * np.sum(particles**2, axis=-1)
+
+    mixture = MixtureMutation(
+        {
+            "walk": MetropolisHastingsMutation(
+                target, GaussianRandomWalk(scale=0.4)
+            ),
+            "minipcn": MiniPCNMutation(target, step_fn=step_fn, rho=0.8),
+        },
+        n_steps=12,
+    )
+    mutation = mixture
+    if adaptive:
+        mutation = AdaptMutationSteps(
+            AdaptMoveWeights(mixture, JumpDistancePerEvaluation()),
+            AcceptanceRatePolicy(6, min_steps=4, max_steps=20),
+            initial_steps=12,
+            min_steps=4,
+            max_steps=20,
+        )
+    # A shifted initial population exercises the asymmetric MiniPCN proposal
+    # correction: its fitted reference is initially different from the target.
+    particles = np.random.default_rng(93).normal(size=(6000, 2)) + 1.0
+    state = ParticleState(particles)
+    rng = RandomGenerator(seed=82)
+    for iteration in range(8):
+        state, _, output = mutation(state, StepContext(iteration), rng)
+        assert output.evaluation_counts.log_target_evaluations == (
+            2 * 6000 * output.metrics.n_steps
+        )
+    # Roughly four standard errors for independent standard-normal draws.
+    np.testing.assert_allclose(np.mean(state.particles, axis=0), 0, atol=0.055)
+    np.testing.assert_allclose(
+        np.cov(state.particles.T), np.eye(2), atol=0.075
+    )

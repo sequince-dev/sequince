@@ -21,6 +21,7 @@ from .metropolis import (
     MetropolisHastingsMutation,
     RedBlueMetropolisHastingsMutation,
 )
+from .minipcn import MiniPCNMutation
 
 
 def normalize_move_weights(
@@ -70,7 +71,8 @@ class MixtureMutation(SMCStep):
         Ordered, nonempty named children sharing the identical target object
         or log-density callable. Supported children are untransformed
         MetropolisHastingsMutation with a persistent kernel,
-        RedBlueMetropolisHastingsMutation, and DifferentialEvolutionMutation.
+        RedBlueMetropolisHastingsMutation, DifferentialEvolutionMutation, and
+        MiniPCNMutation with pcn/tpcn and adaptive=False.
         Kernels must preserve particle correspondence and the current target;
         state-dependent proposal adaptation inside a kernel is unsupported.
     weights : sequence of float, optional
@@ -82,15 +84,17 @@ class MixtureMutation(SMCStep):
 
     Notes
     -----
-    Eager execution only. Transforms, kernel factories, external samplers,
-    and mutation wrappers are rejected: their per-call preparation may refit,
+    Eager execution only. MiniPCN proposals are fitted once at block entry
+    for every positive-weight child, then frozen for the complete block.
+    Transforms, kernel factories, other external samplers, and mutation
+    wrappers are rejected: their per-call preparation may refit,
     warm up, or rebuild a sampler between individual transitions. Custom
     metrics have independent per-child state, finalized once per block.
     """
 
     def __init__(
         self,
-        moves: Mapping[str, MetropolisHastingsMutation],
+        moves: Mapping[str, MetropolisHastingsMutation | MiniPCNMutation],
         weights: Sequence[float] | None = None,
         *,
         n_steps: int = 1,
@@ -111,6 +115,7 @@ class MixtureMutation(SMCStep):
                 MetropolisHastingsMutation,
                 RedBlueMetropolisHastingsMutation,
                 DifferentialEvolutionMutation,
+                MiniPCNMutation,
             ):
                 raise TypeError("Unsupported mixture child mutation.")
             if (
@@ -120,6 +125,8 @@ class MixtureMutation(SMCStep):
                 raise ValueError(
                     "Mixture children require no transform and a persistent kernel."
                 )
+            if isinstance(move, MiniPCNMutation):
+                move._validate_mixture_support()
             move_target = (
                 move._target if move._target is not None else move._log_prob_fn
             )
@@ -167,6 +174,19 @@ class MixtureMutation(SMCStep):
         variance = xp.var(state.particles, axis=0)
         valid = xp.isfinite(variance) & (variance > 0)
         scale = xp.sqrt(xp.where(valid, variance, xp.ones_like(variance)))
+        prepared: dict[str, MetropolisHastingsMutation] = {}
+        if n_steps:
+            for name, probability in zip(
+                self.names, probabilities, strict=True
+            ):
+                move = self.moves[name]
+                if probability == 0:
+                    continue
+                prepared[name] = (
+                    move._prepare_mixture_mutation(state, context, rng)
+                    if isinstance(move, MiniPCNMutation)
+                    else move
+                )
         for _ in range(n_steps):
             index = int(
                 rng.choice(len(self.names), size=(1,), p=probabilities)[0]
@@ -174,7 +194,7 @@ class MixtureMutation(SMCStep):
             name = self.names[index]
             before_counts = context.evaluation_counts
             before = xp.asarray(state.particles, copy=True)
-            state, context, _, states[name] = self.moves[
+            state, context, _, states[name] = prepared[
                 name
             ].apply_with_mutation_state(
                 state, context, rng, n_steps=1, mutation_state=states[name]
