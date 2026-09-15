@@ -123,7 +123,57 @@ def test_checkpoint_and_order(particle_state, context_factory):
     restored.load_state_dict(checkpoint)
     b, _, out_b = restored(state, context, saved_rng)
     np.testing.assert_array_equal(a.particles, b.particles)
-    assert out_a == out_b
+    assert out_a.moves == out_b.moves
+    assert out_a.weights == out_b.weights
     checkpoint["names"] = tuple(reversed(checkpoint["names"]))
     with pytest.raises(ValueError, match="order"):
         restored.load_state_dict(checkpoint)
+
+
+def test_displacement_uses_frozen_common_scale(
+    particle_state, context_factory
+):
+    from sequince.steps.mutation import CallableMutationKernel
+
+    def flat(x):
+        return np.zeros(len(x))
+
+    def move_by(amount):
+        return MetropolisHastingsMutation(
+            flat,
+            CallableMutationKernel(lambda x, rng: x + amount, symmetric=True),
+        )
+
+    # Deterministic translations isolate diagnostics; this is not a sampling
+    # correctness test (the proposal deliberately has no reverse support).
+    particles = np.array([[0.0, 7.0], [2.0, 7.0], [0.0, 7.0], [2.0, 7.0]])
+    mixture = MixtureMutation(
+        {"one": move_by(1), "two": move_by(2)}, n_steps=10
+    )
+    _, _, output = mixture(
+        particle_state.replace_particles(particles), context_factory(), 5
+    )
+    np.testing.assert_array_equal(output.coordinate_scale, [1.0, 1.0])
+    for name, amount in (("one", 1), ("two", 2)):
+        move = output.moves[name]
+        assert (
+            move.scaled_squared_displacement == move.selections * 8 * amount**2
+        )
+
+
+def test_displacement_zero_for_rejections(particle_state, context_factory):
+    from sequince.steps.mutation import CallableMutationKernel
+
+    def only_origin(x):
+        return np.where(np.all(x == 0, axis=-1), 0.0, -np.inf)
+
+    child = MetropolisHastingsMutation(
+        only_origin,
+        CallableMutationKernel(lambda x, rng: x + 1, symmetric=True),
+    )
+    mixture = MixtureMutation({"rejected": child}, n_steps=3)
+    state = particle_state.replace_particles(
+        np.zeros_like(particle_state.particles)
+    )
+    _, _, output = mixture(state, context_factory(), 2)
+    assert output.moves["rejected"].scaled_squared_displacement == 0

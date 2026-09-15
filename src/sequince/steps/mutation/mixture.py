@@ -9,6 +9,8 @@ from typing import Any
 
 from orng import RandomGenerator
 
+from ..._typing import Array
+from ...array_api import namespace, to_numpy
 from ...state import ParticleState
 from ...target import EvaluationCounts
 from ..base import SMCStep, validate_n_steps
@@ -45,6 +47,7 @@ class MoveDiagnostics:
     selections: int
     metrics: MutationMetricsOutput
     evaluation_counts: EvaluationCounts
+    scaled_squared_displacement: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,7 @@ class MixtureMutationOutput:
     moves: Mapping[str, MoveDiagnostics]
     weights: tuple[float, ...]
     evaluation_counts: EvaluationCounts
+    coordinate_scale: Array
 
 
 class MixtureMutation(SMCStep):
@@ -153,17 +157,30 @@ class MixtureMutation(SMCStep):
         states: dict[str, MutationStepState | None] = dict.fromkeys(self.names)
         selections = dict.fromkeys(self.names, 0)
         costs = {name: EvaluationCounts() for name in self.names}
+        jumps = dict.fromkeys(self.names, 0.0)
+        xp = namespace(state.particles)
+        if state.particles.shape[0] == 0:
+            raise ValueError(
+                "Mixture mutation requires a nonempty population."
+            )
+        # Use common original coordinates, frozen before any move executes.
+        variance = xp.var(state.particles, axis=0)
+        valid = xp.isfinite(variance) & (variance > 0)
+        scale = xp.sqrt(xp.where(valid, variance, xp.ones_like(variance)))
         for _ in range(n_steps):
             index = int(
                 rng.choice(len(self.names), size=(1,), p=probabilities)[0]
             )
             name = self.names[index]
             before_counts = context.evaluation_counts
+            before = xp.asarray(state.particles, copy=True)
             state, context, _, states[name] = self.moves[
                 name
             ].apply_with_mutation_state(
                 state, context, rng, n_steps=1, mutation_state=states[name]
             )
+            displacement = (state.particles - before) / scale
+            jumps[name] += float(to_numpy(xp.sum(displacement**2)))
             costs[name] = costs[name] + EvaluationCounts(
                 **{
                     field.name: getattr(context.evaluation_counts, field.name)
@@ -178,6 +195,7 @@ class MixtureMutation(SMCStep):
                 self.moves[name].metrics.result(states[name], context)
                 or MutationMetricsOutput(0, 0, 0),
                 costs[name],
+                jumps[name],
             )
             for name in self.names
         }
@@ -193,7 +211,7 @@ class MixtureMutation(SMCStep):
             state,
             context,
             MixtureMutationOutput(
-                metrics, diagnostics, probabilities, total_cost
+                metrics, diagnostics, probabilities, total_cost, scale
             ),
         )
 
