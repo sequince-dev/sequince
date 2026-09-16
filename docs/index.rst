@@ -13,6 +13,7 @@ sequential methods.
    user_guide
    checkpointing
    examples
+   pyro_nuts
    api/index
 
 Indices and tables

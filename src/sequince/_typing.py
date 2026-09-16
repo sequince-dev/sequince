@@ -12,6 +12,7 @@ ArrayLike: TypeAlias = Array | Sequence[float] | float
 
 MutationStrategy = Literal[
     "blackjax",
+    "pyro-nuts",
     "differential-evolution",
     "emcee",
     "metropolis-hastings",

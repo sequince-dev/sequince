@@ -16,6 +16,7 @@ from .metropolis import (
     RedBlueMetropolisHastingsMutation,
 )
 from .minipcn import MiniPCNMutation
+from .pyro import PyroNUTSMutation
 
 
 def get_mutation_step(
@@ -31,6 +32,10 @@ def get_mutation_step(
         kwargs["transform"] = transform
     if isinstance(mutation, SMCStep):
         mutation_step = mutation
+    elif mutation == "pyro-nuts":
+        mutation_step = PyroNUTSMutation(
+            target, n_steps=mutation_n_steps, **kwargs
+        )
     elif mutation == "blackjax":
         mutation_step = BlackJAXMutation(
             target,
@@ -112,7 +117,7 @@ def get_mutation_step(
         mutation_step = None
     else:
         raise ValueError(
-            "mutation must be 'blackjax', 'emcee', 'eryn', 'metropolis-hastings', "
+            "mutation must be 'pyro-nuts', 'blackjax', 'emcee', 'eryn', 'metropolis-hastings', "
             "'minipcn', 'differential-evolution', "
             "'red-blue-metropolis-hastings', 'red-blue-mh', 'red-blue', "
             "'none', or an SMCStep instance."

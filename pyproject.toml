@@ -38,6 +38,9 @@ include = ["sequince*"]
 [tool.setuptools_scm]
 
 [project.optional-dependencies]
+pyro = [
+    "pyro-ppl>=1.9.1",
+]
 jax = [
     "jax>0.5.3",
     "jaxlib"
@@ -118,19 +121,19 @@ default = { features = ["cpu", "py313", "test-core", "lint"], solve-group = "py3
 py311 = ["cpu", "py311", "test-core"]
 py312 = ["cpu", "py312", "test-core"]
 py313 = { features = ["cpu", "py313", "test-core"], solve-group = "py313" }
-all-backends = ["cpu", "py313", "test-core", "jax", "blackjax", "jax-cpu", "torch-cpu", "eryn"]
+all-backends = ["cpu", "py313", "test-core", "jax", "blackjax", "jax-cpu", "torch-cpu", "eryn", "pyro"]
 eryn = ["cpu", "py313", "test-core", "eryn"]
 docs = ["cpu", "py313", "doc"]
 jax = ["cpu", "py313", "test-core", "jax", "blackjax", "jax-cpu"]
 jax-cuda12 = ["py313", "test-core", "cuda12", "jax", "blackjax", "jax-gpu", "jax-cuda12"]
 jax-cuda13 = ["py313", "test-core", "cuda13", "jax", "blackjax", "jax-gpu", "jax-cuda13"]
-torch = ["cpu", "py313", "test-core", "torch-cpu"]
+torch = ["cpu", "py313", "test-core", "torch-cpu", "pyro"]
 cupy-cuda12 = ["py313", "test-core", "cuda12", "cupy"]
 cupy-cuda13 = ["py313", "test-core", "cuda13", "cupy"]
-torch-cuda12 = ["py313", "test-core", "cuda12", "torch-gpu"]
-torch-cuda13 = ["py313", "test-core", "cuda13", "torch-gpu"]
-cuda12 = ["py313", "test-core", "cuda12", "cupy", "torch-gpu", "jax", "blackjax", "jax-gpu", "jax-cuda12"]
-cuda13 = ["py313", "test-core", "cuda13", "cupy", "torch-gpu", "jax", "blackjax", "jax-gpu", "jax-cuda13"]
+torch-cuda12 = ["py313", "test-core", "cuda12", "torch-gpu", "pyro"]
+torch-cuda13 = ["py313", "test-core", "cuda13", "torch-gpu", "pyro"]
+cuda12 = ["py313", "test-core", "cuda12", "cupy", "torch-gpu", "jax", "blackjax", "jax-gpu", "jax-cuda12", "pyro"]
+cuda13 = ["py313", "test-core", "cuda13", "cupy", "torch-gpu", "jax", "blackjax", "jax-gpu", "jax-cuda13", "pyro"]
 
 [tool.pixi.feature.cpu]
 platforms = ["linux-64", "osx-arm64"]

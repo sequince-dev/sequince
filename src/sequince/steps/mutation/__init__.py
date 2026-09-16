@@ -51,6 +51,7 @@ from .metropolis import (
     RedBlueMetropolisHastingsMutation,
 )
 from .minipcn import MiniPCNMutation
+from .pyro import PyroNUTSMutation
 from .rejuvenation import GenerativeProposal, ProposalRejuvenation
 from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
@@ -62,6 +63,7 @@ __all__ = [
     "BlockedMetropolisHastingsMutation",
     "BlackJAXAlgorithmFactory",
     "BlackJAXMutation",
+    "PyroNUTSMutation",
     "CallableMutationKernel",
     "COMPLEMENTARY_ENSEMBLE_KERNELS",
     "ComplementaryEnsembleKernel",
