@@ -2,9 +2,12 @@
 
 from ..base import FixedLengthMutation
 from .adaptive import (
+    AdaptDEScaleWeights,
     AdaptiveGaussianProposal,
     AdaptiveMutationStep,
     AdaptMutationSteps,
+    DEScaleWeightPolicy,
+    ESJDScaleWeightPolicy,
     MutationStepPolicy,
 )
 from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
@@ -59,6 +62,9 @@ from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
 __all__ = [
     "ESJDMetric",
+    "AdaptDEScaleWeights",
+    "DEScaleWeightPolicy",
+    "ESJDScaleWeightPolicy",
     "AdaptiveGaussianProposal",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",

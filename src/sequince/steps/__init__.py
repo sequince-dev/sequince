@@ -9,6 +9,7 @@ from .control import ConditionalStepOutput, ContinueWhile
 from .log import LoggingStep
 from .meta import MetaSMCStep
 from .mutation import (
+    AdaptDEScaleWeights,
     AdaptiveGaussianProposal,
     AdaptiveMaskedGaussianRandomWalk,
     AdaptiveMutationStep,
@@ -16,11 +17,13 @@ from .mutation import (
     BlackJAXMutation,
     BlockedMetropolisHastingsMutation,
     ComplementaryEnsembleKernel,
+    DEScaleWeightPolicy,
     DifferentialEvolutionKernel,
     DifferentialEvolutionMutation,
     EmceeMutation,
     ErynMutation,
     ESJDMetric,
+    ESJDScaleWeightPolicy,
     FixedLengthMutation,
     KernelSample,
     MaskedGaussianRandomWalk,
@@ -69,6 +72,9 @@ from .weighting import (
 
 __all__ = [
     "ESJDMetric",
+    "AdaptDEScaleWeights",
+    "DEScaleWeightPolicy",
+    "ESJDScaleWeightPolicy",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
