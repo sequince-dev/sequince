@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from numbers import Integral
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
@@ -14,8 +14,11 @@ from .....array_api import to_numpy
 from ....context import StepContext
 from ...metrics import MutationMetricsOutput
 
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
 
-def _normalise_weights(weights: Sequence[float]) -> tuple[float, ...]:
+
+def _normalise_weights(weights: ArrayLike) -> tuple[float, ...]:
     """Validate and normalize configuration on the host at a stage boundary."""
     values = np.asarray(weights, dtype=float)
     if values.ndim != 1 or values.size == 0:
