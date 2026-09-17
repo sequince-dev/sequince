@@ -2,8 +2,10 @@
 
 from .base import MutationStepPolicy
 from .de import DEScaleWeightPolicy, ESJDScaleWeightPolicy
+from .rjd import RelativeJumpDistancePolicy
 
 __all__ = [
+    "RelativeJumpDistancePolicy",
     "MutationStepPolicy",
     "DEScaleWeightPolicy",
     "ESJDScaleWeightPolicy",

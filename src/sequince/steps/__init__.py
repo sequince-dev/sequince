@@ -39,6 +39,8 @@ from .mutation import (
     MutationTransition,
     ProposalRejuvenation,
     RedBlueMetropolisHastingsMutation,
+    RelativeJumpDistanceMetric,
+    RelativeJumpDistancePolicy,
     RepeatedMutationStep,
     RepeatedMutationStepOutput,
 )
@@ -72,6 +74,8 @@ from .weighting import (
 
 __all__ = [
     "ESJDMetric",
+    "RelativeJumpDistanceMetric",
+    "RelativeJumpDistancePolicy",
     "AdaptDEScaleWeights",
     "DEScaleWeightPolicy",
     "ESJDScaleWeightPolicy",

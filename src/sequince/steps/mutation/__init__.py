@@ -9,6 +9,7 @@ from .adaptive import (
     DEScaleWeightPolicy,
     ESJDScaleWeightPolicy,
     MutationStepPolicy,
+    RelativeJumpDistancePolicy,
 )
 from .base import PARTICLE_TRANSFORM_KEY, MutationStep, TransformRefit
 from .blackjax import BlackJAXAlgorithmFactory, BlackJAXMutation
@@ -50,6 +51,7 @@ from .metrics import (
     MutationMetricsOutput,
     MutationStepState,
     MutationTransition,
+    RelativeJumpDistanceMetric,
 )
 from .metropolis import (
     DifferentialEvolutionMutation,
@@ -62,6 +64,8 @@ from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
 __all__ = [
     "ESJDMetric",
+    "RelativeJumpDistanceMetric",
+    "RelativeJumpDistancePolicy",
     "AdaptDEScaleWeights",
     "DEScaleWeightPolicy",
     "ESJDScaleWeightPolicy",
