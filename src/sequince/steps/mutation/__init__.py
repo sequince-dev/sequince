@@ -30,6 +30,7 @@ from .kernels import (
     ComplementaryEnsembleKernel,
     DifferentialEvolutionKernel,
     GaussianRandomWalk,
+    KernelSample,
     MaskedGaussianRandomWalk,
     MixtureMutationKernel,
     MutationKernel,
@@ -40,10 +41,12 @@ from .kernels import (
     get_mutation_kernel,
 )
 from .metrics import (
+    ESJDMetric,
     MutationMetric,
     MutationMetrics,
     MutationMetricsOutput,
     MutationStepState,
+    MutationTransition,
 )
 from .metropolis import (
     DifferentialEvolutionMutation,
@@ -55,6 +58,7 @@ from .rejuvenation import GenerativeProposal, ProposalRejuvenation
 from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
 __all__ = [
+    "ESJDMetric",
     "AdaptiveGaussianProposal",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",
@@ -78,6 +82,7 @@ __all__ = [
     "RedBlueMetropolisHastingsMutation",
     "MiniPCNMutation",
     "MaskedGaussianRandomWalk",
+    "KernelSample",
     "MetropolisBlock",
     "MixtureMutationKernel",
     "MutationKernel",
@@ -85,6 +90,7 @@ __all__ = [
     "RepeatedMutationStepOutput",
     "MutationMetricsOutput",
     "MutationStepState",
+    "MutationTransition",
     "MutationMetric",
     "MutationMetrics",
     "MutationStep",

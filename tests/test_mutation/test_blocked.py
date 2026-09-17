@@ -70,7 +70,7 @@ def test_masked_gaussian_preserves_backend(
     proposals = kernel.sample(
         particles,
         case.rng(4321),
-    )
+    ).particles
 
     assert namespace(proposals) is namespace(particles)
     assert np.array_equal(to_numpy(proposals)[:, 0], to_numpy(particles)[:, 0])

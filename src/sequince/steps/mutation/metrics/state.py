@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...._typing import Array
 from ....array_api import asarray, namespace
 from ....utils.pytrees import pytree_dataclass
 
@@ -36,7 +37,12 @@ class MutationMetricsOutput:
 
 
 @pytree_dataclass(
-    data_fields=("states", "n_steps", "n_attempted", "n_accepted")
+    data_fields=(
+        "states",
+        "n_steps",
+        "n_attempted",
+        "n_accepted",
+    )
 )
 @dataclass(frozen=True)
 class MutationStepState:
@@ -56,4 +62,24 @@ class MutationStepState:
     n_accepted: Any
 
 
-__all__ = ["MutationMetricsOutput", "MutationStepState"]
+@pytree_dataclass(data_fields=("displacement", "kernel_auxiliary"))
+@dataclass(frozen=True)
+class MutationTransition:
+    """One transition's accepted displacement and read-only kernel auxiliary.
+
+    This ephemeral input is never retained by the metric collection.
+
+    Parameters
+    ----------
+    displacement : array, shape (n_particles, n_dimensions)
+        Accepted displacement in mutation coordinates, zero for rejected rows.
+    kernel_auxiliary : pytree, optional
+        Read-only auxiliary information from the kernel sample, or None.
+        Red-blue sweeps restore particle-aligned leaves to population order.
+    """
+
+    displacement: Array
+    kernel_auxiliary: Any = None
+
+
+__all__ = ["MutationMetricsOutput", "MutationStepState", "MutationTransition"]

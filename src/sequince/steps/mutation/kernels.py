@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, overload
 
 import numpy as np
@@ -12,12 +12,48 @@ from array_api_compat import device as get_device
 from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
+from ...utils.pytrees import pytree_dataclass
 from ..base import StepContext
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
 else:  # pragma: no cover - runtime fallback
     from orng import RandomGenerator  # type: ignore
+
+
+@pytree_dataclass(data_fields=("particles", "auxiliary"))
+@dataclass(frozen=True)
+class KernelSample:
+    """Particles and proposal-local information for one kernel draw.
+
+    Parameters
+    ----------
+    particles : array
+        Proposed coordinates, with the same shape as the parent particles.
+    auxiliary : pytree, optional
+        Kernel-specific pytree data needed for transition corrections or
+        diagnostics. DE stores arrays aligned with the active particles;
+        mixtures store their selected component and its proposal state.
+        Complementary kernels must use arrays with an active-particle leading
+        dimension so the mutation can combine both half-updates.
+
+    Notes
+    -----
+    Acceptance decisions and displacement belong to the mutation layer.
+    Neither kernels nor consumers should mutate this state or its contents.
+    """
+
+    particles: Array
+    auxiliary: Any = None
+
+
+def _as_kernel_sample(proposal: Array | KernelSample) -> KernelSample:
+    """Normalize a kernel result without copying particles or auxiliary."""
+    return (
+        proposal
+        if isinstance(proposal, KernelSample)
+        else KernelSample(proposal)
+    )
 
 
 class MutationKernel(Protocol):
@@ -27,8 +63,8 @@ class MutationKernel(Protocol):
         self,
         particles: Array,
         rng: RandomGenerator,
-    ) -> Array:
-        """Draw proposal particles corresponding to the supplied parents."""
+    ) -> Array | KernelSample:
+        """Draw particles, optionally with proposal-local auxiliary."""
 
     def log_transition_ratio(
         self,
@@ -70,7 +106,12 @@ class SymmetricMutationKernel:
 
 
 class ComplementaryEnsembleKernel(ABC):
-    """Kernel whose proposals depend on a frozen complementary ensemble."""
+    """Kernel using a frozen complement and either correction hook.
+
+    Auxiliary pytrees must match between half-updates. Every leaf must be an
+    array with an active-particle leading dimension; None nodes are permitted.
+    Treat auxiliary data as read-only.
+    """
 
     @abstractmethod
     def sample(
@@ -78,17 +119,17 @@ class ComplementaryEnsembleKernel(ABC):
         particles: Array,
         complementary_particles: Array,
         rng: RandomGenerator,
-    ) -> Array:
-        """Propose updates using the supplied complementary ensemble."""
+    ) -> Array | KernelSample:
+        """Draw particles or proposal state using the frozen complement."""
 
-    @abstractmethod
     def log_transition_ratio(
         self,
         from_particles: Array,
         to_particles: Array,
         complementary_particles: Array,
     ) -> Array:
-        """Return ``log q(from | to) - log q(to | from)`` per particle."""
+        """Return the array correction, or override the sample-aware hook."""
+        raise NotImplementedError("Implement a transition correction hook.")
 
 
 class SymmetricComplementaryEnsembleKernel(ComplementaryEnsembleKernel):
@@ -175,7 +216,7 @@ class CallableMutationKernel:
 def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
-    to_particles: Array,
+    proposal: Array | KernelSample,
     complementary_particles: Array | None = None,
     *,
     return_counts: Literal[False] = False,
@@ -186,7 +227,7 @@ def evaluate_log_transition_ratio(
 def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
-    to_particles: Array,
+    proposal: Array | KernelSample,
     complementary_particles: Array | None = None,
     *,
     return_counts: Literal[True],
@@ -197,7 +238,7 @@ def evaluate_log_transition_ratio(
 def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
-    to_particles: Array,
+    proposal: Array | KernelSample,
     complementary_particles: Array | None = None,
     *,
     return_counts: bool,
@@ -207,39 +248,29 @@ def evaluate_log_transition_ratio(
 def evaluate_log_transition_ratio(
     kernel: object,
     from_particles: Array,
-    to_particles: Array,
+    proposal: Array | KernelSample,
     complementary_particles: Array | None = None,
     *,
     return_counts: bool = False,
 ) -> Array | tuple[Array, EvaluationCounts]:
     """Evaluate a transition ratio."""
-    if isinstance(kernel, MixtureMutationKernel):
-        selected = kernel.selected_kernel
-        if selected is None:
-            raise RuntimeError(
-                "MixtureMutationKernel.sample() must be called before "
-                "log_transition_ratio()."
-            )
-        return evaluate_log_transition_ratio(
-            selected,
-            from_particles,
-            to_particles,
-            complementary_particles,
-            return_counts=return_counts,
-        )
-
+    proposal = _as_kernel_sample(proposal)
+    sample_ratio_fn = getattr(kernel, "log_transition_ratio_from_sample", None)
     ratio_fn = getattr(kernel, "log_transition_ratio", None)
-    if callable(ratio_fn):
+    if callable(sample_ratio_fn) or callable(ratio_fn):
+        correction = sample_ratio_fn if callable(sample_ratio_fn) else ratio_fn
+        assert callable(correction)
+        destination = (
+            proposal if callable(sample_ratio_fn) else proposal.particles
+        )
         if complementary_particles is None:
-            values = ratio_fn(from_particles, to_particles)
+            values = correction(from_particles, destination)
         else:
-            values = ratio_fn(
-                from_particles,
-                to_particles,
-                complementary_particles,
+            values = correction(
+                from_particles, destination, complementary_particles
             )
         counts = EvaluationCounts.zeros(
-            xp=namespace(from_particles, to_particles)
+            xp=namespace(from_particles, proposal.particles)
         )
         return (values, counts) if return_counts else values
 
@@ -249,11 +280,11 @@ def evaluate_log_transition_ratio(
             raise TypeError(
                 "Complementary kernels must implement log_transition_ratio()."
             )
-        values = density_fn(to_particles, from_particles) - density_fn(
-            from_particles, to_particles
+        values = density_fn(proposal.particles, from_particles) - density_fn(
+            from_particles, proposal.particles
         )
         counts = EvaluationCounts.zeros(
-            xp=namespace(from_particles, to_particles)
+            xp=namespace(from_particles, proposal.particles)
         )
         return (values, counts) if return_counts else values
     raise TypeError(
@@ -275,7 +306,7 @@ class GaussianRandomWalk(SymmetricMutationKernel):
         self,
         particles: Array,
         rng: RandomGenerator,
-    ) -> Array:
+    ) -> KernelSample:
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         noise = rng.normal(
@@ -283,7 +314,7 @@ class GaussianRandomWalk(SymmetricMutationKernel):
             scale=self.scale,
             size=arr.shape,
         )
-        return arr + noise
+        return KernelSample(arr + noise)
 
     def log_density(
         self,
@@ -338,10 +369,33 @@ def _sample_effective_gamma(
     like: Array,
 ) -> Array:
     """Sample one DE scale for each active proposal."""
+    return _sample_gamma_and_unit_mask(
+        n_active,
+        gamma_base,
+        gamma_one_probability,
+        gamma_randomization,
+        rng,
+        like=like,
+    )[0]
+
+
+def _sample_gamma_and_unit_mask(
+    n_active: int,
+    gamma_base: float,
+    gamma_one_probability: float,
+    gamma_randomization: GammaRandomization,
+    rng: RandomGenerator,
+    *,
+    like: Array,
+) -> tuple[Array, Array]:
+    """Preserve legacy RNG ordering while retaining explicit unit identity."""
     xp = namespace(like)
     shape = (n_active,)
     if gamma_one_probability == 1.0:
-        return xp.ones(shape, dtype=like.dtype, device=get_device(like))
+        return (
+            xp.ones(shape, dtype=like.dtype, device=get_device(like)),
+            xp.ones(shape, dtype=xp.bool, device=get_device(like)),
+        )
 
     if gamma_randomization == "bilby":
         factors = rng.gamma(
@@ -360,10 +414,12 @@ def _sample_effective_gamma(
         )
 
     if gamma_one_probability == 0.0:
-        return ordinary_gamma
+        return ordinary_gamma, xp.zeros(
+            shape, dtype=xp.bool, device=get_device(like)
+        )
 
     use_gamma_one = rng.random(shape) < gamma_one_probability
-    return xp.where(use_gamma_one, 1.0, ordinary_gamma)
+    return xp.where(use_gamma_one, 1.0, ordinary_gamma), use_gamma_one
 
 
 @dataclass(frozen=True)
@@ -379,13 +435,56 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
     :class:`RedBlueMetropolisHastingsMutation` supplies the frozen complementary
     population for each half-update. Sequince still updates an interacting MCMC
     population and its complete algorithm is not dynesty.
+
+    Parameters
+    ----------
+    gamma : float or None
+        Nominal scale, defaulting to ``2.38 / sqrt(2 * n_dimensions)``.
+    gamma_one_probability : float
+        Probability of an explicit unit move, overriding all scale factors.
+    gamma_randomization : {"none", "bilby"}
+        Optional independent Gamma randomization of the nominal scale.
+    scale_multipliers : tuple of float
+        Nonempty bank of finite positive factors, sampled per active particle.
+        Factors also multiply Bilby-randomized scales, but never unit moves.
+    scale_weights : tuple of float or None
+        Finite non-negative categorical weights, normalized on construction.
+        None assigns equal weights. Configuration is immutable and selection
+        is state-independent, so the global proposal remains symmetric.
+        Use ``dataclasses.replace`` to construct weights for a later stage.
     """
 
     gamma: float | None = None
     gamma_one_probability: float = 0.1
     gamma_randomization: GammaRandomization = "none"
+    scale_multipliers: tuple[float, ...] = (1.0,)
+    scale_weights: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
+        multipliers = tuple(float(value) for value in self.scale_multipliers)
+        weights = (
+            (1.0,) * len(multipliers)
+            if self.scale_weights is None
+            else tuple(float(value) for value in self.scale_weights)
+        )
+        if not multipliers or len(multipliers) != len(weights):
+            raise ValueError(
+                "Scale multipliers and weights must be nonempty "
+                "and have matching lengths."
+            )
+        if any(not math.isfinite(s) or s <= 0 for s in multipliers):
+            raise ValueError("Scale multipliers must be finite and positive.")
+        if any(not math.isfinite(w) or w < 0 for w in weights):
+            raise ValueError("Scale weights must be finite and non-negative.")
+        largest = max(weights)
+        if largest == 0:
+            raise ValueError("At least one scale weight must be positive.")
+        scaled = tuple(w / largest for w in weights)
+        total = math.fsum(scaled)
+        object.__setattr__(self, "scale_multipliers", multipliers)
+        object.__setattr__(
+            self, "scale_weights", tuple(w / total for w in scaled)
+        )
         if self.gamma is not None and (
             not math.isfinite(self.gamma) or self.gamma <= 0.0
         ):
@@ -406,12 +505,23 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
                 f"Supported strategies are: {supported}."
             )
 
+    def _select_donors(
+        self,
+        particles: Array,
+        complementary_particles: Array,
+        rng: RandomGenerator,
+    ) -> tuple[Array, Array]:
+        """Select uniform ordered distinct donors from the fixed complement."""
+        return _sample_donor_indices(
+            particles.shape[0], complementary_particles.shape[0], rng
+        )
+
     def sample(
         self,
         particles: Array,
         complementary_particles: Array,
         rng: RandomGenerator,
-    ) -> Array:
+    ) -> KernelSample:
         xp = namespace(particles, complementary_particles)
         current = particles
         if current.ndim != 2:
@@ -437,15 +547,11 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
             )
 
         n_active, n_dimensions = current.shape
-        donor_j, donor_k = _sample_donor_indices(
-            n_active,
-            complementary.shape[0],
-            rng,
-        )
+        donor_j, donor_k = self._select_donors(current, complementary, rng)
         gamma_base = self.gamma
         if gamma_base is None:
             gamma_base = 2.38 / math.sqrt(2.0 * n_dimensions)
-        gamma_effective = _sample_effective_gamma(
+        gamma_effective, unit_mask = _sample_gamma_and_unit_mask(
             n_active,
             gamma_base,
             self.gamma_one_probability,
@@ -453,9 +559,31 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
             rng,
             like=current,
         )
+        component = xp.zeros_like(donor_j)
+        if len(self.scale_multipliers) > 1 and self.gamma_one_probability < 1:
+            weights = asarray(
+                self.scale_weights, xp=xp, like=current, dtype=current.dtype
+            )
+            component = rng.choice(
+                len(self.scale_multipliers), size=(n_active,), p=weights
+            )
+        multiplier = asarray(
+            self.scale_multipliers, xp=xp, like=current, dtype=current.dtype
+        )[component]
+        gamma_effective = xp.where(
+            unit_mask, 1.0, gamma_effective * multiplier
+        )
+        component = xp.where(unit_mask, -1, component)
+        multiplier = xp.where(unit_mask, 1.0, multiplier)
         differences = complementary[donor_j] - complementary[donor_k]
-        return (
-            current + xp.reshape(gamma_effective, (n_active, 1)) * differences
+        return KernelSample(
+            current + xp.reshape(gamma_effective, (n_active, 1)) * differences,
+            {
+                "scale_component": component,
+                "scale_multiplier": multiplier,
+                "donor_j": donor_j,
+                "donor_k": donor_k,
+            },
         )
 
 
@@ -532,7 +660,7 @@ class MaskedGaussianRandomWalk(SymmetricMutationKernel):
                     "covariance must be positive definite."
                 ) from exc
 
-    def sample(self, particles: Array, rng: RandomGenerator) -> Array:
+    def sample(self, particles: Array, rng: RandomGenerator) -> KernelSample:
         xp = namespace(particles)
         values = asarray(particles, xp=xp)
         if values.ndim != 2:
@@ -558,7 +686,7 @@ class MaskedGaussianRandomWalk(SymmetricMutationKernel):
             values.shape[1],
             like=values,
         )
-        return values + xp.matmul(noise, selection)
+        return KernelSample(values + xp.matmul(noise, selection))
 
 
 @dataclass(frozen=True)
@@ -652,11 +780,6 @@ class MixtureMutationKernel:
 
     kernels: Sequence[MutationKernel]
     weights: Sequence[float] | None = None
-    _selected_kernel: MutationKernel | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
 
     def __post_init__(self) -> None:
         self.kernels = tuple(self.kernels)
@@ -665,9 +788,11 @@ class MixtureMutationKernel:
                 "MixtureMutationKernel requires at least one kernel."
             )
         for kernel in self.kernels:
-            has_correction = hasattr(
-                kernel, "log_transition_ratio"
-            ) or hasattr(kernel, "log_density")
+            has_correction = (
+                hasattr(kernel, "log_transition_ratio")
+                or hasattr(kernel, "log_density")
+                or hasattr(kernel, "log_transition_ratio_from_sample")
+            )
             if not hasattr(kernel, "sample") or not has_correction:
                 raise TypeError(
                     "Mixture components must implement sample() and either "
@@ -695,12 +820,7 @@ class MixtureMutationKernel:
             )
         self.weights = tuple(weight / total for weight in weights)
 
-    @property
-    def selected_kernel(self) -> MutationKernel | None:
-        """Return the component selected by the latest call to ``sample``."""
-        return self._selected_kernel
-
-    def sample(self, particles: Array, rng: RandomGenerator) -> Array:
+    def sample(self, particles: Array, rng: RandomGenerator) -> KernelSample:
         selected_index = int(
             rng.choice(
                 len(self.kernels),
@@ -708,16 +828,26 @@ class MixtureMutationKernel:
                 p=self.weights,
             )[0]
         )
-        self._selected_kernel = self.kernels[selected_index]
-        return self._selected_kernel.sample(particles, rng)
+        child = _as_kernel_sample(
+            self.kernels[selected_index].sample(particles, rng)
+        )
+        return KernelSample(
+            child.particles,
+            {
+                "mixture_component": selected_index,
+                "mixture_sample": child,
+            },
+        )
 
-    def log_transition_ratio(
+    def log_transition_ratio_from_sample(
         self,
         from_particles: Array,
-        to_particles: Array,
+        sample: KernelSample,
     ) -> Array:
         return evaluate_log_transition_ratio(
-            self, from_particles, to_particles
+            self.kernels[sample.auxiliary["mixture_component"]],
+            from_particles,
+            sample.auxiliary["mixture_sample"],
         )
 
 

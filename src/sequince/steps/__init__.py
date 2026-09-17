@@ -20,7 +20,9 @@ from .mutation import (
     DifferentialEvolutionMutation,
     EmceeMutation,
     ErynMutation,
+    ESJDMetric,
     FixedLengthMutation,
+    KernelSample,
     MaskedGaussianRandomWalk,
     MetropolisBlock,
     MetropolisHastingsMutation,
@@ -31,6 +33,7 @@ from .mutation import (
     MutationMetricsOutput,
     MutationStepPolicy,
     MutationStepState,
+    MutationTransition,
     ProposalRejuvenation,
     RedBlueMetropolisHastingsMutation,
     RepeatedMutationStep,
@@ -65,6 +68,7 @@ from .weighting import (
 )
 
 __all__ = [
+    "ESJDMetric",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
@@ -86,6 +90,7 @@ __all__ = [
     "ErynMutation",
     "FixedLengthMutation",
     "MaskedGaussianRandomWalk",
+    "KernelSample",
     "MetropolisHastingsMutation",
     "RedBlueMetropolisHastingsMutation",
     "MetropolisBlock",
@@ -94,6 +99,7 @@ __all__ = [
     "RepeatedMutationStepOutput",
     "MutationMetricsOutput",
     "MutationStepState",
+    "MutationTransition",
     "MutationMetric",
     "MutationMetrics",
     "MutationStepPolicy",

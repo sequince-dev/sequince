@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from inspect import signature
+from typing import Any, Protocol, cast
 
 from ...._typing import Array
 from ....array_api import asarray, namespace
 from ...context import StepContext
-from .state import MutationMetricsOutput, MutationStepState
+from .state import MutationMetricsOutput, MutationStepState, MutationTransition
 
 
 class MutationMetric(Protocol):
@@ -23,9 +24,15 @@ class MutationMetric(Protocol):
     An optional ``prepare(state, particles, context)`` method prepares existing
     state for the next mutation segment, preserving accumulated measurements.
     It must return state without mutating its input; absent means no-op.
+
+    Metrics needing transition data may declare an optional keyword argument
+    ``transition=None`` on ``update``. It receives a MutationTransition with
+    displacement and kernel auxiliary when supplied by the mutation. Existing
+    four-argument updates remain supported.
     """
 
-    name: str
+    @property
+    def name(self) -> str: ...
 
     def initialize(
         self, particles: Array, log_weights: Array, context: StepContext
@@ -51,6 +58,7 @@ class MutationMetrics:
     """
 
     _metrics: tuple[MutationMetric, ...]
+    _uses_transition: tuple[bool, ...]
 
     def __init__(self, metrics: Sequence[MutationMetric] = ()) -> None:
         configured = tuple(metrics)
@@ -64,6 +72,14 @@ class MutationMetrics:
                 "Mutation metric names must be unique (duplicate name)."
             )
         object.__setattr__(self, "_metrics", configured)
+        object.__setattr__(
+            self,
+            "_uses_transition",
+            tuple(
+                "transition" in signature(metric.update).parameters
+                for metric in configured
+            ),
+        )
 
     def __iter__(self) -> Iterator[MutationMetric]:
         return iter(self._metrics)
@@ -114,15 +130,27 @@ class MutationMetrics:
         particles: Array,
         accepted: Array,
         context: StepContext,
+        *,
+        transition: MutationTransition | None = None,
     ) -> MutationStepState:
         """Record one population transition without changing the input state."""
         xp = namespace(particles)
         return replace(
             metric_state,
             states=tuple(
-                metric.update(state, particles, accepted, context)
-                for metric, state in zip(
-                    self._metrics, metric_state.states, strict=True
+                # The optional keyword is checked once during configuration.
+                cast(Callable[..., Any], metric.update)(
+                    state,
+                    particles,
+                    accepted,
+                    context,
+                    **({"transition": transition} if uses_state else {}),
+                )
+                for metric, state, uses_state in zip(
+                    self._metrics,
+                    metric_state.states,
+                    self._uses_transition,
+                    strict=True,
                 )
             ),
             n_steps=metric_state.n_steps + 1,

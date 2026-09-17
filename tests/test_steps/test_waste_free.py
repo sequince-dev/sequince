@@ -9,6 +9,7 @@ from sequince.steps import AdaptiveGaussianProposal, WasteFreeResampleMove
 from sequince.steps.mutation import (
     CallableMutationKernel,
     GaussianRandomWalk,
+    KernelSample,
     MetropolisHastingsMutation,
 )
 
@@ -121,7 +122,7 @@ def test_asymmetric_proposal_uses_hastings_correction(context_factory):
     # Script proposals flipping the states; alpha(0,1)=1/4, alpha(1,0)=1.
     class FlipKernel:
         def sample(self, particles, rng):
-            return 1 - particles
+            return KernelSample(1 - particles)
 
         def log_density(self, source, destination):
             return np.where(source[:, 0] == 0, np.log(0.8), np.log(0.2))
@@ -275,7 +276,9 @@ def test_rejects_invalid_kernel_and_target_shapes(
 ):
     class Kernel:
         def sample(self, particles, rng):
-            return particles[:1] if bad_part == "particles" else particles
+            return KernelSample(
+                particles[:1] if bad_part == "particles" else particles
+            )
 
         def log_transition_ratio(self, source, destination):
             return np.zeros((2, 2)) if bad_part == "ratio" else np.zeros(2)
