@@ -175,7 +175,7 @@ def test_repeated_segments_preserve_start_and_zero_steps() -> None:
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
-@pytest.mark.parametrize("radius", [1.0, "bootstrap", "pair_median"])
+@pytest.mark.parametrize("radius", [1.0, "pair_median"])
 def test_metric_preserves_gaussian_sampling_and_rng(
     backend: str, backend_factory: Any, radius: Any
 ) -> None:
@@ -335,38 +335,10 @@ def test_red_blue_endpoint_distance(
     )
 
 
-def test_bootstrap_matches_explicit_nearest_neighbour_reference() -> None:
-    # Duplicates intentionally remain separate entries after SMC resampling.
-    particles = np.array(
-        [[0.0, 0.0], [0.0, 0.0], [1.0, 2.0], [2.0, 1.0], [8.0, 3.0]]
-    )
-    rng = RandomGenerator(seed=11)
-    expected = 0.0
-    for _ in range(30):
-        train = rng.choice(
-            len(particles), size=(len(particles),), replace=True
-        )
-        test = np.setdiff1d(np.arange(len(particles)), train)
-        if len(test):
-            distances = np.linalg.norm(
-                particles[test, None] - particles[train], axis=2
-            )
-            expected = max(expected, float(np.max(np.min(distances, axis=1))))
-    metric = RelativeJumpDistanceMetric(reference_radius="bootstrap", seed=11)
-    context = StepContext(t=0)
-    state = metric.initialize(particles, np.zeros(len(particles)), context)
-    assert float(state.radius) == pytest.approx(expected)
-    # Segment continuation must not refit the reference radius.
-    prepared = metric.prepare(state, particles * 10, context)
-    assert prepared.radius is state.radius
-    assert prepared.start is state.start
-
-
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
-@pytest.mark.parametrize("radius", ["bootstrap", "pair_median"])
-def test_estimated_radius_backend_and_scaling(
-    backend: str, dtype: str, radius: str, backend_factory: Any
+def test_pair_median_backend_and_scaling(
+    backend: str, dtype: str, backend_factory: Any
 ) -> None:
     case = backend_factory(backend)
     if backend == "jax" and dtype == "float64":
@@ -375,7 +347,7 @@ def test_estimated_radius_backend_and_scaling(
         if not jax.config.x64_enabled:
             pytest.skip("JAX x64 is disabled")
     particles = case.xp.astype(case.particles, getattr(case.xp, dtype))
-    metric = RelativeJumpDistanceMetric(reference_radius=radius, seed=4)
+    metric = RelativeJumpDistanceMetric(reference_radius="pair_median", seed=4)
     context = StepContext(t=0)
     initial = metric.initialize(particles, case.log_weights, context)
     repeated = metric.initialize(particles, case.log_weights, context)
@@ -392,43 +364,17 @@ def test_estimated_radius_backend_and_scaling(
 
 
 @pytest.mark.parametrize(
-    "particles", [np.ones((1, 2)), np.ones((4, 2)), np.full((4, 2), np.nan)]
-)
-def test_bootstrap_invalid_populations(particles: np.ndarray) -> None:
-    with pytest.raises(ValueError, match="Bootstrap"):
-        RelativeJumpDistanceMetric(reference_radius="bootstrap").initialize(
-            particles, np.zeros(len(particles)), StepContext(t=0)
-        )
-
-
-@pytest.mark.parametrize(
     "kwargs",
     [
         {"reference_radius": "invalid"},
-        {"n_bootstrap": 0},
-        {"n_bootstrap": -1},
-        {"n_bootstrap": 1.5},
+        {"reference_radius": "bootstrap"},
+        {"n_bootstrap": 30},
         {"seed": -1},
     ],
 )
-def test_invalid_bootstrap_configuration(kwargs: dict[str, Any]) -> None:
+def test_invalid_radius_configuration(kwargs: dict[str, Any]) -> None:
     with pytest.raises((ValueError, TypeError)):
         RelativeJumpDistanceMetric(**kwargs)
-
-
-def test_bootstrap_empty_holdout_and_duplicate_training(
-    monkeypatch: Any,
-) -> None:
-    # First draw has no held-out points. Second draws the same point twice.
-    draws = iter([np.array([0, 1]), np.array([0, 0])])
-    monkeypatch.setattr(RandomGenerator, "choice", lambda *a, **k: next(draws))
-    metric = RelativeJumpDistanceMetric(
-        reference_radius="bootstrap", n_bootstrap=2
-    )
-    state = metric.initialize(
-        np.array([[0.0], [3.0]]), np.zeros(2), StepContext(t=0)
-    )
-    assert float(state.radius) == 3
 
 
 @pytest.mark.parametrize("n_pairs", [4095, 4096])
