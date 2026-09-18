@@ -14,6 +14,7 @@ from ....array_api import asarray, get_device, namespace, to_numpy
 from ....utils.pytrees import pytree_dataclass
 from ...base import validate_n_steps
 from ...context import StepContext
+from .state import MutationTransition
 
 
 def _bootstrap_reference_radius(
@@ -204,6 +205,8 @@ class RelativeJumpDistanceMetric:
         particles: Array,
         accepted: Array,
         context: StepContext,
+        *,
+        transition: MutationTransition | None = None,
     ) -> _RJDState:
         """Retain the latest endpoint, including unchanged rejected chains."""
         return self.prepare(state, particles, context)

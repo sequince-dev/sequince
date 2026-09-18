@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from ...._typing import Array
 from ....array_api import asarray, get_device, namespace
@@ -20,6 +21,8 @@ class DEScaleMetrics:
     The squared-jump calculation is shared with ESJDMetric.
     No histories or additional target evaluations are retained.
     """
+
+    needs_transition: ClassVar[bool] = True
 
     multipliers: tuple[float, ...]
     name: str = "de_scales"

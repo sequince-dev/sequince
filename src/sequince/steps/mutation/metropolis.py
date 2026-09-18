@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, TypeGuard
 
 import array_api_extra as xpx
 import optree
@@ -31,7 +31,6 @@ from .metrics import (
     MutationStepState,
     MutationTransition,
 )
-from .metrics.de import DEScaleMetrics
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
@@ -42,44 +41,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MutationKernelFactory = Callable[[Array, StepContext], MutationKernel]
-
-
-def _combine_kernel_auxiliary(
-    first: Any,
-    second: Any,
-    n_first: int,
-    n_second: int,
-    order: Array,
-) -> Any:
-    """Combine matching particle-aligned auxiliary pytrees in population order.
-
-    Every leaf must be an array whose leading dimension is the active half's
-    particle count. None nodes are allowed only at matching tree positions.
-    Concatenation and indexing preserve the leaves' backend and device.
-    """
-    leaves_a, tree_a = optree.tree_flatten(first, namespace=OPTREE_NAMESPACE)
-    leaves_b, tree_b = optree.tree_flatten(second, namespace=OPTREE_NAMESPACE)
-    if tree_a != tree_b:
-        raise ValueError(
-            "Kernel auxiliary pytree structures must match between halves."
-        )
-    combined = []
-    for a, b in zip(leaves_a, leaves_b, strict=True):
-        if (
-            not hasattr(a, "shape")
-            or not hasattr(b, "shape")
-            or len(a.shape) == 0
-            or len(b.shape) == 0
-            or a.shape[0] != n_first
-            or b.shape[0] != n_second
-            or a.shape[1:] != b.shape[1:]
-        ):
-            raise ValueError(
-                "Kernel auxiliary leaves must be particle-aligned arrays with matching trailing shapes."
-            )
-        xp = namespace(a, b)
-        combined.append(xp.concat((a, b), axis=0)[order])
-    return optree.tree_unflatten(tree_a, combined)
 
 
 class MetropolisHastingsMutation(MutationStep):
@@ -112,11 +73,11 @@ class MetropolisHastingsMutation(MutationStep):
             raise ValueError("n_steps must be >= 1.")
         self._n_steps = int(n_steps)
         if self._is_kernel(kernel):
-            self._kernel: MutationKernel | None = cast(MutationKernel, kernel)
+            self._kernel: MutationKernel | None = kernel
             self._kernel_factory: MutationKernelFactory | None = None
         elif callable(kernel):
             self._kernel = None
-            self._kernel_factory = cast(MutationKernelFactory, kernel)
+            self._kernel_factory = kernel
         else:
             raise TypeError(
                 "kernel must implement the mutation-kernel interface or be "
@@ -124,7 +85,7 @@ class MetropolisHastingsMutation(MutationStep):
             )
 
     @staticmethod
-    def _is_kernel(kernel: object) -> bool:
+    def _is_kernel(kernel: object) -> TypeGuard[MutationKernel]:
         has_correction = (
             hasattr(kernel, "log_transition_ratio")
             or hasattr(kernel, "log_density")
@@ -319,8 +280,10 @@ class MetropolisHastingsMutation(MutationStep):
                     (n_particles,) + (1,) * (current.ndim - 1),
                 )
             updated = xp.where(particle_mask, proposals, current)
-            transition = MutationTransition(
-                updated - current, proposal.auxiliary
+            transition = (
+                MutationTransition(updated - current, proposal.auxiliary)
+                if self.metrics.needs_transition
+                else None
             )
             current = updated
             current_log_prob = xp.where(
@@ -398,7 +361,9 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
     randomly repartitioned, the red group is updated against the frozen blue
     group, and then blue is updated against the accepted red population. A
     persistent :class:`ComplementaryEnsembleKernel` receives both groups
-    directly.
+    directly. DE scale diagnostics are opt-in: configure DEScaleMetrics with
+    the kernel's scale_multipliers in metrics, or use AdaptDEScaleWeights,
+    which configures the required metric once.
     """
 
     def __init__(
@@ -415,8 +380,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         if not isinstance(kernel, ComplementaryEnsembleKernel):
             raise TypeError("kernel must be a ComplementaryEnsembleKernel.")
         self._complementary_ensemble_kernel = kernel
-        if isinstance(kernel, DifferentialEvolutionKernel):
-            metrics = (*metrics, DEScaleMetrics(kernel.scale_multipliers))
         MutationStep.__init__(
             self,
             log_prob_fn,
@@ -492,7 +455,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         int,
         Array,
         Any,
-        Array,
     ]:
         """Apply one red-blue half-update to the active particle group."""
         xp = namespace(current)
@@ -575,7 +537,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             accepted_count,
             accepted,
             proposal.auxiliary,
-            updated_active - active,
         )
 
     def apply(
@@ -673,6 +634,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         acceptance_by_half: list[tuple[float, float]] = []
         chain: list[Array] = []
         for _ in range(n_steps):
+            previous = current
             accepted_population = xp.zeros_like(
                 current_log_prob, dtype=xp.bool
             )
@@ -689,7 +651,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 accepted_a,
                 accepted_mask_a,
                 auxiliary_a,
-                displacement_a,
             ) = self._apply_half(
                 current,
                 current_log_prob,
@@ -715,7 +676,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 accepted_b,
                 accepted_mask_b,
                 auxiliary_b,
-                displacement_b,
             ) = self._apply_half(
                 current,
                 current_log_prob,
@@ -732,21 +692,21 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             accepted_population = xpx.at(accepted_population, group_b).set(
                 accepted_mask_b, copy=True, xp=xp
             )
-            # Each particle is updated once; restore both halves to population
-            # order so all metrics observe the same complete transition.
-            order = xp.argsort(xp.concat((group_a, group_b)))
-            transition = MutationTransition(
-                displacement=xp.concat((displacement_a, displacement_b))[
-                    order
-                ],
-                kernel_auxiliary=_combine_kernel_auxiliary(
-                    auxiliary_a,
-                    auxiliary_b,
-                    group_a.shape[0],
-                    group_b.shape[0],
-                    order,
-                ),
-            )
+            transition = None
+            if self.metrics.needs_transition:
+                # Restore particle-aligned auxiliary to population order.
+                order = xp.argsort(xp.concat((group_a, group_b)))
+                transition = MutationTransition(
+                    displacement=current - previous,
+                    kernel_auxiliary=optree.tree_map(
+                        lambda a, b: namespace(a, b).concat((a, b), axis=0)[
+                            order
+                        ],
+                        auxiliary_a,
+                        auxiliary_b,
+                        namespace=OPTREE_NAMESPACE,
+                    ),
+                )
             accepted_sweep = accepted_a + accepted_b
             accepted_total += accepted_sweep
             acceptance_by_step.append(accepted_sweep / n_particles)
@@ -842,6 +802,10 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
     store_chains
         Whether to include the particle state after every complete red-blue
         sweep in the step output.
+    metrics : sequence of MutationMetric
+        Optional diagnostics. For per-scale DE totals, include
+        DEScaleMetrics(scale_multipliers). AdaptDEScaleWeights configures
+        these diagnostics automatically.
     """
 
     def __init__(

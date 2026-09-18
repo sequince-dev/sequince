@@ -56,7 +56,7 @@ def _as_kernel_sample(proposal: Array | KernelSample) -> KernelSample:
     )
 
 
-class MutationKernel(Protocol):
+class _KernelSampler(Protocol):
     """Protocol defining the interface required by mutation kernels."""
 
     def sample(
@@ -66,12 +66,41 @@ class MutationKernel(Protocol):
     ) -> Array | KernelSample:
         """Draw particles, optionally with proposal-local auxiliary."""
 
+
+class TransitionRatioKernel(_KernelSampler, Protocol):
+    """Kernel with an array-based transition correction."""
+
     def log_transition_ratio(
         self,
         from_particles: Array,
         to_particles: Array,
     ) -> Array:
         """Return ``log q(from | to) - log q(to | from)`` per particle."""
+
+
+class SampleAwareMutationKernel(_KernelSampler, Protocol):
+    """Kernel whose correction consumes proposal-local state."""
+
+    def log_transition_ratio_from_sample(
+        self,
+        from_particles: Array,
+        sample: KernelSample,
+    ) -> Array: ...
+
+
+class DensityMutationKernel(_KernelSampler, Protocol):
+    """Kernel exposing its transition log density."""
+
+    def log_density(
+        self,
+        from_particles: Array,
+        to_particles: Array,
+    ) -> Array: ...
+
+
+MutationKernel = (
+    TransitionRatioKernel | SampleAwareMutationKernel | DensityMutationKernel
+)
 
 
 def _zero_log_transition_ratio(
@@ -306,7 +335,7 @@ class GaussianRandomWalk(SymmetricMutationKernel):
         self,
         particles: Array,
         rng: RandomGenerator,
-    ) -> KernelSample:
+    ) -> Array:
         xp = namespace(particles)
         arr = asarray(particles, xp=xp)
         noise = rng.normal(
@@ -314,7 +343,7 @@ class GaussianRandomWalk(SymmetricMutationKernel):
             scale=self.scale,
             size=arr.shape,
         )
-        return KernelSample(arr + noise)
+        return arr + noise
 
     def log_density(
         self,
@@ -660,7 +689,7 @@ class MaskedGaussianRandomWalk(SymmetricMutationKernel):
                     "covariance must be positive definite."
                 ) from exc
 
-    def sample(self, particles: Array, rng: RandomGenerator) -> KernelSample:
+    def sample(self, particles: Array, rng: RandomGenerator) -> Array:
         xp = namespace(particles)
         values = asarray(particles, xp=xp)
         if values.ndim != 2:
@@ -686,7 +715,7 @@ class MaskedGaussianRandomWalk(SymmetricMutationKernel):
             values.shape[1],
             like=values,
         )
-        return KernelSample(values + xp.matmul(noise, selection))
+        return values + xp.matmul(noise, selection)
 
 
 @dataclass(frozen=True)

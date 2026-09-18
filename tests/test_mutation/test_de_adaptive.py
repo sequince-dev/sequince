@@ -428,3 +428,55 @@ def test_constructor_rejects_non_de_mutation() -> None:
                 lambda x: np.zeros(len(x)), GaussianRandomWalk()
             )
         )
+
+
+@pytest.mark.parametrize("preconfigured", [False, True])
+def test_adapter_configures_metrics_once(
+    preconfigured, context_factory
+) -> None:
+    from sequince.steps.mutation.metrics import ESJDMetric
+    from sequince.steps.mutation.metrics.de import DEScaleMetrics
+
+    user_metric = ESJDMetric()
+    scales = DEScaleMetrics((0.5, 1.0))
+    configured = [user_metric, scales] if preconfigured else [user_metric]
+    mutation = DifferentialEvolutionMutation(
+        lambda x, context: np.zeros(len(x)),
+        scale_multipliers=(0.5, 1.0),
+        metrics=configured,
+    )
+    adapter = AdaptDEScaleWeights(RepeatedMutationStep(mutation, n_steps=2))
+    collection = mutation.metrics
+    assert tuple(collection)[0] is user_metric
+    assert [metric.name for metric in collection] == ["esjd", "de_scales"]
+    if preconfigured:
+        assert tuple(collection)[1] is scales
+    for iteration in range(2):
+        _, _, output = adapter(
+            ParticleState(np.arange(20.0).reshape(10, 2)),
+            replace(context_factory(), t=iteration),
+            RandomGenerator(seed=7),
+        )
+        assert mutation.metrics is collection
+        assert output.metrics.values["de_scales"]["n_attempted"].sum() == 20
+
+
+@pytest.mark.parametrize("wrong_type", [False, True])
+def test_adapter_rejects_conflicting_diagnostic_name(wrong_type) -> None:
+    from sequince.steps.mutation.metrics import ESJDMetric
+    from sequince.steps.mutation.metrics.de import DEScaleMetrics
+
+    metric = (
+        ESJDMetric(name="de_scales")
+        if wrong_type
+        else DEScaleMetrics((0.25, 1.0))
+    )
+    mutation = DifferentialEvolutionMutation(
+        lambda x: np.zeros(len(x)),
+        scale_multipliers=(0.5, 1.0),
+        metrics=[metric],
+    )
+    collection = mutation.metrics
+    with pytest.raises(ValueError, match="configured scale bank"):
+        AdaptDEScaleWeights(mutation)
+    assert mutation.metrics is collection

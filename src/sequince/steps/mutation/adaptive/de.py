@@ -11,8 +11,9 @@ from ...base import validate_n_steps
 from ...context import StepContext
 from ..base import MutationStep
 from ..kernels import DifferentialEvolutionKernel
-from ..metrics import MutationMetricsOutput
+from ..metrics import MutationMetrics, MutationMetricsOutput
 from ..metrics.base import with_metrics
+from ..metrics.de import DEScaleMetrics
 from ..metropolis import RedBlueMetropolisHastingsMutation
 from ..repeated import RepeatedMutationStep
 from .base import AdaptiveMutationStep
@@ -51,6 +52,9 @@ class AdaptDEScaleWeights(AdaptiveMutationStep):
     through a block. The wrapped kernel configuration is owned by this wrapper;
     do not share the mutation with another adapter or replace its kernel.
 
+    Required DEScaleMetrics are configured once on the leaf, preserving user
+    metrics. An existing de_scales metric must match the configured scale bank.
+
     Completed metrics gain a ``de_scale_adaptation`` entry containing
     ``weights`` used for this block and ``next_weights``. Checkpoints retain
     both decisions and nested child/policy state. Reconstruct the same bank,
@@ -77,6 +81,23 @@ class AdaptDEScaleWeights(AdaptiveMutationStep):
             getattr(resolved_policy, "initialise", None)
         ) or not callable(getattr(resolved_policy, "update", None)):
             raise TypeError("policy must implement initialise() and update().")
+        required = DEScaleMetrics(leaf.kernel.scale_multipliers)
+        existing = next(
+            (
+                metric
+                for metric in leaf.metrics
+                if metric.name == required.name
+            ),
+            None,
+        )
+        if existing is None:
+            leaf.metrics = MutationMetrics((*leaf.metrics, required))
+        elif not isinstance(existing, DEScaleMetrics) or (
+            existing.multipliers != required.multipliers
+        ):
+            raise ValueError(
+                "de_scales must be DEScaleMetrics with the configured scale bank."
+            )
         super().__init__(mutation)
         self.policy = resolved_policy
         self._leaf = leaf

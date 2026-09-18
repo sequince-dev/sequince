@@ -71,6 +71,8 @@ def test_esjd_sampling_rng_and_de_totals(
     backend: str, de: bool, backend_factory: Any
 ) -> None:
     case = backend_factory(backend)
+    from sequince.steps.mutation.metrics.de import DEScaleMetrics
+
     outputs = []
     for metrics in ([], [ESJDMetric()]):
 
@@ -78,7 +80,11 @@ def test_esjd_sampling_rng_and_de_totals(
             return -0.5 * case.xp.sum(x**2, axis=1)
 
         mutation = (
-            DifferentialEvolutionMutation(target, n_steps=4, metrics=metrics)
+            DifferentialEvolutionMutation(
+                target,
+                n_steps=4,
+                metrics=[*metrics, DEScaleMetrics((1.0,))] if metrics else [],
+            )
             if de
             else MetropolisHastingsMutation(
                 target,

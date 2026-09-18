@@ -233,7 +233,7 @@ def test_masked_gaussian_changes_only_active_coordinates(rng) -> None:
     kernel = MaskedGaussianRandomWalk(indices=(1, 3), scale=0.2)
 
     proposal_state = kernel.sample(particles, rng)
-    proposals = proposal_state.particles
+    proposals = proposal_state
 
     assert np.array_equal(proposals[:, (0, 2)], particles[:, (0, 2)])
     assert np.any(proposals[:, (1, 3)] != particles[:, (1, 3)])
@@ -253,7 +253,7 @@ def test_masked_gaussian_uses_block_covariance() -> None:
     )
 
     proposal_state = kernel.sample(particles, RandomGenerator(seed=1234))
-    proposals = proposal_state.particles
+    proposals = proposal_state
 
     empirical = np.cov(proposals[:, (0, 2)], rowvar=False)
     np.testing.assert_allclose(empirical, 0.25 * covariance, rtol=0.04)
@@ -401,6 +401,7 @@ def test_standard_mh_passes_proposal_metadata_to_correction_and_metrics(
 
     class Metric:
         name = "jump_sum"
+        needs_transition = True
 
         def initialize(self, particles, log_weights, context):
             return 0.0
@@ -600,3 +601,27 @@ def test_sample_auxiliary_preserves_rng_and_target_calls(
     assert results[0][0]["sample"] == (4 if complementary else 2)
     assert results[0][0]["random"] == (4 if complementary else 2)
     np.testing.assert_array_equal(results[0][1], results[1][1])
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+@pytest.mark.parametrize(
+    "kernel",
+    [GaussianRandomWalk(0.2), MaskedGaussianRandomWalk((0,), scale=0.2)],
+)
+def test_gaussian_samples_remain_arrays(
+    kernel, backend, backend_factory
+) -> None:
+    from sequince.array_api import get_device
+    from sequince.steps.mutation.kernels import _as_kernel_sample
+
+    case = backend_factory(backend)
+    particles = case.xp.astype(
+        case.particles, case.xp.asarray(np.array(0.0)).dtype
+    )
+    proposal = kernel.sample(particles, case.rng(12))
+    assert not isinstance(proposal, KernelSample)
+    assert proposal.shape == case.particles.shape
+    assert proposal.dtype == particles.dtype
+    assert namespace(proposal) is case.xp
+    assert get_device(proposal) == get_device(case.particles)
+    assert _as_kernel_sample(proposal).particles is proposal

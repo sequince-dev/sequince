@@ -11,6 +11,7 @@ from sequince.steps.mutation import (
     MetropolisHastingsMutation,
     MutationMetricsOutput,
     MutationStepState,
+    MutationTransition,
     RepeatedMutationStep,
     RepeatedMutationStepOutput,
 )
@@ -260,7 +261,15 @@ class CountMetric:
         xp = namespace(particles)
         return {"totals": (xp.asarray(0), xp.asarray(0))}
 
-    def update(self, state, particles, accepted, context):
+    def update(
+        self,
+        state,
+        particles,
+        accepted,
+        context,
+        *,
+        transition: MutationTransition | None = None,
+    ):
         from sequince.array_api import namespace
 
         xp = namespace(particles)
@@ -549,7 +558,15 @@ def test_custom_dataclass_and_array_state_in_jax_loop():
         def initialize(self, particles, log_weights, context):
             return jnp.zeros_like(particles)
 
-        def update(self, state, particles, accepted, context):
+        def update(
+            self,
+            state,
+            particles,
+            accepted,
+            context,
+            *,
+            transition: MutationTransition | None = None,
+        ):
             return state + particles
 
         def result(self, state, context):
@@ -561,7 +578,15 @@ def test_custom_dataclass_and_array_state_in_jax_loop():
         def initialize(self, particles, log_weights, context):
             return UserState(jnp.zeros_like(particles))
 
-        def update(self, state, particles, accepted, context):
+        def update(
+            self,
+            state,
+            particles,
+            accepted,
+            context,
+            *,
+            transition: MutationTransition | None = None,
+        ):
             return replace(state, total=state.total + particles)
 
         def result(self, state, context):
@@ -745,7 +770,15 @@ def test_metric_collection_prepare_preserves_accumulation(context_factory):
         def initialize(self, particles, log_weights, context):
             return {"totals": (0, 0), "segments": 0}
 
-        def update(self, state, particles, accepted, context):
+        def update(
+            self,
+            state,
+            particles,
+            accepted,
+            context,
+            *,
+            transition: MutationTransition | None = None,
+        ):
             return {
                 **super().update(state, particles, accepted, context),
                 "segments": state["segments"],
@@ -773,3 +806,114 @@ def test_metric_collection_prepare_preserves_accumulation(context_factory):
     assert result.values["count"] == (2, 4)
     assert first.states[0]["segments"] == 0
     assert initial.n_steps == 0
+
+
+def test_collection_passes_transition_keyword_explicitly(
+    context_factory,
+) -> None:
+    from sequince.steps.mutation.metrics import MutationMetrics
+
+    class Metric:
+        name = "transition_count"
+        needs_transition = True
+
+        def initialize(self, particles, log_weights, context):
+            return 0
+
+        def update(self, state, particles, accepted, context, *, transition):
+            return state + (transition is not None)
+
+        def result(self, state, context):
+            return state
+
+    particles = np.zeros((2, 1))
+    context = context_factory()
+    metrics = MutationMetrics([Metric()])
+    assert metrics.needs_transition
+    state = metrics.initialize(particles, np.zeros(2), context)
+    state = metrics.update(state, particles, np.ones(2, bool), context)
+    state = metrics.update(
+        state,
+        particles,
+        np.ones(2, bool),
+        context,
+        transition=MutationTransition(particles),
+    )
+    assert metrics.result(state, context).values["transition_count"] == 1
+
+
+@pytest.mark.parametrize("de", [False, True])
+def test_population_metrics_skip_transition_work(
+    de, monkeypatch, context_factory
+) -> None:
+    from orng import RandomGenerator
+
+    from sequince.steps.mutation import (
+        DifferentialEvolutionMutation,
+        ESJDMetric,
+        GaussianRandomWalk,
+        RelativeJumpDistanceMetric,
+        metropolis,
+    )
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Unused transition data was constructed")
+
+    monkeypatch.setattr(metropolis, "MutationTransition", unexpected)
+    for metrics in (
+        [],
+        [ESJDMetric(), RelativeJumpDistanceMetric(reference_radius=1)],
+    ):
+        kwargs = dict(metrics=metrics, n_steps=2)
+
+        def target(x, context):
+            return np.zeros(len(x))
+
+        mutation = (
+            DifferentialEvolutionMutation(target, **kwargs)
+            if de
+            else MetropolisHastingsMutation(
+                target, GaussianRandomWalk(), **kwargs
+            )
+        )
+        assert not mutation.metrics.needs_transition
+        _, _, output = mutation(
+            ParticleState(np.arange(12.0).reshape(6, 2)),
+            context_factory(),
+            RandomGenerator(seed=8),
+        )
+        assert "de_scales" not in output["metrics"].values
+        assert output["metrics"].n_attempted == 12
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_optional_de_diagnostics_preserve_sampling(
+    backend, backend_factory, context_factory
+) -> None:
+    from sequince.array_api import to_numpy
+    from sequince.steps.mutation import DifferentialEvolutionMutation
+    from sequince.steps.mutation.metrics.de import DEScaleMetrics
+
+    case = backend_factory(backend)
+    results = []
+    for metrics in ([], [DEScaleMetrics((0.2, 1.0))]):
+        mutation = DifferentialEvolutionMutation(
+            lambda x, context: -case.xp.sum(x**2, axis=1),
+            scale_multipliers=(0.2, 1.0),
+            gamma_randomization="bilby",
+            metrics=metrics,
+            n_steps=3,
+        )
+        rng = case.rng(37)
+        state, context, output = mutation(case.state(), context_factory(), rng)
+        results.append((state.particles, rng.random((5,)), context, output))
+        assert ("de_scales" in output["metrics"].values) == bool(metrics)
+    for index in (0, 1):
+        np.testing.assert_array_equal(
+            to_numpy(results[0][index]), to_numpy(results[1][index])
+        )
+    assert results[0][2].evaluation_counts == results[1][2].evaluation_counts
+    assert (
+        results[0][3]["acceptance_by_step"]
+        == results[1][3]["acceptance_by_step"]
+    )

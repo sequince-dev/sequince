@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
-from inspect import signature
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from ...._typing import Array
 from ....array_api import asarray, namespace
@@ -25,10 +24,10 @@ class MutationMetric(Protocol):
     state for the next mutation segment, preserving accumulated measurements.
     It must return state without mutating its input; absent means no-op.
 
-    Metrics needing transition data may declare an optional keyword argument
-    ``transition=None`` on ``update``. It receives a MutationTransition with
-    displacement and kernel auxiliary when supplied by the mutation. Existing
-    four-argument updates remain supported.
+    Every update accepts the keyword-only ``transition`` argument. Metrics
+    needing displacement and kernel auxiliary declare ``needs_transition = True``;
+    otherwise mutations may omit this work and pass None. The flag is optional
+    and defaults to False. Auxiliary data remains opaque to the collection.
     """
 
     @property
@@ -43,6 +42,8 @@ class MutationMetric(Protocol):
         particles: Array,
         accepted: Array,
         context: StepContext,
+        *,
+        transition: MutationTransition | None = None,
     ) -> Any: ...
     def result(self, state: Any, context: StepContext) -> Any: ...
 
@@ -58,7 +59,7 @@ class MutationMetrics:
     """
 
     _metrics: tuple[MutationMetric, ...]
-    _uses_transition: tuple[bool, ...]
+    needs_transition: bool
 
     def __init__(self, metrics: Sequence[MutationMetric] = ()) -> None:
         configured = tuple(metrics)
@@ -74,9 +75,9 @@ class MutationMetrics:
         object.__setattr__(self, "_metrics", configured)
         object.__setattr__(
             self,
-            "_uses_transition",
-            tuple(
-                "transition" in signature(metric.update).parameters
+            "needs_transition",
+            any(
+                getattr(metric, "needs_transition", False)
                 for metric in configured
             ),
         )
@@ -138,18 +139,16 @@ class MutationMetrics:
         return replace(
             metric_state,
             states=tuple(
-                # The optional keyword is checked once during configuration.
-                cast(Callable[..., Any], metric.update)(
+                metric.update(
                     state,
                     particles,
                     accepted,
                     context,
-                    **({"transition": transition} if uses_state else {}),
+                    transition=transition,
                 )
-                for metric, state, uses_state in zip(
+                for metric, state in zip(
                     self._metrics,
                     metric_state.states,
-                    self._uses_transition,
                     strict=True,
                 )
             ),

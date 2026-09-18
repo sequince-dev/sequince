@@ -483,64 +483,35 @@ def test_red_blue_requires_complementary_ensemble_kernel() -> None:
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
-def test_nested_auxiliary_combination(backend, backend_factory) -> None:
+def test_sample_only_correction_and_nested_transition_particle_order(
+    backend, backend_factory, context_factory
+) -> None:
     from sequince.array_api import get_device, to_numpy
-    from sequince.steps.mutation.metropolis import _combine_kernel_auxiliary
 
     case = backend_factory(backend)
     xp = case.xp
-    values = case.particles
-    order = xp.asarray([2, 0, 3, 1], device=get_device(values))
-    first = {"nested": (values[:2], {"ids": values[:2, 0]}), "none": None}
-    second = {"nested": (values[2:4], {"ids": values[2:4, 0]}), "none": None}
-    combined = _combine_kernel_auxiliary(first, second, 2, 2, order)
-    leaf = combined["nested"][0]
-    np.testing.assert_array_equal(to_numpy(leaf), to_numpy(values[:4][order]))
-    np.testing.assert_array_equal(
-        to_numpy(combined["nested"][1]["ids"]), to_numpy(values[:4, 0][order])
-    )
-    assert leaf.dtype == values.dtype
-    assert get_device(leaf) == get_device(values)
-    assert combined["none"] is None
-    assert _combine_kernel_auxiliary(None, None, 2, 2, order) is None
 
-
-@pytest.mark.parametrize(
-    "first,second,message",
-    [
-        (None, {}, "structures"),
-        ({"a": np.ones(2)}, {"b": np.ones(2)}, "structures"),
-        ({"a": 1}, {"a": 2}, "particle-aligned"),
-        (np.ones(3), np.ones(2), "particle-aligned"),
-        (np.array(1), np.array(2), "particle-aligned"),
-        (np.ones((2, 1)), np.ones((2, 2)), "particle-aligned"),
-    ],
-)
-def test_invalid_auxiliary_combination(first, second, message) -> None:
-    from sequince.steps.mutation.metropolis import _combine_kernel_auxiliary
-
-    with pytest.raises(ValueError, match=message):
-        _combine_kernel_auxiliary(first, second, 2, 2, np.arange(4))
-
-
-def test_sample_only_correction_and_nested_transition_particle_order(
-    context_factory, rng
-) -> None:
     class Kernel(ComplementaryEnsembleKernel):
         def sample(self, particles, complement, rng):
             return KernelSample(
                 particles + 10,
-                {"nested": (particles[:, 0], {"original": particles})},
+                {
+                    "nested": (particles[:, 0], {"original": particles}),
+                    "none": None,
+                },
             )
 
         def log_transition_ratio_from_sample(
             self, particles, sample, complement
         ):
             assert sample.auxiliary["nested"][1]["original"] is particles
-            return np.where(sample.auxiliary["nested"][0] % 2 == 0, 0, -np.inf)
+            return xp.where(
+                sample.auxiliary["nested"][0] % 2 == 0, 0.0, -xp.inf
+            )
 
     class Metric:
         name = "sweeps"
+        needs_transition = True
 
         def initialize(self, particles, weights, context):
             return 0
@@ -549,11 +520,19 @@ def test_sample_only_correction_and_nested_transition_particle_order(
             self, state, particles, accepted, context, *, transition=None
         ):
             ids, nested = transition.kernel_auxiliary["nested"]
-            np.testing.assert_array_equal(ids, np.arange(7))
-            np.testing.assert_array_equal(nested["original"][:, 0], ids)
-            np.testing.assert_array_equal(accepted, ids % 2 == 0)
+            assert transition.kernel_auxiliary["none"] is None
+            assert nested["original"].dtype == particles.dtype
+            assert get_device(nested["original"]) == get_device(particles)
+            np.testing.assert_array_equal(to_numpy(ids), np.arange(7))
             np.testing.assert_array_equal(
-                transition.displacement[:, 0], np.where(accepted, 10, 0)
+                to_numpy(nested["original"][:, 0]), to_numpy(ids)
+            )
+            np.testing.assert_array_equal(
+                to_numpy(accepted), to_numpy(ids % 2 == 0)
+            )
+            np.testing.assert_array_equal(
+                to_numpy(transition.displacement[:, 0]),
+                np.where(to_numpy(accepted), 10, 0),
             )
             return state + 1
 
@@ -564,6 +543,8 @@ def test_sample_only_correction_and_nested_transition_particle_order(
         _zero_log_prob, Kernel(), metrics=[Metric()]
     )
     _, _, output = mutation(
-        ParticleState(np.arange(7.0)[:, None]), context_factory(), rng
+        ParticleState(xp.arange(7, dtype=case.particles.dtype)[:, None]),
+        context_factory(),
+        case.rng(17),
     )
     assert output["metrics"].values["sweeps"] == 1

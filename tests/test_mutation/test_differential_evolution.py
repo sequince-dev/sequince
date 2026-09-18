@@ -16,6 +16,7 @@ from sequince.steps.mutation.kernels import (
     _sample_donor_indices,
     _sample_effective_gamma,
 )
+from sequince.steps.mutation.metrics.de import DEScaleMetrics
 
 
 class StubRandomGenerator:
@@ -475,6 +476,7 @@ def test_multiscale_backend_metrics(
         lambda x, context: -case.xp.sum(x * x, axis=1),
         kernel,
         n_steps=2,
+        metrics=[DEScaleMetrics(kernel.scale_multipliers)],
     )
     _, _, output = mutation(case.state(), context_factory(), case.rng(21))
     result = output["metrics"].values["de_scales"]
@@ -524,7 +526,10 @@ def test_stage_replacement_through_adaptive_wrapper(context_factory) -> None:
         scale_weights=(1.0, 0.0),
     )
     mutation = RedBlueMetropolisHastingsMutation(
-        lambda x, context: np.zeros(len(x)), kernel, n_steps=3
+        lambda x, context: np.zeros(len(x)),
+        kernel,
+        n_steps=3,
+        metrics=[DEScaleMetrics(kernel.scale_multipliers)],
     )
 
     class ReplaceAfterStage(AdaptiveMutationStep):
@@ -562,7 +567,12 @@ def test_kernel_snapshot_survives_replacement_during_target_call(
         mutation.kernel = replace(kernel, scale_weights=(0.0, 1.0))
         return np.zeros(len(x))
 
-    mutation = RedBlueMetropolisHastingsMutation(target, kernel, n_steps=3)
+    mutation = RedBlueMetropolisHastingsMutation(
+        target,
+        kernel,
+        n_steps=3,
+        metrics=[DEScaleMetrics(kernel.scale_multipliers)],
+    )
     _, _, output = mutation(
         ParticleState(np.arange(12.0).reshape(6, 2)),
         context_factory(),
@@ -630,6 +640,7 @@ def test_metadata_correction_and_jump_metrics(context_factory) -> None:
         kernel,
         store_chains=True,
         n_steps=3,
+        metrics=[DEScaleMetrics(kernel.scale_multipliers)],
     )
     particles = np.arange(40.0).reshape(20, 2)
     _, _, output = mutation(
@@ -707,6 +718,7 @@ def test_scale_metrics_accumulate_across_segments_and_empty_stage(
         gamma_one_probability=0,
         scale_multipliers=(0.5, 1.0),
         scale_weights=(0.0, 1.0),
+        metrics=[DEScaleMetrics((0.5, 1.0))],
     )
     particles = ParticleState(np.arange(12.0).reshape(6, 2))
     context = context_factory()
@@ -758,6 +770,7 @@ def test_transition_state_is_in_particle_order(
 
     class CaptureTransitions:
         name = "transitions"
+        needs_transition = True
 
         def initialize(self, particles, log_weights, context):
             return particles, ()
@@ -792,7 +805,7 @@ def test_transition_state_is_in_particle_order(
             scale_multipliers=(0.2, 1.0), gamma_one_probability=0.3
         ),
         n_steps=4,
-        metrics=[CaptureTransitions()],
+        metrics=[CaptureTransitions(), DEScaleMetrics((0.2, 1.0))],
     )
     final, context, _, runtime = mutation.apply_with_mutation_state(
         initial, context_factory(), case.rng(21), n_steps=4
