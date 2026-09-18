@@ -16,7 +16,9 @@ from sequince.steps import (
     AcceptanceRateRhoPolicy,
     AdaptiveMiniPCNMutation,
     AdaptMutationSteps,
+    ESJDMetric,
     MiniPCNMutation,
+    RelativeJumpDistanceMetric,
     RepeatedMutationStep,
     StepContext,
 )
@@ -143,6 +145,99 @@ def test_geometry_refits_and_rho_updates_only_next_iteration(
     assert wrapper.current_rho == next_rho
     np.testing.assert_allclose(fitted[1].mu, fitted[0].mu + 4)
     assert [float(f.rho) for f in fitted] == [0.5, 0.5, next_rho]
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_diagnostics_preserve_acceptance_and_rho(
+    backend: str, backend_factory: Any
+) -> None:
+    case = backend_factory(backend)
+    # Small proposals round back to their parents at this coordinate scale.
+    single_precision = to_numpy(case.particles).dtype == np.float32
+    center, scale = (1e6, 1) if single_precision else (1e16, 100)
+    particles = case.xp.asarray(
+        center + scale * np.random.default_rng(1).normal(size=(128, 2)),
+        dtype=case.particles.dtype,
+    )
+
+    def target(x: Any) -> Any:
+        return -0.5 * namespace(x).sum(((x - center) / scale) ** 2, axis=-1)
+
+    reference = None
+    for diagnostics, store_chains in (
+        (False, False),
+        (False, True),
+        (True, False),
+        (True, True),
+    ):
+        wrapper = AdaptiveMiniPCNMutation(
+            RepeatedMutationStep(
+                MiniPCNMutation(
+                    target,
+                    step_fn="pcn",
+                    metrics=(ESJDMetric(),) if diagnostics else (),
+                    store_chains=store_chains,
+                ),
+                n_rounds=2,
+                n_steps=4,
+            ),
+            initial_rho=0.001,
+        )
+        actual, _, output = wrapper(
+            ParticleState(particles), StepContext(t=0), case.rng(3)
+        )
+        for round_output in output.round_outputs:
+            np.testing.assert_array_equal(
+                to_numpy(round_output.acceptance_by_step), np.ones(2)
+            )
+        assert float(to_numpy(output.metrics.n_accepted)) == 512
+        assert float(to_numpy(output.metrics.n_attempted)) == 512
+        assert float(to_numpy(output.metrics.n_steps)) == 4
+        assert wrapper.next_rho == pytest.approx(
+            0.001 * np.exp(0.1 * (1 - 0.234))
+        )
+        if reference is None:
+            reference = to_numpy(actual.particles)
+        else:
+            np.testing.assert_array_equal(
+                to_numpy(actual.particles), reference
+            )
+        if diagnostics:
+            assert float(to_numpy(output.metrics.values["esjd"])) == 0
+
+
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_empty_trailing_rounds_preserve_transformed_rjd(
+    adaptive: bool,
+) -> None:
+    particles = 100 + np.random.default_rng(1).normal(size=(128, 2))
+    results = []
+    for rounds in (1, 3):
+        mutation = RepeatedMutationStep(
+            MiniPCNMutation(
+                lambda x: -0.5 * np.sum((x - 100) ** 2, axis=-1),
+                step_fn="pcn",
+                transform=WhiteningTransform(),
+                metrics=(RelativeJumpDistanceMetric(),),
+            ),
+            n_rounds=rounds,
+            n_steps=1,
+        )
+        step = AdaptiveMiniPCNMutation(mutation) if adaptive else mutation
+        results.append(
+            step(
+                ParticleState(particles),
+                StepContext(t=0),
+                RandomGenerator(seed=3),
+            )
+        )
+    expected, expected_context, expected_output = results[0]
+    actual, context, output = results[1]
+    np.testing.assert_array_equal(actual.particles, expected.particles)
+    assert context.evaluation_counts == expected_context.evaluation_counts
+    for name, value in expected_output.metrics.values["rjd"].items():
+        np.testing.assert_allclose(output.metrics.values["rjd"][name], value)
+    assert output.metrics.n_steps == expected_output.metrics.n_steps == 1
 
 
 def test_budget_adapter_checkpoint_resume_and_same_iteration_replay() -> None:

@@ -146,13 +146,34 @@ class MiniPCNMutation(MutationStep):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
+            metric_particles = state.particles
+            if (
+                self.metrics
+                and mutation_state is not None
+                and mutation_state.n_steps > 0
+            ):
+                # Continue diagnostics in the preceding round's coordinates,
+                # without fitting geometry for an empty round.
+                block = self._proposal_block(context)
+                transform = (
+                    block.transform
+                    if block is not None
+                    else self._prepared_transform
+                )
+                if transform is not None:
+                    context = context.with_metadata(
+                        **{PARTICLE_TRANSFORM_KEY: transform}
+                    )
+                metric_particles, _ = self._forward_transform(
+                    state.particles, transform, context, rng=rng
+                )
             mutation_state = (
                 self.metrics.initialize(
-                    state.particles, state.log_weights, context
+                    metric_particles, state.log_weights, context
                 )
                 if mutation_state is None
                 else self.metrics.prepare(
-                    mutation_state, state.particles, context
+                    mutation_state, metric_particles, context
                 )
             )
             chain = (
@@ -418,8 +439,10 @@ class MiniPCNMutation(MutationStep):
                 like=latent_particles,
             )
 
+        if mutation_state is None:
+            raise RuntimeError("MiniPCN mutation metrics are not initialized.")
+        initial_metrics = mutation_state
         if diagnostic_chain is not None:
-            assert mutation_state is not None
 
             def record(carry, positions):
                 mutation_state, previous = carry
@@ -452,20 +475,19 @@ class MiniPCNMutation(MutationStep):
                     carry, _ = record(carry, positions)
                 mutation_state, _ = carry
 
-        # Last-position-only sampling still exposes actual per-step acceptance.
-        if diagnostic_chain is None:
-            assert mutation_state is not None
-            n_particles = latent_particles.shape[0]
-            mutation_state = replace(
-                mutation_state,
-                n_steps=mutation_state.n_steps + n_steps,
-                n_attempted=mutation_state.n_attempted + n_steps * n_particles,
-                n_accepted=mutation_state.n_accepted
-                + xp.asarray(
-                    xp.round(xp.sum(acceptance_by_step) * n_particles),
-                    dtype=mutation_state.n_accepted.dtype,
-                ),
-            )
+        # Accepted proposals can round to unchanged coordinates. Use backend
+        # acceptance for totals, independently of movement-based diagnostics.
+        n_particles = latent_particles.shape[0]
+        mutation_state = replace(
+            mutation_state,
+            n_steps=initial_metrics.n_steps + n_steps,
+            n_attempted=initial_metrics.n_attempted + n_steps * n_particles,
+            n_accepted=initial_metrics.n_accepted
+            + xp.asarray(
+                xp.round(xp.sum(acceptance_by_step) * n_particles),
+                dtype=initial_metrics.n_accepted.dtype,
+            ),
+        )
 
         logger.debug(
             "Iteration %d: MiniPCNMutation completed after %d steps.",
