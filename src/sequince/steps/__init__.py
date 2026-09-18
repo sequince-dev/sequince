@@ -9,9 +9,11 @@ from .control import ConditionalStepOutput, ContinueWhile
 from .log import LoggingStep
 from .meta import MetaSMCStep
 from .mutation import (
+    AcceptanceRateRhoPolicy,
     AdaptDEScaleWeights,
     AdaptiveGaussianProposal,
     AdaptiveMaskedGaussianRandomWalk,
+    AdaptiveMiniPCNMutation,
     AdaptiveMutationStep,
     AdaptMutationSteps,
     BlackJAXMutation,
@@ -30,6 +32,7 @@ from .mutation import (
     MetropolisBlock,
     MetropolisHastingsMutation,
     MiniPCNMutation,
+    MiniPCNRhoPolicy,
     MutateIfResampled,
     MutationMetric,
     MutationMetrics,
@@ -122,6 +125,9 @@ __all__ = [
     "persistent_log_weights",
     "MetaSMCStep",
     "AdaptiveGaussianProposal",
+    "AdaptiveMiniPCNMutation",
+    "AcceptanceRateRhoPolicy",
+    "MiniPCNRhoPolicy",
     "MultinomialResampling",
     "StratifiedResampling",
     "SystematicResampling",
