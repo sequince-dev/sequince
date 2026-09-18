@@ -9,6 +9,7 @@ from .control import ConditionalStepOutput, ContinueWhile
 from .log import LoggingStep
 from .meta import MetaSMCStep
 from .mutation import (
+    AdaptDEScaleWeights,
     AdaptiveGaussianProposal,
     AdaptiveMaskedGaussianRandomWalk,
     AdaptiveMutationStep,
@@ -16,11 +17,15 @@ from .mutation import (
     BlackJAXMutation,
     BlockedMetropolisHastingsMutation,
     ComplementaryEnsembleKernel,
+    DEScaleWeightPolicy,
     DifferentialEvolutionKernel,
     DifferentialEvolutionMutation,
     EmceeMutation,
     ErynMutation,
+    ESJDMetric,
+    ESJDScaleWeightPolicy,
     FixedLengthMutation,
+    KernelSample,
     MaskedGaussianRandomWalk,
     MetropolisBlock,
     MetropolisHastingsMutation,
@@ -31,8 +36,11 @@ from .mutation import (
     MutationMetricsOutput,
     MutationStepPolicy,
     MutationStepState,
+    MutationTransition,
     ProposalRejuvenation,
     RedBlueMetropolisHastingsMutation,
+    RelativeJumpDistanceMetric,
+    RelativeJumpDistancePolicy,
     RepeatedMutationStep,
     RepeatedMutationStepOutput,
 )
@@ -65,6 +73,12 @@ from .weighting import (
 )
 
 __all__ = [
+    "ESJDMetric",
+    "RelativeJumpDistanceMetric",
+    "RelativeJumpDistancePolicy",
+    "AdaptDEScaleWeights",
+    "DEScaleWeightPolicy",
+    "ESJDScaleWeightPolicy",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",
@@ -86,6 +100,7 @@ __all__ = [
     "ErynMutation",
     "FixedLengthMutation",
     "MaskedGaussianRandomWalk",
+    "KernelSample",
     "MetropolisHastingsMutation",
     "RedBlueMetropolisHastingsMutation",
     "MetropolisBlock",
@@ -94,6 +109,7 @@ __all__ = [
     "RepeatedMutationStepOutput",
     "MutationMetricsOutput",
     "MutationStepState",
+    "MutationTransition",
     "MutationMetric",
     "MutationMetrics",
     "MutationStepPolicy",

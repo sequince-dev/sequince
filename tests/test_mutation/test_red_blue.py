@@ -10,6 +10,7 @@ from sequince.state import ParticleState
 from sequince.steps import RedBlueMetropolisHastingsMutation
 from sequince.steps.mutation import (
     ComplementaryEnsembleKernel,
+    KernelSample,
     SymmetricComplementaryEnsembleKernel,
 )
 from sequince.steps.mutation.metropolis import (
@@ -29,7 +30,7 @@ class ShiftKernel(SymmetricComplementaryEnsembleKernel):
 
     def sample(self, active, complementary, rng):
         del complementary, rng
-        return active + self.amount
+        return KernelSample(active + self.amount)
 
 
 class GaussianKernel(SymmetricComplementaryEnsembleKernel):
@@ -38,10 +39,13 @@ class GaussianKernel(SymmetricComplementaryEnsembleKernel):
 
     def sample(self, active, complementary, rng):
         del complementary
-        return active + rng.normal(
-            loc=0.0,
-            scale=self.scale,
-            size=active.shape,
+        return KernelSample(
+            active
+            + rng.normal(
+                loc=0.0,
+                scale=self.scale,
+                size=active.shape,
+            )
         )
 
 
@@ -53,7 +57,7 @@ class AcceptFirstHalfKernel(ComplementaryEnsembleKernel):
     def sample(self, active, complementary, rng):
         del complementary, rng
         self.active_groups.append(np.asarray(active).copy())
-        return active + self.amount
+        return KernelSample(active + self.amount)
 
     def log_transition_ratio(self, current, proposed, complementary):
         del proposed, complementary
@@ -101,7 +105,7 @@ def test_persistent_red_blue_kernel_receives_each_frozen_complement(
             self.calls.append(
                 (np.asarray(active).copy(), np.asarray(complementary).copy())
             )
-            return active + 10.0
+            return KernelSample(active + 10.0)
 
     particles = np.arange(6.0).reshape(6, 1)
     kernel = RecordingKernel()
@@ -127,7 +131,7 @@ def test_persistent_red_blue_kernel_transition_ratio_is_applied(
     class RejectingKernel(ComplementaryEnsembleKernel):
         def sample(self, active, complementary, rng):
             del complementary, rng
-            return active + 10.0
+            return KernelSample(active + 10.0)
 
         def log_transition_ratio(self, current, proposed, complementary):
             del proposed, complementary
@@ -476,3 +480,71 @@ def test_red_blue_requires_complementary_ensemble_kernel() -> None:
             _zero_log_prob,
             object(),  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_sample_only_correction_and_nested_transition_particle_order(
+    backend, backend_factory, context_factory
+) -> None:
+    from sequince.array_api import get_device, to_numpy
+
+    case = backend_factory(backend)
+    xp = case.xp
+
+    class Kernel(ComplementaryEnsembleKernel):
+        def sample(self, particles, complement, rng):
+            return KernelSample(
+                particles + 10,
+                {
+                    "nested": (particles[:, 0], {"original": particles}),
+                    "none": None,
+                },
+            )
+
+        def log_transition_ratio_from_sample(
+            self, particles, sample, complement
+        ):
+            assert sample.auxiliary["nested"][1]["original"] is particles
+            return xp.where(
+                sample.auxiliary["nested"][0] % 2 == 0, 0.0, -xp.inf
+            )
+
+    class Metric:
+        name = "sweeps"
+        needs_transition = True
+
+        def initialize(self, particles, weights, context):
+            return 0
+
+        def update(
+            self, state, particles, accepted, context, *, transition=None
+        ):
+            ids, nested = transition.kernel_auxiliary["nested"]
+            assert transition.kernel_auxiliary["none"] is None
+            assert nested["original"].dtype == particles.dtype
+            assert get_device(nested["original"]) == get_device(particles)
+            np.testing.assert_array_equal(to_numpy(ids), np.arange(7))
+            np.testing.assert_array_equal(
+                to_numpy(nested["original"][:, 0]), to_numpy(ids)
+            )
+            np.testing.assert_array_equal(
+                to_numpy(accepted), to_numpy(ids % 2 == 0)
+            )
+            np.testing.assert_array_equal(
+                to_numpy(transition.displacement[:, 0]),
+                np.where(to_numpy(accepted), 10, 0),
+            )
+            return state + 1
+
+        def result(self, state, context):
+            return state
+
+    mutation = RedBlueMetropolisHastingsMutation(
+        _zero_log_prob, Kernel(), metrics=[Metric()]
+    )
+    _, _, output = mutation(
+        ParticleState(xp.arange(7, dtype=case.particles.dtype)[:, None]),
+        context_factory(),
+        case.rng(17),
+    )
+    assert output["metrics"].values["sweeps"] == 1

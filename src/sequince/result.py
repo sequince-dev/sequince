@@ -65,6 +65,9 @@ def _find_resampling_outputs(output: Any):
     elif isinstance(output, (tuple, list)):
         for value in output:
             yield from _find_resampling_outputs(value)
+    elif isinstance(output, _supported_output_record_types()):
+        for item in fields(output):
+            yield from _find_resampling_outputs(getattr(output, item.name))
     elif hasattr(output, "child_output"):
         yield from _find_resampling_outputs(output.child_output)
 
@@ -101,6 +104,7 @@ def _supported_output_record_types() -> tuple[type[Any], ...]:
     from .steps.mutation.blackjax import BlackJAXOutput
     from .steps.mutation.metrics import MutationMetricsOutput
     from .steps.mutation.minipcn import MiniPCNOutput
+    from .steps.mutation.repeated import RepeatedMutationStepOutput
     from .steps.resampling import ResamplingOutput
 
     return (
@@ -109,6 +113,7 @@ def _supported_output_record_types() -> tuple[type[Any], ...]:
         MiniPCNOutput,
         BlackJAXOutput,
         MutationMetricsOutput,
+        RepeatedMutationStepOutput,
     )
 
 
@@ -394,6 +399,9 @@ class SMCResult:
             elif isinstance(output, (tuple, list)):
                 for value in output:
                     yield from find_nested(value)
+            elif isinstance(output, _supported_output_record_types()):
+                for item in fields(output):
+                    yield from find_nested(getattr(output, item.name))
             elif hasattr(output, "child_output"):
                 yield from find_nested(output.child_output)
 
