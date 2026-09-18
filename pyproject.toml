@@ -14,8 +14,7 @@ dependencies = [
     "scipy>=1.16",
     "matplotlib>=3.5",
     "numpy>=1.25.2",
-    # Proposal-state reuse is not yet available in a tagged release.
-    "minipcn>=0.3.0",
+    "minipcn>=0.3.0a1",
     "array-api-compat>=1.13",
     "array-api-extra>=0.10",
     "optree>=0.19",
