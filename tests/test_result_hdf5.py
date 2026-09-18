@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import h5py
 import numpy as np
@@ -15,6 +16,7 @@ from sequince.steps.control import ConditionalStepOutput
 from sequince.steps.mutation.blackjax import BlackJAXOutput
 from sequince.steps.mutation.metrics import MutationMetricsOutput
 from sequince.steps.mutation.minipcn import MiniPCNOutput
+from sequince.steps.mutation.repeated import RepeatedMutationStepOutput
 from sequince.steps.resampling import ResamplingOutput
 from sequince.steps.transformations import SMCTransformation
 from sequince.target import EvaluationCounts, TargetEvaluation
@@ -107,7 +109,11 @@ def test_target_evaluation_round_trip_and_portable_keys(tmp_path) -> None:
             invalid.encode_for_hdf5()
 
 
-def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.filterwarnings("error:Converting unrecognized result-output")
+def test_smc_result_round_trip_all_fields_and_outputs(
+    tmp_path, strict
+) -> None:
     initial = make_state()
     final = make_state(persistent=True)
     context = StepContext(
@@ -158,6 +164,9 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
             {"nested": [np.array([1, 2]), ("x", None)]},
         ),
     )
+    outputs = (
+        (*outputs[0], RepeatedMutationStepOutput(outputs[0], (None,), None)),
+    )
     expected = SMCResult(
         states=[initial, final],
         context=context,
@@ -166,7 +175,7 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
     )
 
     with h5py.File(tmp_path / "result.h5", "w") as h5_file:
-        expected.save(h5_file)
+        expected.save(h5_file, strict=strict)
     with h5py.File(tmp_path / "result.h5", "r") as h5_file:
         actual = SMCResult.load(h5_file)
 
@@ -201,6 +210,13 @@ def test_smc_result_round_trip_all_fields_and_outputs(tmp_path) -> None:
     }
     np.testing.assert_array_equal(
         actual.outputs[0][3]["nested"][0], np.array([1, 2])
+    )
+    repeated = actual.outputs[0][4]
+    assert repeated["after_round_outputs"] == (None,)
+    assert repeated["metrics"] is None
+    assert (
+        repeated["round_outputs"][2]["metrics"]
+        == actual.outputs[0][2]["metrics"]
     )
     assert actual.log_evidence() == pytest.approx(expected.log_evidence())
 
@@ -449,3 +465,114 @@ def test_mutation_metrics_round_trip_without_warning(tmp_path, strict):
     np.testing.assert_array_equal(
         restored["values"]["distance"], metrics.values["distance"]
     )
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+@pytest.mark.parametrize("repeated", [False, True])
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.filterwarnings("error:Converting unrecognized result-output")
+def test_adaptive_de_output_round_trip(
+    tmp_path: Path, backend: str, repeated: bool, strict: bool, backend_factory
+) -> None:
+    from sequince.array_api import to_numpy
+    from sequince.steps.mutation import (
+        AdaptDEScaleWeights,
+        DifferentialEvolutionMutation,
+        ESJDMetric,
+        RelativeJumpDistanceMetric,
+        RepeatedMutationStep,
+    )
+
+    case = backend_factory(backend)
+    mutation = DifferentialEvolutionMutation(
+        lambda x, context: -case.xp.sum(x**2, axis=1),
+        n_steps=2,
+        scale_multipliers=(0.5, 1.0),
+        metrics=[ESJDMetric(), RelativeJumpDistanceMetric(reference_radius=1)],
+    )
+    block = (
+        RepeatedMutationStep(mutation, n_rounds=2) if repeated else mutation
+    )
+    state, context, output = AdaptDEScaleWeights(block)(
+        case.state(), StepContext(t=0), case.rng(17)
+    )
+    metrics = output.metrics if repeated else output["metrics"]
+    result = SMCResult(
+        [state], context, outputs=((ConditionalStepOutput(True, output),),)
+    )
+    path = tmp_path / "adaptive-de.h5"
+    result.save_to_file(path, strict=strict)
+    restored = SMCResult.load_from_file(path).outputs[0][0]["child_output"]
+    saved_metrics = restored["metrics"]
+    for name in ("n_steps", "n_attempted", "n_accepted"):
+        np.testing.assert_array_equal(
+            saved_metrics[name], to_numpy(getattr(metrics, name))
+        )
+    assert set(saved_metrics["values"]) == {
+        "esjd",
+        "rjd",
+        "de_scales",
+        "de_scale_adaptation",
+    }
+    np.testing.assert_array_equal(
+        saved_metrics["values"]["esjd"], to_numpy(metrics.values["esjd"])
+    )
+    for name in ("rjd", "de_scales", "de_scale_adaptation"):
+        for key, value in metrics.values[name].items():
+            np.testing.assert_array_equal(
+                saved_metrics["values"][name][key], to_numpy(value)
+            )
+    if repeated:
+        assert len(restored["round_outputs"]) == 2
+        assert restored["after_round_outputs"] == (None, None)
+        assert all(
+            round_output["metrics"] is None
+            for round_output in restored["round_outputs"]
+        )
+
+
+@pytest.mark.parametrize("after_round", [False, True])
+def test_result_finds_nested_outputs_before_and_after_save(
+    tmp_path: Path, after_round: bool
+) -> None:
+    from sequince.steps.meta import META_SMC_OUTPUT_KEY
+
+    state = ParticleState(np.arange(4.0)[:, None])
+    context = StepContext(t=0)
+    child = SMCResult([state], context)
+    resampling = ResamplingOutput(4.0, True, np.arange(4), "multinomial")
+    reference = SMCResult([state], context, outputs=((resampling,),))
+    nested = ConditionalStepOutput(
+        True,
+        RepeatedMutationStepOutput(
+            (resampling, {META_SMC_OUTPUT_KEY: child}), (None,), None
+        ),
+    )
+    block = RepeatedMutationStepOutput(
+        (None,) if after_round else (nested,),
+        (nested,) if after_round else (None,),
+        None,
+    )
+    result = SMCResult([state], context, outputs=((block,),))
+    path = tmp_path / "nested.h5"
+    result.save_to_file(path, strict=True)
+    loaded = SMCResult.load_from_file(path)
+    for candidate in (result, loaded):
+        meta = candidate.get_meta_results()
+        assert meta is not None
+        assert len(meta.results) == 1
+        np.testing.assert_array_equal(
+            meta.results[0].final_state.particles, state.particles
+        )
+        assert candidate.log_evidence_variance(
+            method="lee-whiteley"
+        ) == pytest.approx(
+            reference.log_evidence_variance(method="lee-whiteley")
+        )
+        assert candidate.log_evidence_variance(
+            method="fixed-lag-lee-whiteley", lag=1
+        ) == pytest.approx(
+            reference.log_evidence_variance(
+                method="fixed-lag-lee-whiteley", lag=1
+            )
+        )
