@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from sequince.callbacks import (
     IntermediateParticlesPlot,
@@ -14,9 +16,17 @@ from sequince.callbacks import (
     TransformedMutationChainPlot,
 )
 from sequince.result import SMCResult
+from sequince.smc import SequentialMonteCarlo
 from sequince.state import ParticleState
 from sequince.steps.context import StepContext
 from sequince.steps.control import ConditionalStepOutput
+from sequince.steps.mutation import (
+    AdaptMutationSteps,
+    CallableMutationKernel,
+    MetropolisHastingsMutation,
+    RepeatedMutationStep,
+)
+from sequince.transforms import AffineTransform
 
 
 def test_smc_callback_every(monkeypatch) -> None:
@@ -204,6 +214,79 @@ def test_transformed_mutation_chain_plot_skips_without_transform(
     TransformedMutationChainPlot(outdir=tmp_path)(state, context, result)
 
     plot_chains.assert_not_called()
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("step_index", [None, 0])
+def test_chain_plots_with_adaptive_repeated_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    nested: bool,
+    step_index: int | None,
+) -> None:
+    from sequince.plot import plot_chains
+
+    def mutation() -> MetropolisHastingsMutation:
+        return MetropolisHastingsMutation(
+            lambda particles, context: -0.5 * np.sum(particles**2, axis=-1),
+            CallableMutationKernel(
+                lambda particles, rng: -particles, symmetric=True
+            ),
+            store_chains=True,
+        )
+
+    if nested:
+        repeated = RepeatedMutationStep(
+            RepeatedMutationStep(
+                mutation(), n_rounds=2, after_round=mutation()
+            ),
+            n_rounds=2,
+            after_round=mutation(),
+        )
+        budget = 6
+        # Each outer round runs inner lengths 2, 1, 1, 1, then its own
+        # one-step after_round mutation.
+        lengths = [2, 1, 1, 1, 1] * 2
+    else:
+        repeated = RepeatedMutationStep(mutation(), n_rounds=3)
+        budget = 5
+        lengths = [2, 2, 1]
+    adaptive = AdaptMutationSteps(
+        repeated, initial_steps=budget, min_steps=0, max_steps=10
+    )
+    state = ParticleState(np.array([[-2.0, 1.0], [1.0, 3.0], [3.0, -1.0]]))
+    transform = AffineTransform().fit(state.particles)
+    plotted = MagicMock(wraps=plot_chains)
+    monkeypatch.setattr("sequince.plot.plot_chains", plotted)
+    callbacks = [
+        MutationChainPlot(outdir=str(tmp_path), step_index=step_index),
+        TransformedMutationChainPlot(
+            outdir=str(tmp_path), step_index=step_index
+        ),
+    ]
+
+    result = SequentialMonteCarlo([adaptive], callbacks=callbacks).run(
+        initial_state=state,
+        num_steps=1,
+        rng=123,
+        metadata={"particle_transform": transform},
+    )
+
+    assert plotted.call_count == 2
+    expected = np.stack(
+        [(-1.0) ** (i + 1) * state.particles for i in range(sum(lengths))]
+    )
+    np.testing.assert_array_equal(plotted.call_args_list[0].args[0], expected)
+    transformed, _, _ = transform.forward(
+        expected.reshape(-1, 2), context=result.context
+    )
+    np.testing.assert_allclose(
+        plotted.call_args_list[1].args[0], transformed.reshape(expected.shape)
+    )
+    for call in plotted.call_args_list:
+        assert call.kwargs["split_indices"] == np.cumsum(lengths[:-1]).tolist()
+    for name in ("chain_0.png", "transformed_chain_0.png"):
+        assert (tmp_path / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_trace_plot(tmp_path) -> None:

@@ -5,7 +5,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .steps.mutation import PARTICLE_TRANSFORM_KEY
+from .steps.mutation import PARTICLE_TRANSFORM_KEY, RepeatedMutationStepOutput
 
 if TYPE_CHECKING:
     from .result import SMCResult
@@ -457,6 +457,16 @@ class MutationChainPlot(PlotCallback):
 
     def _find_chains(self, output: Any) -> Iterator[Any]:
         """Yield chains from nested step outputs in execution order."""
+        if isinstance(output, RepeatedMutationStepOutput):
+            # Post-round steps execute between mutation rounds and may also
+            # contain chains, including nested repeated blocks.
+            for round_output, after_round_output in zip(
+                output.round_outputs, output.after_round_outputs, strict=True
+            ):
+                yield from self._find_chains(round_output)
+                yield from self._find_chains(after_round_output)
+            return
+
         if isinstance(output, Mapping):
             chain = output.get(self.output_key)
             if chain is not None:
