@@ -2,12 +2,15 @@
 
 from ..base import FixedLengthMutation
 from .adaptive import (
+    AcceptanceRateRhoPolicy,
     AdaptDEScaleWeights,
     AdaptiveGaussianProposal,
+    AdaptiveMiniPCNMutation,
     AdaptiveMutationStep,
     AdaptMutationSteps,
     DEScaleWeightPolicy,
     ESJDScaleWeightPolicy,
+    MiniPCNRhoPolicy,
     MutationStepPolicy,
     RelativeJumpDistancePolicy,
 )
@@ -70,6 +73,9 @@ __all__ = [
     "DEScaleWeightPolicy",
     "ESJDScaleWeightPolicy",
     "AdaptiveGaussianProposal",
+    "AdaptiveMiniPCNMutation",
+    "AcceptanceRateRhoPolicy",
+    "MiniPCNRhoPolicy",
     "AdaptiveMutationStep",
     "AdaptMutationSteps",
     "AdaptiveMaskedGaussianRandomWalk",

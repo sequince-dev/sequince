@@ -13,6 +13,7 @@ from ...utils.pytrees import pytree_dataclass
 from ..base import validate_n_steps
 from ..context import StepContext
 from .base import (
+    PARTICLE_TRANSFORM_KEY,
     MutationStep,
     TransformRefit,
 )
@@ -23,12 +24,25 @@ from .metrics import (
 from .metrics.base import with_metrics
 
 if TYPE_CHECKING:
+    from minipcn.step import StepState
     from orng import RandomGenerator
 
     from ...state import ParticleState
     from ...target import Target
 
 logger = logging.getLogger(__name__)
+
+_MINIPCN_BLOCK_KEY = "_minipcn_proposal_block"
+
+
+@dataclass(frozen=True)
+class _MiniPCNBlock:
+    """Proposal shared through context for one eager, fixed mutation block."""
+
+    mutation: MiniPCNMutation
+    rho: float
+    proposal: StepState | None = None
+    transform: ParticleTransform | None = None
 
 
 @pytree_dataclass(
@@ -73,6 +87,10 @@ class MiniPCNMutation(MutationStep):
 
     By default uses the 'tpcn' step function and targets an acceptance rate of 0.234.
     Also sets 'verbose' to False by default.
+
+    Wrap with ``AdaptiveMiniPCNMutation`` for tuning between fixed mutation
+    blocks. The backend ``adaptive=True`` option instead tunes rho inside
+    sampling and cannot be combined with that wrapper.
     """
 
     def __init__(
@@ -182,6 +200,7 @@ class MiniPCNMutation(MutationStep):
             verbose=self._verbose,
             rng=rng,
             return_last_only=return_last_only,
+            **self._proposal_kwargs(context),
         )
 
         acceptance_by_step = asarray(
@@ -272,9 +291,26 @@ class MiniPCNMutation(MutationStep):
         from minipcn import Sampler
 
         xp = namespace(state.particles)
-        transform, context = self._prepare_transform(
-            state.particles, context, rng=rng
-        )
+        block = self._proposal_block(context)
+        if block is None or block.proposal is None:
+            if block is not None:
+                weights = state.log_weights
+                if not bool(xp.all(xp.isfinite(weights))) or not bool(
+                    xp.all(weights == weights[0])
+                ):
+                    raise ValueError(
+                        "AdaptiveMiniPCNMutation requires equal, finite "
+                        "particle weights. Resample before mutation."
+                    )
+            transform, context = self._prepare_transform(
+                state.particles, context, rng=rng
+            )
+        else:
+            transform = block.transform
+            if transform is not None:
+                context = context.with_metadata(
+                    **{PARTICLE_TRANSFORM_KEY: transform}
+                )
         latent_particles, transform_auxiliary = self._forward_transform(
             state.particles, transform, context, rng=rng
         )
@@ -296,8 +332,19 @@ class MiniPCNMutation(MutationStep):
             step_fn=self._step_fn,
             dims=dims,
             xp=xp,
-            **self._kwargs,
+            **(
+                self._kwargs
+                if block is None
+                else {**self._kwargs, "adaptive": False, "rho": block.rho}
+            ),
         )
+        if block is not None and block.proposal is None:
+            block = replace(
+                block,
+                proposal=sampler.init_step_state(latent_particles),
+                transform=transform,
+            )
+            context = context.with_metadata(**{_MINIPCN_BLOCK_KEY: block})
         return (
             sampler,
             latent_particles,
@@ -305,6 +352,16 @@ class MiniPCNMutation(MutationStep):
             transform_auxiliary,
             context,
         )
+
+    def _proposal_block(self, context: StepContext) -> _MiniPCNBlock | None:
+        block = context.metadata.get(_MINIPCN_BLOCK_KEY)
+        if isinstance(block, _MiniPCNBlock) and block.mutation is self:
+            return block
+        return None
+
+    def _proposal_kwargs(self, context: StepContext) -> dict[str, Any]:
+        block = self._proposal_block(context)
+        return {} if block is None else {"step_state": block.proposal}
 
     def _complete_mutation(
         self,
