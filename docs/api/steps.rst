@@ -17,14 +17,6 @@ Weighting strategies
    :undoc-members:
    :show-inheritance:
 
-Likelihood constraints and shell evidence
------------------------------------------
-
-.. automodule:: sequince.steps.constraints
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Resampling
 ----------
 
