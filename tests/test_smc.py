@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
+from sequince.checkpoint import CheckpointWriter, SMCCheckpoint
 from sequince.exceptions import DegenerateWeightsError
 from sequince.smc import SequentialMonteCarlo, SMCConfig
 from sequince.state import ParticleState
@@ -37,6 +38,35 @@ def test_runner_config_is_a_read_only_snapshot() -> None:
     with pytest.raises(FrozenInstanceError):
         setattr(config, "auto_normalize", True)
     assert not smc.config.auto_normalize
+
+
+def test_from_config_preserves_settings_and_component_identity() -> None:
+    class CustomRunner(SequentialMonteCarlo):
+        pass
+
+    class Writer(CheckpointWriter):
+        def _write(self, checkpoint: SMCCheckpoint) -> None:
+            pass
+
+    def callback(*args: object) -> None:
+        pass
+
+    step = SMCStep()
+    writer = Writer()
+    original = SequentialMonteCarlo(
+        [step],
+        callbacks=[callback],
+        checkpoint_writers=[writer],
+        auto_normalize=False,
+    )
+    for runner_type in (SequentialMonteCarlo, CustomRunner):
+        reconstructed = runner_type.from_config(original.config)
+        assert reconstructed is not original
+        assert type(reconstructed) is runner_type
+        assert reconstructed.config == original.config
+        assert reconstructed.config.steps[0] is step
+        assert reconstructed.config.callbacks[0] is callback
+        assert reconstructed.config.checkpoint_writers[0] is writer
 
 
 def test_functional_configuration_is_validated_before_initialization() -> None:

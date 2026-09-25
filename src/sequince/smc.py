@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Callable, TypeAlias
+from typing import TYPE_CHECKING, Any, Callable, Self, TypeAlias
 
 from .array_api import namespace
 from .checkpoint import (
@@ -136,6 +136,33 @@ class SequentialMonteCarlo:
             callbacks=tuple(self._callbacks),
             checkpoint_writers=tuple(self._checkpoint_writers),
             auto_normalize=self._auto_normalize,
+        )
+
+    @classmethod
+    def from_config(cls, config: SMCConfig) -> Self:
+        """Construct a runner from a configuration snapshot.
+
+        Parameters
+        ----------
+        config : SMCConfig
+            Runner settings, such as those returned by ``runner.config``.
+
+        Returns
+        -------
+        SequentialMonteCarlo
+            A new runner constructed through ``cls`` with the supplied settings.
+
+        Notes
+        -----
+        Steps, callbacks, and checkpoint writers are shared by reference.
+        This does not clone their mutable state or restore a checkpoint.
+        Subclasses must accept the same constructor arguments.
+        """
+        return cls(
+            config.steps,
+            callbacks=config.callbacks,
+            checkpoint_writers=config.checkpoint_writers,
+            auto_normalize=config.auto_normalize,
         )
 
     def state_dict(self) -> dict[str, Any]:

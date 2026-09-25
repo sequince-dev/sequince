@@ -12,6 +12,11 @@ Top-level API
 Sequential Monte Carlo driver
 -----------------------------
 
+Reconstruct a runner with ``SequentialMonteCarlo.from_config(smc.config)``.
+This preserves runner settings and shares the referenced steps, callbacks, and
+checkpoint writers. It does not clone mutable component state or resume a run;
+use the checkpoint APIs to restore runtime state.
+
 .. automodule:: sequince.smc
    :members:
    :undoc-members:
