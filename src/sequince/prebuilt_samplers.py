@@ -3,8 +3,11 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping
+from collections.abc import Sequence as SequenceABC
 from numbers import Integral
 from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
+
+import numpy as np
 
 from ._typing import MetaData, MutationStrategy
 from .checkpoint import CheckpointWriter
@@ -23,6 +26,17 @@ from .steps import (
     SystematicResampling,
 )
 from .steps.base import SMCStep, StepContext
+from .steps.constraints import (
+    FixedLikelihoodThresholdSchedule,
+    LikelihoodConstrainedPrior,
+    LikelihoodThresholdSelection,
+    LikelihoodThresholdWeighting,
+    LogPriorMassStoppingCriterion,
+    NestedSamplingRuntime,
+    QuantileLikelihoodThresholdSchedule,
+    ShellEvidenceStep,
+    WorstParticleLikelihoodThresholdSchedule,
+)
 from .steps.mutation import MutateIfResampled, get_mutation_step
 from .steps.resampling import ResamplingStep
 from .steps.weighting import TargetESSRatio
@@ -34,7 +48,11 @@ if TYPE_CHECKING:
 ResamplingStrategy = Literal["systematic", "stratified", "multinomial"]
 logger = logging.getLogger(__name__)
 
-__all__ = ["make_persistent_bayesian_smc", "make_standard_bayesian_smc"]
+__all__ = [
+    "make_persistent_bayesian_smc",
+    "make_standard_bayesian_smc",
+    "make_nested_sampling_smc",
+]
 
 
 def make_standard_bayesian_smc(
@@ -498,3 +516,233 @@ def make_persistent_bayesian_smc(
         auto_normalize=auto_normalize,
     )
     return runner, posterior, {}
+
+
+def make_nested_sampling_smc(
+    log_prior: Callable[..., Any],
+    log_likelihood: Callable[..., Any],
+    *,
+    threshold_schedule: (
+        Literal["worst"] | Sequence[float] | Callable[..., float] | None
+    ) = None,
+    threshold_quantile: float | None = None,
+    threshold_inclusive: bool = False,
+    evidence_tolerance: float | None = 1e-3,
+    log_likelihood_upper_bound: float | None = None,
+    store_shell_particles: bool = True,
+    min_log_prior_volume: float | None = None,
+    resampling: ResamplingStrategy = "systematic",
+    resampling_ess_threshold: float | None = None,
+    always_resample: bool = True,
+    resampling_kwargs: Dict[str, Any] | None = None,
+    mutation: MutationStrategy | SMCStep | None = "minipcn",
+    mutation_n_steps: int = 5,
+    mutation_kwargs: Dict[str, Any] | None = None,
+    particle_transform: ParticleTransform | str | None = "affine",
+    particle_transform_kwargs: Dict[str, Any] | None = None,
+    logging_frequency: int = 1,
+    auto_normalize: bool = False,
+    callbacks: Sequence[
+        Callable[[ParticleState, StepContext, SMCResult], None]
+    ]
+    | None = None,
+    checkpoint_writers: Sequence[CheckpointWriter] | None = None,
+) -> Tuple[SequentialMonteCarlo, LikelihoodConstrainedPrior, MetaData]:
+    """Build an eager nested-sampling SMC pipeline for a normalized prior.
+
+    Parameters
+    ----------
+    log_prior, log_likelihood : callable
+        Static vectorized log densities. Initial particles must represent the
+        normalized prior; arbitrary importance proposals are not supported.
+    threshold_schedule : {"worst"}, sequence of float, callable, or None
+        Log-likelihood thresholds. None uses a weighted median. Sequences
+        finalize on exhaustion; callables may raise StopIteration. Callables
+        accept values, optionally context or state, or (values, state, context).
+    threshold_quantile : float or None
+        Fraction to discard, in [0, 1). Overrides the default median; cannot
+        be combined with an explicit threshold_schedule.
+    threshold_inclusive : bool
+        Retain particles on the threshold boundary. Adaptive schedules require
+        a strict constraint to guarantee progress.
+    evidence_tolerance : float or None
+        Stop when the estimated remaining evidence is this fraction of the
+        accumulated evidence. This is not an upper bound. Set to None to use
+        only fixed-schedule or prior-volume stopping.
+    log_likelihood_upper_bound : float or None
+        Known global upper bound on log likelihood. If supplied, evidence
+        stopping uses X * Lmax rather than X * mean(L), protecting against
+        unseen higher-likelihood regions. X remains a Monte Carlo estimate.
+    min_log_prior_volume : float or None
+        Optional negative log prior-volume stopping limit.
+    store_shell_particles : bool
+        Retain discarded particles for posterior reconstruction. Disable for
+        evidence-only runs with lower memory use.
+    checkpoint_writers : sequence or None
+        Writers used by the standard SMC checkpoint machinery.
+
+    Returns
+    -------
+    sampler : SequentialMonteCarlo
+        Runner using the current step/context APIs. Wrap its result in
+        NestedSamplingSMCResult for evidence and posterior samples. Reaching
+        run(num_steps=...) suspends the run without integrating its live tail;
+        resume it to completion before requesting posterior samples.
+    target : LikelihoodConstrainedPrior
+        Mutation target with cached prior and likelihood components.
+    metadata : dict
+        Initial runtime bookkeeping.
+
+    Notes
+    -----
+    Other mutation, transformation, resampling, and callback options follow
+    make_standard_bayesian_smc. auto_normalize must be False. State normalizing
+    constants track constrained-prior mass, not Bayesian evidence. The latter
+    is accumulated separately over disjoint shells, including the live tail.
+    Adaptive thresholds do not inherit fixed-schedule unbiasedness guarantees.
+    Likelihood ties are discarded together; sampled plateaus with no survivors
+    are integrated as a terminal shell. This cannot detect unobserved modes.
+    """
+
+    if auto_normalize:
+        raise ValueError(
+            "make_nested_sampling_smc requires auto_normalize=False because "
+            "the constraint weighting step handles normalization explicitly."
+        )
+
+    if threshold_quantile is not None and threshold_schedule is not None:
+        raise ValueError(
+            "Specify threshold_quantile or threshold_schedule, not both."
+        )
+    if threshold_quantile is not None:
+        resolved_threshold_schedule: Callable[..., float] = (
+            QuantileLikelihoodThresholdSchedule(threshold_quantile)
+        )
+    elif threshold_schedule is None:
+        resolved_threshold_schedule = QuantileLikelihoodThresholdSchedule()
+    elif isinstance(threshold_schedule, str):
+        if threshold_schedule == "worst":
+            resolved_threshold_schedule = (
+                WorstParticleLikelihoodThresholdSchedule()
+            )
+        else:
+            raise ValueError("threshold_schedule string must be 'worst'.")
+    elif isinstance(threshold_schedule, np.ndarray) or isinstance(
+        threshold_schedule,
+        SequenceABC,
+    ):
+        resolved_threshold_schedule = FixedLikelihoodThresholdSchedule(
+            tuple(float(value) for value in threshold_schedule)
+        )
+    elif callable(threshold_schedule):
+        resolved_threshold_schedule = threshold_schedule
+    else:
+        raise ValueError(
+            "threshold_schedule must be 'worst', a sequence of thresholds, "
+            "or a callable."
+        )
+
+    constrained_prior = LikelihoodConstrainedPrior(
+        log_prior,
+        log_likelihood,
+        inclusive=threshold_inclusive,
+    )
+    if threshold_inclusive and isinstance(
+        resolved_threshold_schedule, QuantileLikelihoodThresholdSchedule
+    ):
+        raise ValueError(
+            "Adaptive schedules require threshold_inclusive=False."
+        )
+    threshold_step = LikelihoodThresholdSelection(
+        constrained_prior,
+        threshold_schedule=resolved_threshold_schedule,
+        evidence_tolerance=evidence_tolerance,
+        log_likelihood_upper_bound=log_likelihood_upper_bound,
+    )
+    shell_evidence_step = ShellEvidenceStep(
+        constrained_prior, store_shell_particles=store_shell_particles
+    )
+    weighting_step = LikelihoodThresholdWeighting(constrained_prior)
+
+    resampling_map = {
+        "systematic": SystematicResampling,
+        "stratified": StratifiedResampling,
+        "multinomial": MultinomialResampling,
+    }
+    try:
+        resampling_cls = resampling_map[resampling]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown resampling strategy '{resampling}'."
+        ) from exc
+    resampling_step = resampling_cls(
+        ess_threshold=resampling_ess_threshold,
+        always_resample=always_resample,
+        **resampling_kwargs or {},
+    )
+
+    if isinstance(particle_transform, str):
+        particle_transform = get_prebuilt_transform(
+            particle_transform, **(particle_transform_kwargs or {})
+        )
+    elif particle_transform is not None and not isinstance(
+        particle_transform, ParticleTransform
+    ):
+        raise ValueError(
+            "particle_transform must be a string, ParticleTransform, or None."
+        )
+    mutation_step = get_mutation_step(
+        mutation,
+        target=constrained_prior,
+        transform=particle_transform,
+        mutation_n_steps=mutation_n_steps,
+        mutation_kwargs=mutation_kwargs,
+    )
+
+    steps: list[SMCStep] = [
+        threshold_step,
+        shell_evidence_step,
+        weighting_step,
+    ]
+    if min_log_prior_volume is not None:
+        steps.append(
+            LogPriorMassStoppingCriterion(
+                min_log_prior_volume,
+                constrained_prior,
+                store_shell_particles=store_shell_particles,
+            )
+        )
+    steps.append(resampling_step)
+    if mutation_step is not None:
+        steps.append(mutation_step)
+
+    if logging_frequency > 0:
+
+        def logging_fn(state: ParticleState, context: StepContext) -> str:
+            runtime = NestedSamplingRuntime.from_metadata(context.metadata)
+            threshold = runtime.threshold
+            log_x = runtime.log_prior_volume
+            log_z = runtime.log_nested_evidence
+            n_surviving = runtime.n_surviving
+            n_particles = state.particles.shape[0]
+            return (
+                f"NS-SMC iteration {context.t}: "
+                f"Threshold={threshold:.3g}, "
+                f"Log X={log_x:.3g}, "
+                f"Log Z={log_z:.3g}, "
+                f"Survivors={n_surviving}/{n_particles}, "
+                f"ESS={context.metadata.get('ess', math.nan):.1f}"
+            )
+
+        steps.append(
+            LoggingStep(str_fn=logging_fn, frequency=logging_frequency)
+        )
+
+    sampler = SequentialMonteCarlo(
+        steps=steps,
+        callbacks=callbacks,
+        auto_normalize=False,
+        checkpoint_writers=checkpoint_writers,
+    )
+    metadata = NestedSamplingRuntime.metadata_defaults()
+    return sampler, constrained_prior, metadata
