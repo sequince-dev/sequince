@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import inspect
 import math
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, ClassVar
 
 import numpy as np
@@ -28,56 +27,48 @@ from ..target import (
 from .base import SMCStep
 from .context import StepContext
 
-LikelihoodThresholdSchedule = Callable[..., float]
+LikelihoodThresholdSchedule = Callable[
+    [Array, ParticleState, StepContext], float
+]
 
 
-@dataclass
-class NestedSamplingRuntime:
-    """NS-SMC bookkeeping, stored as a portable mapping in metadata."""
+def _nested_sampling_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy execution metadata, supplying defaults for standalone steps."""
+    values = metadata.get("nested_sampling", {})
+    if not isinstance(values, Mapping):
+        raise TypeError("nested_sampling metadata must be a mapping.")
+    return {
+        "threshold": -math.inf,
+        "next_threshold": None,
+        "is_terminal": False,
+        "log_prior_volume_increment": 0.0,
+        "log_prior_volume": 0.0,
+        "log_nested_evidence": -math.inf,
+        "n_surviving": 0,
+        "survival_fraction": 1.0,
+        "stop_reason": None,
+        **values,
+    }
 
-    metadata_key: ClassVar[str] = "nested_sampling"
-    threshold: float = -math.inf
-    next_threshold: float | None = None
-    is_terminal: bool = False
-    log_prior_volume_increment: float = 0.0
-    log_prior_volume: float = 0.0
-    log_nested_evidence_increment: float = -math.inf
-    log_nested_evidence: float = -math.inf
-    log_shell_expectation: float = -math.inf
-    n_surviving: int = 0
-    survival_fraction: float = 1.0
-    stop_reason: str | None = None
 
-    @classmethod
-    def from_metadata(
-        cls, *mappings: Mapping[str, Any]
-    ) -> NestedSamplingRuntime:
-        runtime = cls()
-        for mapping in mappings:
-            value = mapping.get(cls.metadata_key)
-            if isinstance(value, cls):
-                runtime = replace(value)
-            elif isinstance(value, Mapping):
-                runtime = cls(**value)
-            elif value is not None:
-                raise TypeError("nested_sampling metadata must be a mapping.")
-        return runtime
+def _record_nested_sampling_snapshot(
+    state: ParticleState, context: StepContext
+) -> ParticleState:
+    """Record a completed level independently of execution metadata.
 
-    @classmethod
-    def metadata_defaults(cls) -> dict[str, Any]:
-        return {cls.metadata_key: asdict(cls())}
-
-    def update(
-        self, state: ParticleState, context: StepContext
-    ) -> tuple[ParticleState, StepContext]:
-        metadata = {**state.metadata, self.metadata_key: asdict(self)}
-        return state.with_updates(metadata=metadata), context.with_metadata(
-            **{self.metadata_key: asdict(self)}
-        )
+    Weighting records nonterminal levels before mutation; terminal shell
+    integration records the final level before stopping.
+    """
+    return state.with_updates(
+        metadata={
+            **state.metadata,
+            "nested_sampling": dict(context.metadata["nested_sampling"]),
+        }
+    )
 
 
 @dataclass(frozen=True)
-class NestedSamplingLevelRecord:
+class NestedSamplingLevel:
     """Diagnostics for a shell; prior volume is measured before discarding it."""
 
     output_key: ClassVar[str] = "nested_sampling_level"
@@ -185,19 +176,12 @@ class LikelihoodConstrainedPrior(Target):
         evaluation = self.prepare_evaluation(
             particles, context, evaluation=evaluation
         )
-        threshold = NestedSamplingRuntime.from_metadata(
-            context.metadata
-        ).threshold
+        runtime = context.metadata.get("nested_sampling", {})
+        threshold = runtime.get("threshold", -math.inf)
         values = evaluation["log_likelihood"]
         mask = values >= threshold if self.inclusive else values > threshold
         # The initial target is the full prior, including zero-likelihood mass.
-        if (
-            threshold == -math.inf
-            and NestedSamplingRuntime.from_metadata(
-                context.metadata
-            ).next_threshold
-            is None
-        ):
+        if threshold == -math.inf and runtime.get("next_threshold") is None:
             mask = namespace(values).ones_like(values, dtype=bool)
         result = namespace(values).where(
             mask, evaluation["log_prior"], -math.inf
@@ -231,35 +215,6 @@ def _normalized_weights(state: ParticleState) -> Array:
     weights, norm = normalize_log_weights(state.log_weights, xp=xp)
     _validate_log_normalizer(norm, xp=xp)
     return weights
-
-
-def _call_threshold_schedule(
-    schedule: LikelihoodThresholdSchedule,
-    values: Array,
-    state: ParticleState,
-    context: StepContext,
-) -> float:
-    """Resolve arity before calling, preserving exceptions raised by the user."""
-    signature = inspect.signature(schedule)
-    positional = [
-        p
-        for p in signature.parameters.values()
-        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-    ]
-    second = (
-        state
-        if len(positional) > 1 and positional[1].name == "state"
-        else context
-    )
-    for args in ((values, state, context), (values, second), (values,)):
-        try:
-            signature.bind(*args)
-        except TypeError:
-            continue
-        return float(schedule(*args))
-    raise TypeError(
-        "threshold_schedule must accept values and optionally state/context."
-    )
 
 
 @dataclass(frozen=True)
@@ -352,6 +307,10 @@ class _ConstraintStep(SMCStep):
 class LikelihoodThresholdSelection(_ConstraintStep):
     """Select a threshold or finalize using an estimated remaining-evidence ratio.
 
+    Schedules must implement ``schedule(log_likelihoods, state, context)`` and
+    return a float. ``StopIteration`` finalizes the remaining shell; other
+    exceptions propagate to the caller.
+
     ``evidence_tolerance`` compares the current estimate X * E[L] with the
     accumulated evidence. It is a stopping heuristic, not a rigorous bound on
     unobserved modes. Supply a known log_likelihood_upper_bound to use X * Lmax
@@ -382,10 +341,8 @@ class LikelihoodThresholdSelection(_ConstraintStep):
     def apply(
         self, state: ParticleState, context: StepContext, rng: RandomGenerator
     ) -> tuple[ParticleState, StepContext, None]:
-        runtime = NestedSamplingRuntime.from_metadata(
-            state.metadata, context.metadata
-        )
-        if runtime.is_terminal:
+        runtime = _nested_sampling_metadata(context.metadata)
+        if runtime["is_terminal"]:
             raise ValueError("Cannot continue a finalized NS-SMC run.")
         state, context, values = _prepare_likelihood(
             self.target, state, context
@@ -398,30 +355,29 @@ class LikelihoodThresholdSelection(_ConstraintStep):
                     "Observed likelihood exceeds log_likelihood_upper_bound."
                 )
             remaining = (
-                runtime.log_prior_volume + self.log_likelihood_upper_bound
+                runtime["log_prior_volume"] + self.log_likelihood_upper_bound
             )
         else:
-            remaining = runtime.log_prior_volume + float(
+            remaining = runtime["log_prior_volume"] + float(
                 logsumexp(weights + values)
             )
         terminal = (
             self.evidence_tolerance is not None
-            and math.isfinite(runtime.log_nested_evidence)
+            and math.isfinite(runtime["log_nested_evidence"])
             and remaining
-            <= runtime.log_nested_evidence + math.log(self.evidence_tolerance)
+            <= runtime["log_nested_evidence"]
+            + math.log(self.evidence_tolerance)
         )
         reason = "evidence_tolerance" if terminal else None
         if terminal:
             threshold = math.inf
         else:
             try:
-                threshold = _call_threshold_schedule(
-                    self.schedule, values, state, context
-                )
+                threshold = float(self.schedule(values, state, context))
             except StopIteration:
                 threshold = math.inf
                 reason = "schedule_exhausted"
-        if math.isnan(threshold) or threshold < runtime.threshold:
+        if math.isnan(threshold) or threshold < runtime["threshold"]:
             raise ValueError(
                 "Likelihood thresholds must be nondecreasing and not NaN."
             )
@@ -437,8 +393,8 @@ class LikelihoodThresholdSelection(_ConstraintStep):
             terminal = True
             reason = reason or "no_survivors"
         elif (
-            threshold == runtime.threshold
-            and runtime.next_threshold is not None
+            threshold == runtime["threshold"]
+            and runtime["next_threshold"] is not None
         ):
             raise ValueError(
                 "Likelihood threshold must increase between levels."
@@ -449,10 +405,10 @@ class LikelihoodThresholdSelection(_ConstraintStep):
             raise ValueError(
                 "Adaptive threshold made no progress; use a strict constraint."
             )
-        runtime.next_threshold = threshold
-        runtime.is_terminal = terminal
-        runtime.stop_reason = reason
-        state, context = runtime.update(state, context)
+        runtime["next_threshold"] = threshold
+        runtime["is_terminal"] = terminal
+        runtime["stop_reason"] = reason
+        context = context.with_metadata(nested_sampling=runtime)
         return state, context, None
 
 
@@ -474,57 +430,55 @@ class ShellEvidenceStep(_ConstraintStep):
         state, context, values = _prepare_likelihood(
             self.target, state, context
         )
-        runtime = NestedSamplingRuntime.from_metadata(
-            state.metadata, context.metadata
-        )
-        if runtime.next_threshold is None:
+        runtime = _nested_sampling_metadata(context.metadata)
+        if runtime["next_threshold"] is None:
             raise ValueError(
                 "Select a likelihood threshold before recording a shell."
             )
         xp = namespace(values)
         weights = _normalized_weights(state)
-        if runtime.is_terminal:
+        if runtime["is_terminal"]:
             mask = xp.ones_like(values, dtype=bool)
         elif self.target.inclusive:
-            mask = values < runtime.next_threshold
+            mask = values < runtime["next_threshold"]
         else:
-            mask = values <= runtime.next_threshold
+            mask = values <= runtime["next_threshold"]
         mask = mask & xp.isfinite(weights)
         shell_weights = xp.where(mask, weights + values, -math.inf)
         log_expectation = float(logsumexp(shell_weights))
-        log_increment = runtime.log_prior_volume + log_expectation
-        runtime.log_shell_expectation = log_expectation
-        runtime.log_nested_evidence_increment = log_increment
-        runtime.log_nested_evidence = float(
-            np.logaddexp(runtime.log_nested_evidence, log_increment)
+        log_increment = runtime["log_prior_volume"] + log_expectation
+        runtime["log_nested_evidence"] = float(
+            np.logaddexp(runtime["log_nested_evidence"], log_increment)
         )
         n_surviving = int(xp.sum(xp.isfinite(weights) & ~mask))
         survival_fraction = float(xp.sum(xp.where(mask, 0.0, xp.exp(weights))))
-        level = NestedSamplingLevelRecord(
+        level = NestedSamplingLevel(
             iteration=int(context.t),
-            shell_lower_threshold=runtime.threshold,
+            shell_lower_threshold=runtime["threshold"],
             shell_upper_threshold=None
-            if runtime.is_terminal
-            else runtime.next_threshold,
-            log_prior_volume=runtime.log_prior_volume,
+            if runtime["is_terminal"]
+            else runtime["next_threshold"],
+            log_prior_volume=runtime["log_prior_volume"],
             log_shell_expectation=log_expectation,
             log_evidence_increment=log_increment,
-            log_evidence=runtime.log_nested_evidence,
-            is_terminal=runtime.is_terminal,
+            log_evidence=runtime["log_nested_evidence"],
+            is_terminal=runtime["is_terminal"],
             n_surviving=n_surviving,
             survival_fraction=survival_fraction,
         )
         output: dict[str, Any] = {
-            NestedSamplingLevelRecord.output_key: asdict(level)
+            NestedSamplingLevel.output_key: asdict(level)
         }
         if self.store_shell_particles:
             output["particles"] = array_copy(state.particles[mask])
             output["log_weights"] = array_copy(
-                shell_weights[mask] + runtime.log_prior_volume
+                shell_weights[mask] + runtime["log_prior_volume"]
             )
-        if runtime.is_terminal:
+        if runtime["is_terminal"]:
             context = context.request_stop_immediately()
-        state, context = runtime.update(state, context)
+        context = context.with_metadata(nested_sampling=runtime)
+        if runtime["is_terminal"]:
+            state = _record_nested_sampling_snapshot(state, context)
         return state, context, output
 
 
@@ -540,11 +494,9 @@ class LikelihoodThresholdWeighting(_ConstraintStep):
         state, context, values = _prepare_likelihood(
             self.target, state, context
         )
-        runtime = NestedSamplingRuntime.from_metadata(
-            state.metadata, context.metadata
-        )
-        threshold = runtime.next_threshold
-        if threshold is None or runtime.is_terminal:
+        runtime = _nested_sampling_metadata(context.metadata)
+        threshold = runtime["next_threshold"]
+        if threshold is None or runtime["is_terminal"]:
             raise ValueError(
                 "Select a nonterminal likelihood threshold before weighting."
             )
@@ -558,16 +510,17 @@ class LikelihoodThresholdWeighting(_ConstraintStep):
             xp.where(mask, _normalized_weights(state), -math.inf), xp=xp
         )
         _validate_log_normalizer(norm, xp=xp)
-        runtime.threshold = threshold
-        runtime.n_surviving = int(xp.sum(xp.isfinite(weights)))
-        runtime.log_prior_volume_increment = float(norm)
-        runtime.log_prior_volume += float(norm)
-        runtime.survival_fraction = math.exp(float(norm))
+        runtime["threshold"] = threshold
+        runtime["n_surviving"] = int(xp.sum(xp.isfinite(weights)))
+        runtime["log_prior_volume_increment"] = float(norm)
+        runtime["log_prior_volume"] += float(norm)
+        runtime["survival_fraction"] = math.exp(float(norm))
         state = state.with_updates(
             log_weights=weights,
-            log_normalizing_constant=runtime.log_prior_volume,
+            log_normalizing_constant=runtime["log_prior_volume"],
         )
-        state, context = runtime.update(state, context)
+        context = context.with_metadata(nested_sampling=runtime)
+        state = _record_nested_sampling_snapshot(state, context)
         return state, context, None
 
 
@@ -600,13 +553,11 @@ class LogPriorMassStoppingCriterion(_ConstraintStep):
     def apply(
         self, state: ParticleState, context: StepContext, rng: RandomGenerator
     ) -> tuple[ParticleState, StepContext, Any]:
-        runtime = NestedSamplingRuntime.from_metadata(
-            state.metadata, context.metadata
-        )
-        if runtime.log_prior_volume > self.minimum:
+        runtime = _nested_sampling_metadata(context.metadata)
+        if runtime["log_prior_volume"] > self.minimum:
             return state, context, None
-        runtime.is_terminal = True
-        runtime.next_threshold = math.inf
-        runtime.stop_reason = "prior_mass"
-        state, context = runtime.update(state, context)
+        runtime["is_terminal"] = True
+        runtime["next_threshold"] = math.inf
+        runtime["stop_reason"] = "prior_mass"
+        context = context.with_metadata(nested_sampling=runtime)
         return self.shell(state, context, rng)

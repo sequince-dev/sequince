@@ -13,7 +13,7 @@ from numpy.random import Generator as NumPyGenerator
 from ._typing import Array
 from .array_api import asarray, get_device, namespace, to_numpy
 from .state import ParticleState
-from .steps.constraints import NestedSamplingLevelRecord, NestedSamplingRuntime
+from .steps.constraints import NestedSamplingLevel
 from .steps.context import StepContext
 from .steps.meta import META_SMC_OUTPUT_KEY
 from .utils.random import resolve_rng
@@ -1410,10 +1410,6 @@ class MetaSMCResult:
         return summary_dict
 
 
-# Retain the prototype's public name for per-shell diagnostics.
-NestedSamplingLevel = NestedSamplingLevelRecord
-
-
 @dataclass(frozen=True)
 class NestedSamplingSMCResult:
     """Evidence and shell-weighted posterior view of an eager NS-SMC result.
@@ -1425,7 +1421,7 @@ class NestedSamplingSMCResult:
     result: SMCResult
 
     def __post_init__(self) -> None:
-        if NestedSamplingRuntime.metadata_key not in self.final_state.metadata:
+        if "nested_sampling" not in self.final_state.metadata:
             raise ValueError("Expected a result produced by NS-SMC.")
 
     def __len__(self) -> int:
@@ -1447,17 +1443,17 @@ class NestedSamplingSMCResult:
         return self.result.final_state
 
     @property
-    def final_runtime(self) -> NestedSamplingRuntime:
-        return NestedSamplingRuntime.from_metadata(self.final_state.metadata)
+    def _final_metadata(self) -> Mapping[str, Any]:
+        return self.final_state.metadata["nested_sampling"]
 
     @property
     def log_evidence(self) -> float:
         """Accumulated shell evidence, including the live tail if finalized."""
-        return self.final_runtime.log_nested_evidence
+        return self._final_metadata["log_nested_evidence"]
 
     @property
     def complete(self) -> bool:
-        return self.final_runtime.is_terminal
+        return self._final_metadata["is_terminal"]
 
     def _shell_outputs(self) -> list[Mapping[str, Any]]:
         return [
@@ -1465,27 +1461,20 @@ class NestedSamplingSMCResult:
             for iteration in self.result.outputs
             for output in iteration
             if isinstance(output, Mapping)
-            and NestedSamplingLevelRecord.output_key in output
+            and NestedSamplingLevel.output_key in output
         ]
 
-    def levels(self) -> list[NestedSamplingLevelRecord]:
+    def levels(self) -> list[NestedSamplingLevel]:
         """Return per-shell diagnostics, including a terminal shell if present."""
         return [
-            NestedSamplingLevelRecord(
-                **output[NestedSamplingLevelRecord.output_key]
-            )
+            NestedSamplingLevel(**output[NestedSamplingLevel.output_key])
             for output in self._shell_outputs()
         ]
 
     def _runtime_history(self, name: str) -> Array:
         reference = self.final_state.log_weights
         return asarray(
-            [
-                getattr(
-                    NestedSamplingRuntime.from_metadata(state.metadata), name
-                )
-                for state in self.states
-            ],
+            [state.metadata["nested_sampling"][name] for state in self.states],
             xp=namespace(reference),
             like=reference,
         )
@@ -1566,16 +1555,16 @@ class NestedSamplingSMCResult:
         ).posterior_samples(n_samples=n_samples, rng=rng, method=method)
 
     def summary(self) -> dict[str, Any]:
-        runtime = self.final_runtime
+        runtime = self._final_metadata
         return {
             "iterations": len(self),
             "shells": len(self.levels()),
-            "final_log_likelihood_threshold": runtime.threshold,
-            "final_log_prior_volume": runtime.log_prior_volume,
+            "final_log_likelihood_threshold": runtime["threshold"],
+            "final_log_prior_volume": runtime["log_prior_volume"],
             "final_log_evidence": self.log_evidence,
-            "final_survival_fraction": runtime.survival_fraction,
-            "final_n_surviving": runtime.n_surviving,
+            "final_survival_fraction": runtime["survival_fraction"],
+            "final_n_surviving": runtime["n_surviving"],
             "final_ess": self.final_state.effective_sample_size(),
             "terminal_shell_recorded": self.complete,
-            "stop_reason": runtime.stop_reason,
+            "stop_reason": runtime["stop_reason"],
         }

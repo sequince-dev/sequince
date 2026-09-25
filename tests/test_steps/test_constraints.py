@@ -18,7 +18,9 @@ from sequince.steps.constraints import (
     FixedLikelihoodThresholdSchedule,
     LikelihoodConstrainedPrior,
     LikelihoodThresholdSelection,
+    LikelihoodThresholdWeighting,
     QuantileLikelihoodThresholdSchedule,
+    ShellEvidenceStep,
 )
 from sequince.steps.context import StepContext
 
@@ -241,28 +243,34 @@ def test_invalid_fixed_schedule(thresholds):
         FixedLikelihoodThresholdSchedule(thresholds)
 
 
-def test_schedule_type_error_propagates():
+@pytest.mark.parametrize("error", [TypeError, ValueError, RuntimeError])
+def test_schedule_error_propagates(error):
     def broken(values, state, context):
-        raise TypeError("user schedule failed")
+        raise error("user schedule failed")
 
-    with pytest.raises(TypeError, match="user schedule failed"):
+    with pytest.raises(error, match="user schedule failed"):
         run(threshold_schedule=broken)
 
 
+def test_schedule_receives_likelihoods_state_and_context() -> None:
+    # Argument names have no significance; all three values are positional.
+    def schedule(values, population, runtime):
+        np.testing.assert_array_equal(values, population.particles[:, 0])
+        assert runtime.t == 0
+        assert population.particles.shape == (4, 1)
+        raise StopIteration
+
+    result = run(threshold_schedule=schedule)
+    assert result.log_evidence == pytest.approx(math.log(2.5))
+    assert result.summary()["stop_reason"] == "schedule_exhausted"
+
+
 @pytest.mark.parametrize(
-    "schedule",
-    [
-        lambda values: math.inf,
-        lambda values, context: math.inf if context.t == 0 else 0.0,
-        lambda values, state: math.inf
-        if state.particles.shape[0] == 4
-        else 0.0,
-    ],
+    "schedule", [lambda values: math.inf, lambda values, context: math.inf]
 )
-def test_schedule_signatures(schedule):
-    assert run(threshold_schedule=schedule).log_evidence == pytest.approx(
-        math.log(2.5)
-    )
+def test_schedule_requires_three_arguments(schedule) -> None:
+    with pytest.raises(TypeError):
+        run(threshold_schedule=schedule)
 
 
 def test_quantile_ignores_zero_weight_particles():
@@ -302,6 +310,12 @@ def test_portable_result_roundtrip(tmp_path):
     with h5py.File(tmp_path / "result.h5", "r") as f:
         loaded = NestedSamplingSMCResult(SMCResult.load(f))
     assert loaded.summary() == original.summary()
+    np.testing.assert_array_equal(
+        loaded.threshold_history(), original.threshold_history()
+    )
+    np.testing.assert_array_equal(
+        loaded.log_prior_volume_history(), original.log_prior_volume_history()
+    )
     for actual, expected in zip(
         loaded.posterior_samples(), original.posterior_samples()
     ):
@@ -379,7 +393,7 @@ def test_gaussian_evidence_and_posterior(mutation):
 
 def test_repeated_custom_threshold_rejected():
     with pytest.raises(ValueError, match="must increase"):
-        run(threshold_schedule=lambda values: math.log(2.0))
+        run(threshold_schedule=lambda values, state, context: math.log(2.0))
 
 
 @pytest.mark.parametrize(
@@ -452,4 +466,53 @@ def test_result_conversion_helper():
     result = run()
     assert (
         result.result.as_nested_sampling_result().summary() == result.summary()
+    )
+
+
+def test_context_owns_runtime_and_state_records_completed_levels() -> None:
+    target = LikelihoodConstrainedPrior(prior, likelihood)
+    state = ParticleState(
+        np.log(np.arange(1.0, 5.0))[:, None],
+        metadata={"nested_sampling": {"is_terminal": True}},
+    )
+    selection = LikelihoodThresholdSelection(
+        target,
+        threshold_schedule=FixedLikelihoodThresholdSchedule([math.log(2)]),
+    )
+    selected, context, _ = selection(state, StepContext(t=0))
+    # Stale state snapshots must not override execution context.
+    assert not context.metadata["nested_sampling"]["is_terminal"]
+    assert selected.metadata == state.metadata
+    selected_context = context
+    shelled, context, _ = ShellEvidenceStep(target)(selected, context)
+    assert (
+        selected_context.metadata["nested_sampling"]["log_nested_evidence"]
+        == -math.inf
+    )
+    assert shelled.metadata == state.metadata
+    weighted, context, _ = LikelihoodThresholdWeighting(target)(
+        shelled, context
+    )
+    snapshot = weighted.metadata["nested_sampling"].copy()
+    assert snapshot == context.metadata["nested_sampling"]
+    np.testing.assert_allclose(
+        target.log_prob(weighted.particles, context),
+        [-math.inf, -math.inf, 0.0, 0.0],
+    )
+    weighted_context = context
+    selected, context, _ = selection(
+        weighted, StepContext(t=1, metadata=context.metadata)
+    )
+    assert weighted_context.metadata["nested_sampling"] == snapshot
+    terminal, context, _ = ShellEvidenceStep(target)(selected, context)
+    assert (
+        terminal.metadata["nested_sampling"]
+        == context.metadata["nested_sampling"]
+    )
+    assert terminal.metadata["nested_sampling"]["is_terminal"]
+    assert weighted.metadata["nested_sampling"] == snapshot
+    context.metadata["nested_sampling"]["threshold"] = 100.0
+    assert (
+        terminal.metadata["nested_sampling"]["threshold"]
+        == snapshot["threshold"]
     )

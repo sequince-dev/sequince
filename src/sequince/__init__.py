@@ -30,8 +30,6 @@ from .steps.constraints import (
     FixedLikelihoodThresholdSchedule,
     LikelihoodConstrainedPrior,
     LogPriorMassStoppingCriterion,
-    NestedSamplingLevelRecord,
-    NestedSamplingRuntime,
     QuantileLikelihoodThresholdSchedule,
     WorstParticleLikelihoodThresholdSchedule,
 )
@@ -55,8 +53,6 @@ __all__ = [
     "FixedLikelihoodThresholdSchedule",
     "LikelihoodConstrainedPrior",
     "LogPriorMassStoppingCriterion",
-    "NestedSamplingLevelRecord",
-    "NestedSamplingRuntime",
     "QuantileLikelihoodThresholdSchedule",
     "WorstParticleLikelihoodThresholdSchedule",
     "make_nested_sampling_smc",

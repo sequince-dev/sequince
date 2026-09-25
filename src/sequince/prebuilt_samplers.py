@@ -29,13 +29,14 @@ from .steps.base import SMCStep, StepContext
 from .steps.constraints import (
     FixedLikelihoodThresholdSchedule,
     LikelihoodConstrainedPrior,
+    LikelihoodThresholdSchedule,
     LikelihoodThresholdSelection,
     LikelihoodThresholdWeighting,
     LogPriorMassStoppingCriterion,
-    NestedSamplingRuntime,
     QuantileLikelihoodThresholdSchedule,
     ShellEvidenceStep,
     WorstParticleLikelihoodThresholdSchedule,
+    _nested_sampling_metadata,
 )
 from .steps.mutation import MutateIfResampled, get_mutation_step
 from .steps.resampling import ResamplingStep
@@ -523,7 +524,7 @@ def make_nested_sampling_smc(
     log_likelihood: Callable[..., Any],
     *,
     threshold_schedule: (
-        Literal["worst"] | Sequence[float] | Callable[..., float] | None
+        Literal["worst"] | Sequence[float] | LikelihoodThresholdSchedule | None
     ) = None,
     threshold_quantile: float | None = None,
     threshold_inclusive: bool = False,
@@ -558,7 +559,8 @@ def make_nested_sampling_smc(
     threshold_schedule : {"worst"}, sequence of float, callable, or None
         Log-likelihood thresholds. None uses a weighted median. Sequences
         finalize on exhaustion; callables may raise StopIteration. Callables
-        accept values, optionally context or state, or (values, state, context).
+        must implement schedule(log_likelihoods, state, context) -> float.
+        Other user exceptions propagate unchanged.
     threshold_quantile : float or None
         Fraction to discard, in [0, 1). Overrides the default median; cannot
         be combined with an explicit threshold_schedule.
@@ -615,7 +617,7 @@ def make_nested_sampling_smc(
             "Specify threshold_quantile or threshold_schedule, not both."
         )
     if threshold_quantile is not None:
-        resolved_threshold_schedule: Callable[..., float] = (
+        resolved_threshold_schedule: LikelihoodThresholdSchedule = (
             QuantileLikelihoodThresholdSchedule(threshold_quantile)
         )
     elif threshold_schedule is None:
@@ -719,11 +721,11 @@ def make_nested_sampling_smc(
     if logging_frequency > 0:
 
         def logging_fn(state: ParticleState, context: StepContext) -> str:
-            runtime = NestedSamplingRuntime.from_metadata(context.metadata)
-            threshold = runtime.threshold
-            log_x = runtime.log_prior_volume
-            log_z = runtime.log_nested_evidence
-            n_surviving = runtime.n_surviving
+            runtime = context.metadata["nested_sampling"]
+            threshold = runtime["threshold"]
+            log_x = runtime["log_prior_volume"]
+            log_z = runtime["log_nested_evidence"]
+            n_surviving = runtime["n_surviving"]
             n_particles = state.particles.shape[0]
             return (
                 f"NS-SMC iteration {context.t}: "
@@ -744,5 +746,5 @@ def make_nested_sampling_smc(
         auto_normalize=False,
         checkpoint_writers=checkpoint_writers,
     )
-    metadata = NestedSamplingRuntime.metadata_defaults()
+    metadata = {"nested_sampling": _nested_sampling_metadata({})}
     return sampler, constrained_prior, metadata
