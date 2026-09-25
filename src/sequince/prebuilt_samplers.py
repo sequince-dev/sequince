@@ -549,7 +549,7 @@ def make_nested_sampling_smc(
     | None = None,
     checkpoint_writers: Sequence[CheckpointWriter] | None = None,
 ) -> Tuple[SequentialMonteCarlo, LikelihoodConstrainedPrior, MetaData]:
-    """Build an eager nested-sampling SMC pipeline for a normalized prior.
+    """Build a nested-sampling SMC pipeline for a normalized prior.
 
     Parameters
     ----------
@@ -604,6 +604,15 @@ def make_nested_sampling_smc(
     Adaptive thresholds do not inherit fixed-schedule unbiasedness guarantees.
     Likelihood ties are discarded together; sampled plateaus with no survivors
     are integrated as a terminal shell. This cannot detect unobserved modes.
+
+    Functional execution requires JAX arrays, unconditional resampling with
+    unchanged population size, logging_frequency=0, and traceable mutation
+    (BlackJAX or MiniPCN). Use callbacks for host-side logging. Initialize with
+    run_functional or initialize_functional before compiling iterations.
+    Compiled schedules must use backend operations and return a scalar array;
+    positive infinity finalizes the live tail. Python StopIteration is supported
+    by eager and uncompiled schedules, not as a data-dependent compiled branch.
+    Custom target functions and transforms must also be JAX traceable.
     """
 
     if auto_normalize:

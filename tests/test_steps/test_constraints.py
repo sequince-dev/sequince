@@ -286,14 +286,12 @@ def test_quantile_ignores_zero_weight_particles():
     )
 
 
-def test_functional_rejected_explicitly():
+def test_functional_non_jax_rejected_explicitly():
     step = LikelihoodThresholdSelection(
         LikelihoodConstrainedPrior(prior, likelihood)
     )
-    with pytest.raises(NotImplementedError, match="eager"):
-        step.apply_functional(
-            ParticleState(np.ones((4, 1))), StepContext(t=0), None
-        )
+    with pytest.raises(NotImplementedError, match="JAX"):
+        step.initialize_functional_metadata(ParticleState(np.ones((4, 1))), {})
 
 
 @pytest.mark.parametrize("method", ["weights", "multinomial", "rejection"])

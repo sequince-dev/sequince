@@ -1,18 +1,18 @@
-"""Eager likelihood-constrained SMC steps and shell evidence bookkeeping."""
+"""Likelihood-constrained SMC steps and shell evidence bookkeeping."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import asdict, dataclass
-from typing import Any, Callable, ClassVar
+from dataclasses import asdict, dataclass, replace
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 import numpy as np
 from orng import RandomGenerator
 
 from .._typing import Array
+from ..array_api import asarray, is_jax_namespace, logsumexp, namespace
 from ..array_api import copy as array_copy
-from ..array_api import logsumexp, namespace, to_numpy
 from ..state import (
     ParticleState,
     _validate_log_normalizer,
@@ -26,9 +26,13 @@ from ..target import (
 )
 from .base import SMCStep
 from .context import StepContext
+from .control import apply_functional_if
+
+if TYPE_CHECKING:
+    from ..smc import SMCConfig
 
 LikelihoodThresholdSchedule = Callable[
-    [Array, ParticleState, StepContext], float
+    [Array, ParticleState, StepContext], float | Array
 ]
 
 
@@ -150,7 +154,9 @@ class LikelihoodConstrainedPrior(Target):
                     "Density functions must return one value per particle."
                 )
             xp = namespace(value)
-            if bool(xp.any(xp.isnan(value) | (value == math.inf))):
+            if not _is_traced(value) and bool(
+                xp.any(xp.isnan(value) | (value == math.inf))
+            ):
                 raise ValueError(
                     "Log densities must not contain NaN or positive infinity."
                 )
@@ -181,7 +187,9 @@ class LikelihoodConstrainedPrior(Target):
         values = evaluation["log_likelihood"]
         mask = values >= threshold if self.inclusive else values > threshold
         # The initial target is the full prior, including zero-likelihood mass.
-        if threshold == -math.inf and runtime.get("next_threshold") is None:
+        if "functional" in runtime:
+            mask = mask | ~runtime["started"]
+        elif threshold == -math.inf and runtime.get("next_threshold") is None:
             mask = namespace(values).ones_like(values, dtype=bool)
         result = namespace(values).where(
             mask, evaluation["log_prior"], -math.inf
@@ -213,7 +221,8 @@ def _prepare_likelihood(
 def _normalized_weights(state: ParticleState) -> Array:
     xp = namespace(state.log_weights)
     weights, norm = normalize_log_weights(state.log_weights, xp=xp)
-    _validate_log_normalizer(norm, xp=xp)
+    if not _is_traced(norm):
+        _validate_log_normalizer(norm, xp=xp)
     return weights
 
 
@@ -244,7 +253,15 @@ class FixedLikelihoodThresholdSchedule:
         log_likelihoods: Array,
         state: ParticleState,
         context: StepContext,
-    ) -> float:
+    ) -> float | Array:
+        if "functional" in context.metadata.get("nested_sampling", {}):
+            xp = namespace(log_likelihoods)
+            thresholds = asarray(
+                (*self.thresholds, math.inf),
+                like=log_likelihoods,
+                dtype=log_likelihoods.dtype,
+            )
+            return thresholds[xp.minimum(context.t, len(self.thresholds))]
         if context.t >= len(self.thresholds):
             raise StopIteration
         return float(self.thresholds[context.t])
@@ -269,21 +286,18 @@ class QuantileLikelihoodThresholdSchedule:
         log_likelihoods: Array,
         state: ParticleState,
         context: StepContext,
-    ) -> float:
-        values = np.asarray(to_numpy(log_likelihoods))
-        weights = np.exp(to_numpy(_normalized_weights(state)))
-        active = weights > 0
-        values, weights = values[active], weights[active]
-        order = np.argsort(values)
-        index = min(
-            int(
-                np.searchsorted(
-                    np.cumsum(weights[order]), self.quantile, side="left"
-                )
-            ),
-            len(order) - 1,
+    ) -> float | Array:
+        xp = namespace(log_likelihoods)
+        weights = xp.exp(_normalized_weights(state))
+        # Move zero-weight rows past every active likelihood. In particular,
+        # quantile zero must select the first positive-weight observation.
+        values = xp.where(weights > 0, log_likelihoods, math.inf)
+        order = xp.argsort(values, stable=True)
+        cumulative = xp.cumulative_sum(weights[order])
+        index = xp.minimum(
+            xp.sum(cumulative < self.quantile), xp.sum(weights > 0) - 1
         )
-        return float(values[order[index]])
+        return values[order[index]]
 
 
 class WorstParticleLikelihoodThresholdSchedule(
@@ -295,21 +309,40 @@ class WorstParticleLikelihoodThresholdSchedule(
         super().__init__(quantile=0.0)
 
 
-class _ConstraintStep(SMCStep):
-    def apply_functional(
-        self, state: ParticleState, context: StepContext, random_state: Any
-    ) -> tuple[ParticleState, StepContext, Any, Any]:
-        raise NotImplementedError(
-            "NS-SMC currently supports eager execution only."
-        )
+def _is_traced(value: Any) -> bool:
+    if not is_jax_namespace(namespace(value)):
+        return False
+    from jax.core import Tracer
+
+    return isinstance(value, Tracer)
 
 
-class LikelihoodThresholdSelection(_ConstraintStep):
+_STOP_REASONS = (
+    None,
+    "evidence_tolerance",
+    "schedule_exhausted",
+    "no_survivors",
+    "prior_mass",
+)
+_ERRORS = (
+    "",
+    "Likelihood thresholds must be nondecreasing and not NaN.",
+    "Likelihood threshold must increase between levels.",
+    "Adaptive threshold made no progress; use a strict constraint.",
+    "Observed likelihood exceeds log_likelihood_upper_bound.",
+    "Cannot continue a finalized NS-SMC run.",
+)
+
+
+class LikelihoodThresholdSelection(SMCStep):
     """Select a threshold or finalize using an estimated remaining-evidence ratio.
 
     Schedules must implement ``schedule(log_likelihoods, state, context)`` and
-    return a float. ``StopIteration`` finalizes the remaining shell; other
-    exceptions propagate to the caller.
+    return a float or scalar array. ``StopIteration`` finalizes the remaining
+    shell in eager/uncompiled execution; other exceptions propagate. Compiled
+    schedules must be pure, JAX traceable, and use positive infinity to finalize
+    rather than raising data-dependent exceptions or converting arrays to host
+    scalars. Fixed and weighted-quantile schedules support both paths.
 
     ``evidence_tolerance`` compares the current estimate X * E[L] with the
     accumulated evidence. It is a stopping heuristic, not a rigorous bound on
@@ -337,6 +370,224 @@ class LikelihoodThresholdSelection(_ConstraintStep):
         ):
             raise ValueError("log_likelihood_upper_bound must be finite.")
         self.log_likelihood_upper_bound = log_likelihood_upper_bound
+
+    def validate_functional_configuration(
+        self, config: SMCConfig, state: ParticleState
+    ) -> None:
+        """Reject unsupported NS-SMC pipelines before functional initialization."""
+        from .log import LoggingStep
+        from .mutation.base import MutationStep
+        from .mutation.blackjax import BlackJAXMutation
+        from .resampling import ResamplingStep
+
+        if config.auto_normalize:
+            raise ValueError(
+                "Functional NS-SMC requires auto_normalize=False."
+            )
+        for step in config.steps:
+            if (
+                isinstance(step, MutationStep)
+                and not isinstance(step, BlackJAXMutation)
+                and type(step).apply_functional is SMCStep.apply_functional
+            ):
+                raise NotImplementedError(
+                    f"{type(step).__name__} does not support functional NS-SMC; "
+                    "use a functional mutation such as BlackJAX or MiniPCN."
+                )
+            if isinstance(step, LoggingStep):
+                raise NotImplementedError(
+                    "Functional NS-SMC requires logging_frequency=0; use host callbacks."
+                )
+            if isinstance(step, ResamplingStep) and (
+                not step._always_resample
+                or step._n_samples not in (None, state.particles.shape[0])
+            ):
+                raise NotImplementedError(
+                    "Functional NS-SMC requires unconditional resampling "
+                    "with an unchanged population size."
+                )
+
+    def initialize_functional_metadata(
+        self, state: ParticleState, metadata: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        xp = namespace(state.log_weights)
+        if not is_jax_namespace(xp):
+            raise NotImplementedError("Functional NS-SMC requires JAX arrays.")
+        runtime = _nested_sampling_metadata(metadata)
+        runtime["started"] = runtime.get(
+            "started", runtime["next_threshold"] is not None
+        )
+        if runtime["next_threshold"] is None:
+            runtime["next_threshold"] = -math.inf
+        reason = runtime["stop_reason"]
+        if reason is None or isinstance(reason, str):
+            runtime["stop_reason"] = _STOP_REASONS.index(reason)
+        runtime["error"] = runtime.get("error", 0)
+        for key, value in runtime.items():
+            if key == "functional":
+                continue
+            dtype = (
+                bool
+                if key in {"started", "is_terminal"}
+                else xp.int32
+                if key in {"stop_reason", "error", "n_surviving"}
+                else state.log_weights.dtype
+            )
+            runtime[key] = asarray(value, like=state.log_weights, dtype=dtype)
+        runtime["functional"] = ()
+        return {**metadata, "nested_sampling": runtime}
+
+    def initialize_functional_state_and_context(
+        self, state: ParticleState, context: StepContext
+    ) -> tuple[ParticleState, StepContext]:
+        if bool(context.metadata["nested_sampling"]["is_terminal"]):
+            raise ValueError("Cannot continue a finalized NS-SMC run.")
+        _normalized_weights(state)
+        # Complete the cache before any conditional mutation branch is traced.
+        # A newly constructed target refreshes incompatible checkpoint caches.
+        evaluation, counts = self.target.prepare_evaluation(
+            state.particles,
+            context,
+            evaluation=state.evaluation,
+            return_counts=True,
+        )
+        state = state.with_updates(
+            evaluation=evaluation,
+            log_normalizing_constant=asarray(
+                state.log_normalizing_constant,
+                like=state.log_weights,
+                dtype=state.log_weights.dtype,
+            ),
+        )
+        context = context.add_evaluation_counts(counts)
+        self.validate_functional_state_and_context(state, context)
+        return _record_nested_sampling_snapshot(state, context), context
+
+    def validate_functional_state_and_context(
+        self, state: ParticleState, context: StepContext
+    ) -> None:
+        """Validate numerical values at initialization and iteration boundaries."""
+        runtime = context.metadata["nested_sampling"]
+        error = int(runtime["error"])
+        if error:
+            raise ValueError(_ERRORS[error])
+        if state.evaluation is not None:
+            for values in state.evaluation.components.values():
+                xp = namespace(values)
+                if bool(xp.any(xp.isnan(values) | (values == math.inf))):
+                    raise ValueError(
+                        "Log densities must not contain NaN or positive infinity."
+                    )
+            values = state.evaluation["log_likelihood"]
+            if self.log_likelihood_upper_bound is not None and bool(
+                namespace(values).any(values > self.log_likelihood_upper_bound)
+            ):
+                raise ValueError(_ERRORS[4])
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, None]:
+        import jax
+
+        if "functional" not in context.metadata.get("nested_sampling", {}):
+            raise ValueError(
+                "Initialize NS-SMC with initialize_functional first."
+            )
+        state, context, values = _prepare_likelihood(
+            self.target, state, context
+        )
+        xp = namespace(values)
+        runtime = _nested_sampling_metadata(context.metadata)
+        weights = _normalized_weights(state)
+        remaining = runtime["log_prior_volume"] + (
+            logsumexp(weights + values)
+            if self.log_likelihood_upper_bound is None
+            else self.log_likelihood_upper_bound
+        )
+        evidence_stop = xp.asarray(False)
+        if self.evidence_tolerance is not None:
+            evidence_stop = xp.isfinite(runtime["log_nested_evidence"]) & (
+                remaining
+                <= runtime["log_nested_evidence"]
+                + math.log(self.evidence_tolerance)
+            )
+
+        def select() -> tuple[Array, Array]:
+            exhausted = xp.asarray(False)
+            try:
+                value = self.schedule(values, state, context)
+            except StopIteration:
+                value = math.inf
+                exhausted = xp.asarray(True)
+            if isinstance(self.schedule, FixedLikelihoodThresholdSchedule):
+                exhausted = xp.asarray(
+                    context.t >= len(self.schedule.thresholds)
+                )
+            return asarray(value, like=weights, dtype=weights.dtype), exhausted
+
+        # Uncompiled execution retains Python schedule exhaustion and exceptions.
+        if _is_traced(evidence_stop):
+            threshold, exhausted = jax.lax.cond(
+                evidence_stop,
+                lambda: (
+                    xp.asarray(math.inf, dtype=weights.dtype),
+                    xp.asarray(False),
+                ),
+                select,
+            )
+        else:
+            threshold, exhausted = (
+                (xp.asarray(math.inf, dtype=weights.dtype), xp.asarray(False))
+                if bool(evidence_stop)
+                else select()
+            )
+        active = xp.isfinite(weights)
+        survivors = active & (
+            values >= threshold
+            if self.target.inclusive
+            else values > threshold
+        )
+        terminal = evidence_stop | (threshold == math.inf) | ~xp.any(survivors)
+        reason = xp.where(
+            evidence_stop,
+            1,
+            xp.where(exhausted, 2, xp.where(terminal, 3, 0)),
+        )
+        error = xp.where(
+            xp.isnan(threshold) | (threshold < runtime["threshold"]),
+            1,
+            xp.where(
+                ~terminal
+                & runtime["started"]
+                & (threshold == runtime["threshold"]),
+                2,
+                0,
+            ),
+        )
+        if isinstance(self.schedule, QuantileLikelihoodThresholdSchedule):
+            error = xp.where(
+                (error == 0) & ~terminal & ~xp.any(active & ~survivors),
+                3,
+                error,
+            )
+        if self.log_likelihood_upper_bound is not None:
+            error = xp.where(
+                xp.any(values > self.log_likelihood_upper_bound), 4, error
+            )
+        runtime.update(
+            next_threshold=threshold,
+            is_terminal=terminal,
+            stop_reason=xp.astype(reason, xp.int32),
+            error=xp.astype(
+                xp.where(runtime["is_terminal"], 5, error), xp.int32
+            ),
+        )
+        return (
+            state,
+            context.with_metadata(nested_sampling=runtime),
+            random_state,
+            None,
+        )
 
     def apply(
         self, state: ParticleState, context: StepContext, rng: RandomGenerator
@@ -412,7 +663,7 @@ class LikelihoodThresholdSelection(_ConstraintStep):
         return state, context, None
 
 
-class ShellEvidenceStep(_ConstraintStep):
+class ShellEvidenceStep(SMCStep):
     """Integrate a disjoint likelihood shell and optionally retain its particles."""
 
     def __init__(
@@ -423,6 +674,61 @@ class ShellEvidenceStep(_ConstraintStep):
     ) -> None:
         self.target = target
         self.store_shell_particles = store_shell_particles
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, dict[str, Any]]:
+        state, context, values = _prepare_likelihood(
+            self.target, state, context
+        )
+        xp = namespace(values)
+        runtime = _nested_sampling_metadata(context.metadata)
+        weights = _normalized_weights(state)
+        mask = (
+            values < runtime["next_threshold"]
+            if self.target.inclusive
+            else values <= runtime["next_threshold"]
+        )
+        mask = (mask | runtime["is_terminal"]) & xp.isfinite(weights)
+        shell_weights = xp.where(mask, weights + values, -math.inf)
+        expectation = logsumexp(shell_weights)
+        increment = runtime["log_prior_volume"] + expectation
+        runtime["log_nested_evidence"] = xp.logaddexp(
+            runtime["log_nested_evidence"], increment
+        )
+        output = {
+            "valid": xp.asarray(True),
+            NestedSamplingLevel.output_key: {
+                "iteration": context.t,
+                "shell_lower_threshold": runtime["threshold"],
+                "shell_upper_threshold": xp.where(
+                    runtime["is_terminal"], math.inf, runtime["next_threshold"]
+                ),
+                "log_prior_volume": runtime["log_prior_volume"],
+                "log_shell_expectation": expectation,
+                "log_evidence_increment": increment,
+                "log_evidence": runtime["log_nested_evidence"],
+                "is_terminal": runtime["is_terminal"],
+                "n_surviving": xp.sum(xp.isfinite(weights) & ~mask),
+                "survival_fraction": xp.sum(
+                    xp.where(mask, 0.0, xp.exp(weights))
+                ),
+            },
+        }
+        if self.store_shell_particles:
+            output.update(
+                particles=state.particles,
+                mask=mask,
+                log_weights=shell_weights + runtime["log_prior_volume"],
+            )
+        context = replace(
+            context.with_metadata(nested_sampling=runtime),
+            stop_requested=runtime["is_terminal"],
+            stop_immediately=runtime["is_terminal"],
+        )
+        # Snapshot keys are already established by functional initialization.
+        state = _record_nested_sampling_snapshot(state, context)
+        return state, context, random_state, output
 
     def apply(
         self, state: ParticleState, context: StepContext, rng: RandomGenerator
@@ -482,11 +788,48 @@ class ShellEvidenceStep(_ConstraintStep):
         return state, context, output
 
 
-class LikelihoodThresholdWeighting(_ConstraintStep):
+class LikelihoodThresholdWeighting(SMCStep):
     """Normalize survivor weights and accumulate constrained-prior mass."""
 
     def __init__(self, target: LikelihoodConstrainedPrior) -> None:
         self.target = target
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, None]:
+        state, context, values = _prepare_likelihood(
+            self.target, state, context
+        )
+        xp = namespace(values)
+        runtime = _nested_sampling_metadata(context.metadata)
+        threshold = runtime["next_threshold"]
+        mask = (
+            values >= threshold
+            if self.target.inclusive
+            else values > threshold
+        )
+        weights, norm = normalize_log_weights(
+            xp.where(mask, _normalized_weights(state), -math.inf), xp=xp
+        )
+        runtime.update(
+            threshold=threshold,
+            started=xp.asarray(True),
+            n_surviving=xp.astype(xp.sum(xp.isfinite(weights)), xp.int32),
+            log_prior_volume_increment=norm,
+            log_prior_volume=runtime["log_prior_volume"] + norm,
+            survival_fraction=xp.exp(norm),
+        )
+        state = state.with_updates(
+            log_weights=weights,
+            log_normalizing_constant=runtime["log_prior_volume"],
+        )
+        context = context.with_metadata(nested_sampling=runtime)
+        return (
+            _record_nested_sampling_snapshot(state, context),
+            context,
+            random_state,
+            None,
+        )
 
     def apply(
         self, state: ParticleState, context: StepContext, rng: RandomGenerator
@@ -524,7 +867,7 @@ class LikelihoodThresholdWeighting(_ConstraintStep):
         return state, context, None
 
 
-class LogPriorMassStoppingCriterion(_ConstraintStep):
+class LogPriorMassStoppingCriterion(SMCStep):
     """Finalize the remaining shell when prior mass falls below the given limit.
 
     Unlike the original prototype, stopping includes the surviving particles'
@@ -548,6 +891,32 @@ class LogPriorMassStoppingCriterion(_ConstraintStep):
         self.minimum = min_log_prior_volume
         self.shell = ShellEvidenceStep(
             target, store_shell_particles=store_shell_particles
+        )
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, Any]:
+        xp = namespace(state.log_weights)
+        stop = (
+            context.metadata["nested_sampling"]["log_prior_volume"]
+            <= self.minimum
+        )
+
+        def finalize(
+            state: ParticleState, context: StepContext, key: Any
+        ) -> tuple[ParticleState, StepContext, Any, Any]:
+            runtime = _nested_sampling_metadata(context.metadata)
+            runtime.update(
+                is_terminal=xp.asarray(True),
+                next_threshold=xp.full_like(runtime["threshold"], math.inf),
+                stop_reason=xp.asarray(4, dtype=xp.int32),
+            )
+            return self.shell.apply_functional(
+                state, context.with_metadata(nested_sampling=runtime), key
+            )
+
+        return apply_functional_if(
+            stop, finalize, state, context, random_state
         )
 
     def apply(

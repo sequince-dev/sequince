@@ -577,6 +577,12 @@ class SequentialMonteCarlo:
                 _, log_norm = normalize_log_weights(state.log_weights, xp=xp)
                 _validate_log_normalizer(log_norm, xp=xp)
                 _validate_log_normalizer(state.log_normalizing_constant, xp=xp)
+                for step in self._steps:
+                    validator = getattr(
+                        step, "validate_functional_state_and_context", None
+                    )
+                    if callable(validator):
+                        validator(state, context)
 
             outputs.append(iteration_outputs)
             produced_states.append(state)

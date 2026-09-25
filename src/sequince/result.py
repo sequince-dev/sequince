@@ -13,7 +13,7 @@ from numpy.random import Generator as NumPyGenerator
 from ._typing import Array
 from .array_api import asarray, get_device, namespace, to_numpy
 from .state import ParticleState
-from .steps.constraints import NestedSamplingLevel
+from .steps.constraints import _STOP_REASONS, NestedSamplingLevel
 from .steps.context import StepContext
 from .steps.meta import META_SMC_OUTPUT_KEY
 from .utils.random import resolve_rng
@@ -1412,7 +1412,7 @@ class MetaSMCResult:
 
 @dataclass(frozen=True)
 class NestedSamplingSMCResult:
-    """Evidence and shell-weighted posterior view of an eager NS-SMC result.
+    """Evidence and shell-weighted posterior view of an NS-SMC result.
 
     The wrapped result's final state is a constrained prior, not a posterior.
     Use this wrapper's posterior_samples method for Bayesian inference.
@@ -1449,11 +1449,21 @@ class NestedSamplingSMCResult:
     @property
     def log_evidence(self) -> float:
         """Accumulated shell evidence, including the live tail if finalized."""
-        return self._final_metadata["log_nested_evidence"]
+        return float(self._final_metadata["log_nested_evidence"])
 
     @property
     def complete(self) -> bool:
-        return self._final_metadata["is_terminal"]
+        return bool(self._final_metadata["is_terminal"])
+
+    @property
+    def stop_reason(self) -> str | None:
+        """Readable stopping diagnostic for eager and functional executions."""
+        value = self._final_metadata["stop_reason"]
+        return (
+            value
+            if value is None or isinstance(value, str)
+            else _STOP_REASONS[int(value)]
+        )
 
     def _shell_outputs(self) -> list[Mapping[str, Any]]:
         return [
@@ -1462,14 +1472,30 @@ class NestedSamplingSMCResult:
             for output in iteration
             if isinstance(output, Mapping)
             and NestedSamplingLevel.output_key in output
+            and bool(output.get("valid", True))
         ]
 
     def levels(self) -> list[NestedSamplingLevel]:
         """Return per-shell diagnostics, including a terminal shell if present."""
-        return [
-            NestedSamplingLevel(**output[NestedSamplingLevel.output_key])
-            for output in self._shell_outputs()
-        ]
+        levels = []
+        for output in self._shell_outputs():
+            fields = dict(output[NestedSamplingLevel.output_key])
+            fields = {
+                key: (
+                    bool(value)
+                    if key == "is_terminal"
+                    else int(value)
+                    if key in {"iteration", "n_surviving"}
+                    else None
+                    if value is None
+                    else float(value)
+                )
+                for key, value in fields.items()
+            }
+            if fields["is_terminal"]:
+                fields["shell_upper_threshold"] = None
+            levels.append(NestedSamplingLevel(**fields))
+        return levels
 
     def _runtime_history(self, name: str) -> Array:
         reference = self.final_state.log_weights
@@ -1543,9 +1569,21 @@ class NestedSamplingSMCResult:
                 "Posterior is undefined for zero or non-finite evidence."
             )
         xp = namespace(self.final_state.particles)
-        particles = xp.concat(tuple(output["particles"] for output in shells))
+        particles = xp.concat(
+            tuple(
+                output["particles"][output["mask"]]
+                if "mask" in output
+                else output["particles"]
+                for output in shells
+            )
+        )
         log_weights = xp.concat(
-            tuple(output["log_weights"] for output in shells)
+            tuple(
+                output["log_weights"][output["mask"]]
+                if "mask" in output
+                else output["log_weights"]
+                for output in shells
+            )
         )
         posterior = ParticleState(
             particles, log_weights=log_weights - self.log_evidence
@@ -1566,5 +1604,5 @@ class NestedSamplingSMCResult:
             "final_n_surviving": runtime["n_surviving"],
             "final_ess": self.final_state.effective_sample_size(),
             "terminal_shell_recorded": self.complete,
-            "stop_reason": runtime["stop_reason"],
+            "stop_reason": self.stop_reason,
         }
