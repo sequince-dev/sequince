@@ -12,6 +12,7 @@ sequential methods.
    getting_started
    user_guide
    checkpointing
+   nested_sampling
    examples
    api/index
 
