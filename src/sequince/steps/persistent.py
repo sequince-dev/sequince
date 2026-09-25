@@ -5,7 +5,9 @@ See: https://arxiv.org/abs/2407.20722
 
 from __future__ import annotations
 
+import math
 from collections.abc import Collection, Mapping
+from numbers import Integral
 from typing import TYPE_CHECKING, Any
 
 from .._typing import Array, ArrayLike
@@ -31,7 +33,36 @@ __all__ = [
     "PersistentTemperedWeighting",
     "persistent_log_mixture_denominator",
     "persistent_log_weights",
+    "expected_unique_count",
 ]
+
+
+def expected_unique_count(weights: Array, n_active: int) -> Array:
+    """Return multinomial expected unique entries for normalized weights.
+
+    Parameters
+    ----------
+    weights : array, shape (n_archive,)
+        Nonnegative, normalized floating-point weights (zeros are allowed).
+    n_active : int
+        Positive number of draws with replacement.
+
+    Returns
+    -------
+    array
+        Scalar expected unique count, on the input backend and device.
+        This is only a diversity heuristic for systematic resampling.
+    """
+    if isinstance(n_active, bool) or not isinstance(n_active, Integral):
+        raise TypeError("n_active must be a positive integer.")
+    if n_active < 1:
+        raise ValueError("n_active must be positive.")
+    xp = namespace(weights)
+    # Avoid log1p(-1), including warnings on eager NumPy backends.
+    certain = weights >= 1
+    safe = xp.where(certain, xp.zeros_like(weights), weights)
+    probabilities = -xp.expm1(n_active * xp.log1p(-safe))
+    return xp.sum(xp.where(certain, xp.ones_like(weights), probabilities))
 
 
 def _persistent_arrays(
@@ -138,11 +169,27 @@ def persistent_log_weights(
 
 
 class PersistParticles(SMCStep):
-    """Retain each completed active particle population in a persistent archive."""
+    """Archive populations in equal-sized batches.
 
-    def __init__(self, target: Target | None = None) -> None:
+    ``n_particles`` fixes the active batch size. The first state may contain
+    any positive multiple of that size, with equal weights at beta zero.
+    All initial batches are archived in one call. If omitted, infer the batch
+    size from the first state, preserving the one-batch interface.
+    """
+
+    def __init__(
+        self, target: Target | None = None, *, n_particles: int | None = None
+    ) -> None:
         if target is not None and not isinstance(target, Target):
             raise TypeError("target must be a Target instance or None.")
+        if n_particles is not None:
+            if isinstance(n_particles, bool) or not isinstance(
+                n_particles, Integral
+            ):
+                raise TypeError("n_particles must be a positive integer.")
+            if n_particles <= 0:
+                raise ValueError("n_particles must be positive.")
+        self._n_particles = n_particles
         self._target = target
         self.persistent_state: PersistentParticleState | None = None
 
@@ -157,23 +204,53 @@ class PersistParticles(SMCStep):
             raise TypeError(
                 "PersistParticles requires an active ParticleState."
             )
-        if self._target is not None:
-            state = state.with_updates(
-                evaluation=self._target.prepare_evaluation(
-                    state.particles,
-                    context,
-                    evaluation=state.evaluation,
-                )
-            )
-
+        batch_size = self._n_particles or state.particles.shape[0]
+        size = state.particles.shape[0]
         # Match BaseTemperedStep: context is authoritative, active-state metadata
         # is the fallback, and an uninitialized run starts at beta = 0.
         beta = context.metadata.get("beta", state.metadata.get("beta", 0.0))
         if self.persistent_state is None:
-            archived = PersistentParticleState.from_state(
-                state,
-                beta=beta,
-                log_normalizing_constant=state.log_normalizing_constant,
+            if size < batch_size or size % batch_size:
+                raise ValueError(
+                    "Initial population must be a positive multiple of n_particles."
+                )
+            if size > batch_size:
+                xp = namespace(state.log_weights)
+                if float(beta) != 0.0:
+                    raise ValueError(
+                        "Larger initial populations require beta=0."
+                    )
+                if not bool(xp.all(state.log_weights == state.log_weights[0])):
+                    raise ValueError("Initial draws must have equal weights.")
+        elif size != self.persistent_state.batch_size:
+            raise ValueError(
+                "Active population must match the archive batch size."
+            )
+        if self._target is not None:
+            evaluation, counts = self._target.prepare_evaluation(
+                state.particles,
+                context,
+                evaluation=state.evaluation,
+                return_counts=True,
+            )
+            state = state.with_updates(evaluation=evaluation)
+            context = context.add_evaluation_counts(counts)
+
+        if self.persistent_state is None:
+            xp = namespace(state.particles)
+            n_batches = size // batch_size
+            archived = PersistentParticleState(
+                particles=state.particles,
+                batch_size=batch_size,
+                betas=asarray([beta] * n_batches, xp=xp, like=state.particles),
+                log_normalizing_constants=asarray(
+                    [state.log_normalizing_constant] * n_batches,
+                    xp=xp,
+                    like=state.particles,
+                ),
+                initial_ancestor_indices=state.initial_ancestor_indices,
+                evaluation=state.evaluation,
+                metadata=dict(state.metadata),
             )
         else:
             archived = self.persistent_state.append(
@@ -199,6 +276,10 @@ class PersistParticles(SMCStep):
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
         """Restore an archive produced by :meth:`state_dict`."""
+        if "initialization" in state:
+            raise ValueError(
+                "Staged-initialization checkpoints are no longer supported."
+            )
         evaluation_id = state.get("target_evaluation_id")
         if evaluation_id is not None:
             if self._target is None:
@@ -216,7 +297,15 @@ class PersistParticles(SMCStep):
             return
         if not isinstance(payload, Mapping):
             raise TypeError("PersistParticles state must contain a mapping.")
-        self.persistent_state = PersistentParticleState.from_dict(payload)
+        archived = PersistentParticleState.from_dict(payload)
+        if (
+            self._n_particles is not None
+            and archived.batch_size != self._n_particles
+        ):
+            raise ValueError(
+                "Checkpoint archive batch size does not match n_particles."
+            )
+        self.persistent_state = archived
 
 
 class BasePersistentTemperedWeighting(SMCStep):
@@ -417,6 +506,10 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
     target_total_ess:
         Optional effective sample size required before stopping at beta = 1.
         If omitted, stop when beta = 1 is first selected.
+    dynamic : bool, optional
+        Adapt the integer ESS threshold for the next iteration using expected
+        multinomial unique entries. Defaults to False. The fixed reference is
+        set by the initial threshold; the terminal target never adapts.
     beta_tolerance:
         Stop bisection once the beta bracket is no wider than this.
     max_bisection_iter:
@@ -425,26 +518,48 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         Cached target-evaluation components to refresh before weighting.
     """
 
+    _dynamic: bool
+    _initial_target_ess: float
+    _target_ess: float
+    _target_total_ess: float | None
+    _beta_tolerance: float
+    _max_bisection_iter: int
+
     def __init__(
         self,
         target: TemperedTarget,
         *,
         target_ess: float = 512,
         target_total_ess: float | None = None,
+        dynamic: bool = False,
         beta_tolerance: float = 1e-6,
         max_bisection_iter: int = 30,
         refresh_components: Collection[str] = (),
     ) -> None:
         super().__init__(target, refresh_components=refresh_components)
-        if not target_ess > 0.0:
+        if isinstance(target_ess, bool) or isinstance(target_total_ess, bool):
+            raise TypeError("ESS targets must be numbers, not booleans.")
+        if not math.isfinite(target_ess) or not target_ess > 0.0:
             raise ValueError("target_ess must be positive.")
-        if target_total_ess is not None and not target_total_ess > 0.0:
+        if target_total_ess is not None and (
+            not math.isfinite(target_total_ess) or not target_total_ess > 0.0
+        ):
             raise ValueError("target_total_ess must be positive.")
-        if not beta_tolerance > 0.0:
+        if not math.isfinite(beta_tolerance) or not beta_tolerance > 0.0:
             raise ValueError("beta_tolerance must be positive.")
+        if isinstance(max_bisection_iter, bool) or not isinstance(
+            max_bisection_iter, Integral
+        ):
+            raise TypeError("max_bisection_iter must be an integer.")
         if max_bisection_iter <= 0:
             raise ValueError("max_bisection_iter must be positive.")
-        self._target_ess = target_ess
+        if not isinstance(dynamic, bool):
+            raise TypeError("dynamic must be a bool.")
+        if dynamic and target_ess < 1:
+            raise ValueError("Dynamic target_ess must be at least one.")
+        self._dynamic = dynamic
+        self._initial_target_ess = int(target_ess) if dynamic else target_ess
+        self._target_ess = self._initial_target_ess
         self._target_total_ess = target_total_ess
         self._beta_tolerance = beta_tolerance
         self._max_bisection_iter = max_bisection_iter
@@ -547,6 +662,34 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         weighted = weighted.with_updates(metadata=metadata)
         context = context.with_metadata(target_ess=target_ess)
         output["target_ess"] = target_ess
+        if self._dynamic:
+            n_active = state.batch_size
+            unique_fraction = (
+                float(expected_unique_count(weighted.weights, n_active))
+                / n_active
+            )
+            initial = self._initial_target_ess
+            reference = (
+                1.0
+                if initial == 1
+                else -initial * math.expm1(n_active * math.log1p(-1 / initial))
+            ) / n_active
+            if unique_fraction < 0.95 * reference:
+                self._target_ess = int(self._target_ess / unique_fraction)
+            elif unique_fraction > min(1.05 * reference, 1.0):
+                self._target_ess = max(
+                    1, int(self._target_ess * unique_fraction)
+                )
+            diagnostics = dict(
+                next_target_ess=self._target_ess,
+                expected_unique_fraction=unique_fraction,
+                reference_unique_fraction=reference,
+            )
+            output.update(diagnostics)
+            context = context.with_metadata(**diagnostics)
+            weighted = weighted.with_updates(
+                metadata={**weighted.metadata, **diagnostics}
+            )
         if self._target_total_ess is not None:
             target_total_ess = asarray(
                 self._target_total_ess,
@@ -566,6 +709,38 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         ):
             context = context.request_stop_immediately()
         return weighted, context, output
+
+    def state_dict(self) -> dict[str, Any]:
+        """Save the next threshold and the fixed feedback reference."""
+        return dict(
+            dynamic=self._dynamic,
+            target_ess=self._target_ess,
+            initial_target_ess=self._initial_target_ess,
+            target_total_ess=self._target_total_ess,
+        )
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Load matching configuration; legacy empty state is static only."""
+        if not state:
+            if self._dynamic:
+                raise ValueError(
+                    "Legacy static checkpoint cannot resume dynamically."
+                )
+            return
+        for key, value in self.state_dict().items():
+            if key != "target_ess" and state.get(key) != value:
+                raise ValueError(
+                    "Checkpoint weighting configuration mismatch."
+                )
+        threshold = state["target_ess"]
+        if (
+            not math.isfinite(threshold)
+            or threshold <= 0
+            or isinstance(threshold, bool)
+            or (self._dynamic and threshold != int(threshold))
+        ):
+            raise ValueError("Invalid checkpoint target_ess.")
+        self._target_ess = threshold
 
     def apply_functional(
         self,

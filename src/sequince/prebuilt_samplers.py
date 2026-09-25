@@ -304,6 +304,7 @@ def make_persistent_bayesian_smc(
     n_particles: int = 256,
     target_ess: float | None = None,
     target_total_ess: float | None = None,
+    dynamic: bool = False,
     weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy | ResamplingStep = "systematic",
     resampling_kwargs: Dict[str, Any] | None = None,
@@ -328,9 +329,22 @@ def make_persistent_bayesian_smc(
     effective sample sizes of that archive; they are not fractions of the active
     population size.
 
-    The caller should initialize an ordinary :class:`ParticleState` containing
-    ``n_particles`` draws from the initial target. The first persistence step
-    prepares the target evaluation automatically and archives the state at beta
+    With ``dynamic=True``, adapt the temperature ESS threshold using the
+    multinomial expected unique fraction (a heuristic under systematic
+    resampling). The initial threshold is truncated to an integer >= 1;
+    ``target_total_ess`` never adapts. Updates take effect next iteration.
+
+    The initial ``ParticleState`` may contain any positive multiple of
+    ``n_particles`` equally weighted draws. Its size determines the initial
+    population; the sampler neither draws particles nor chooses this size.
+    Draws must follow ``log_proposal`` when configured, otherwise the prior.
+    All initial batches are archived at beta zero on the first call, before
+    tempering and resampling to the fixed active batch size. Nonmultiples are
+    rejected rather than truncated. Initialization is atomic, so checkpoints
+    resume after it, not between initial batches.
+
+    A one-batch initial state preserves the existing initialization behavior.
+    The first persistence step prepares evaluations and archives the state at beta
     zero. The adaptive weighting step requests an immediate runner stop once its
     terminal ESS condition is met. Progress is logged every
     ``logging_frequency`` iterations and once more for the terminal weighted
@@ -352,13 +366,15 @@ def make_persistent_bayesian_smc(
         log_proposal=log_proposal,
     )
 
-    persist_step = PersistParticles(posterior)
     weighting_step = PersistentAdaptiveTemperedWeighting(
         posterior,
         target_ess=target_ess,
         target_total_ess=target_total_ess,
+        dynamic=dynamic,
         **weighting_kwargs or {},
     )
+
+    persist_step = PersistParticles(posterior, n_particles=n_particles)
 
     if isinstance(resampling, ResamplingStep):
         if resampling_kwargs:
@@ -469,7 +485,7 @@ def make_persistent_bayesian_smc(
             required_ess = (
                 target_total_ess
                 if beta >= 1.0 and target_total_ess is not None
-                else target_ess
+                else float(weighting_output["target_ess"])
             )
             mutation = outputs[3] if len(outputs) > 3 else None
             acceptance = (
