@@ -37,6 +37,40 @@ IterationCallable: TypeAlias = Callable[
 ]
 
 
+StepCallable: TypeAlias = Callable[
+    [ParticleState, StepContext, "RandomGenerator"],
+    tuple[ParticleState, StepContext, Any],
+]
+
+
+@dataclass(frozen=True)
+class SMCConfig:
+    """Read-only snapshot of runner settings, separate from runtime state.
+
+    Attributes
+    ----------
+    steps : tuple of callables
+        Ordered pipeline. Step objects retain their identity and mutable state.
+    callbacks : tuple of callables
+        Host callbacks invoked after each iteration.
+    checkpoint_writers : tuple of CheckpointWriter
+        Writers invoked at checkpoint boundaries.
+    auto_normalize : bool
+        Whether the runner normalizes weights after each iteration.
+
+    Notes
+    -----
+    Containers and fields are immutable; referenced steps, callbacks, and
+    writers are not copied or frozen. This is a host-side configuration view,
+    not a checkpoint payload or compiled carry.
+    """
+
+    steps: tuple[StepCallable, ...]
+    callbacks: tuple[Callable[..., StepContext | None], ...]
+    checkpoint_writers: tuple[CheckpointWriter, ...]
+    auto_normalize: bool
+
+
 @dataclass
 class SMCRuntime:
     """Prepared SMC runtime state for fresh or resumed execution.
@@ -83,12 +117,7 @@ class SequentialMonteCarlo:
 
     def __init__(
         self,
-        steps: Sequence[
-            Callable[
-                [ParticleState, StepContext, "RandomGenerator"],
-                tuple[ParticleState, StepContext, Any],
-            ]
-        ],
+        steps: Sequence[StepCallable],
         *,
         callbacks: Sequence[Callable[..., StepContext | None]] | None = None,
         checkpoint_writers: Sequence[CheckpointWriter] | None = None,
@@ -98,6 +127,16 @@ class SequentialMonteCarlo:
         self._callbacks = list(callbacks) if callbacks is not None else []
         self._checkpoint_writers = list(checkpoint_writers or ())
         self._auto_normalize = auto_normalize
+
+    @property
+    def config(self) -> SMCConfig:
+        """Return a read-only snapshot of the current runner settings."""
+        return SMCConfig(
+            steps=tuple(self._steps),
+            callbacks=tuple(self._callbacks),
+            checkpoint_writers=tuple(self._checkpoint_writers),
+            auto_normalize=self._auto_normalize,
+        )
 
     def state_dict(self) -> dict[str, Any]:
         """Return mutable state for the configured step pipeline."""
@@ -262,6 +301,13 @@ class SequentialMonteCarlo:
         context: StepContext,
     ) -> tuple[ParticleState, StepContext]:
         """Return shape-complete state and context for functional execution."""
+        config = self.config
+        for step in self._steps:
+            validator = getattr(
+                step, "validate_functional_configuration", None
+            )
+            if callable(validator):
+                validator(config, initial_state)
         initialized: Mapping[str, Any] = dict(context.metadata)
         for step in self._steps:
             initializer = getattr(step, "initialize_functional_metadata", None)

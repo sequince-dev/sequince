@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 
 from sequince.exceptions import DegenerateWeightsError
-from sequince.smc import SequentialMonteCarlo
+from sequince.smc import SequentialMonteCarlo, SMCConfig
 from sequince.state import ParticleState
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.weighting import (
@@ -17,6 +18,57 @@ from sequince.target import EvaluationCounts
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
+
+
+def test_runner_config_is_a_read_only_snapshot() -> None:
+    step = SMCStep()
+    steps = [step]
+    smc = SequentialMonteCarlo(steps, auto_normalize=False)
+    config = smc.config
+
+    assert isinstance(config, SMCConfig)
+    assert config.steps == (step,)
+    assert config.steps[0] is step
+    assert config.callbacks == ()
+    assert config.checkpoint_writers == ()
+    assert not config.auto_normalize
+    steps.clear()
+    assert smc.config.steps == config.steps
+    with pytest.raises(FrozenInstanceError):
+        setattr(config, "auto_normalize", True)
+    assert not smc.config.auto_normalize
+
+
+def test_functional_configuration_is_validated_before_initialization() -> None:
+    initialized: list[bool] = []
+
+    class Initializer(SMCStep):
+        def initialize_functional_state_and_context(
+            self, state: ParticleState, context: StepContext
+        ) -> tuple[ParticleState, StepContext]:
+            initialized.append(True)
+            return state, context
+
+    class RequiresUnnormalizedRunner(SMCStep):
+        def validate_functional_configuration(
+            self, config: SMCConfig, state: ParticleState
+        ) -> None:
+            assert isinstance(config.steps[0], Initializer)
+            assert state.particles.shape[0] == 4
+            if config.auto_normalize:
+                raise ValueError("Disable automatic normalization")
+
+    steps = [Initializer(), RequiresUnnormalizedRunner()]
+    state = ParticleState(np.zeros((4, 1)))
+    context = StepContext(t=0)
+    with pytest.raises(ValueError, match="Disable automatic normalization"):
+        SequentialMonteCarlo(steps).initialize_functional(state, context)
+    assert initialized == []
+
+    SequentialMonteCarlo(steps, auto_normalize=False).initialize_functional(
+        state, context
+    )
+    assert initialized == [True]
 
 
 class StopAfterNStep(SMCStep):

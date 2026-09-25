@@ -9,6 +9,19 @@ Common interface
    :undoc-members:
    :show-inheritance:
 
+Before functional initialization, the runner calls each step's
+``validate_functional_configuration(config, state)`` hook, passing its
+``smc.config`` snapshot and the initial particle state.
+``SMCConfig`` exposes ``steps``, ``callbacks``, ``checkpoint_writers``, and
+``auto_normalize`` as read-only fields with tuple containers. Referenced step
+and callback objects retain their identity and mutable state. The config is
+host-side configuration, separate from runtime metadata and checkpoints.
+Steps can reject incompatible pipeline settings here, before any target
+evaluation or cache preparation. The default implementation does nothing.
+Metadata and cache preparation remain in ``initialize_functional_metadata``
+and ``initialize_functional_state_and_context``. Algorithm-specific checks
+belong to the relevant steps, rather than the runner.
+
 Functional conditional execution
 --------------------------------
 

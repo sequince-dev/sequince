@@ -13,6 +13,7 @@ from .context import StepContext
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
+    from ..smc import SMCConfig
     from ..state import ParticleState
 
 
@@ -89,6 +90,24 @@ class SMCStep:
         state, context, output = self.apply(state, context, rng)
         new_random_state = rng.state()
         return state, context, new_random_state, output
+
+    def validate_functional_configuration(
+        self, config: SMCConfig, state: ParticleState
+    ) -> None:
+        """Validate host-side pipeline settings before initializing any step.
+
+        Parameters
+        ----------
+        config : SMCConfig
+            Read-only runner configuration, including the complete pipeline.
+        state : ParticleState
+            Initial particle state, including the population shape.
+
+        Notes
+        -----
+        Override to reject incompatible pipeline settings. Metadata and cache
+        preparation belong in the existing functional initialization hooks.
+        """
 
     def initialize_functional_metadata(
         self,

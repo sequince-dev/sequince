@@ -24,7 +24,7 @@ from .proposals import (
     draw_mcmc_initial_state,
 )
 from .result import NestedSamplingLevel, NestedSamplingSMCResult, SMCResult
-from .smc import SequentialMonteCarlo
+from .smc import SequentialMonteCarlo, SMCConfig
 from .state import ParticleState, PersistentParticleState
 from .steps.constraints import (
     FixedLikelihoodThresholdSchedule,
@@ -67,6 +67,7 @@ __all__ = [
     "SequentialMonteCarlo",
     "MetaSequentialMonteCarlo",
     "SMCResult",
+    "SMCConfig",
     "SequentialTarget",
     "SequentialDensity",
     "TemperedDensity",
