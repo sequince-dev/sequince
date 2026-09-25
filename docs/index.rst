@@ -11,7 +11,6 @@ sequential methods.
 
    getting_started
    user_guide
-   persistent_sampling
    checkpointing
    examples
    api/index
