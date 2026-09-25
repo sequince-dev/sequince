@@ -213,6 +213,46 @@ def test_fixed_functional_metadata_does_not_require_adaptive_target() -> None:
     assert initialized["ess"] == pytest.approx(4.0)
 
 
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_guarded_weighting_reuses_density_cache(adaptive: bool) -> None:
+    from sequince import TemperedPosterior
+    from sequince.steps import apply_functional_if
+
+    calls = []
+
+    def likelihood(particles):
+        calls.append(True)
+        return -jnp.sum(particles**2, axis=-1)
+
+    target = TemperedPosterior(lambda x: jnp.zeros(x.shape[0]), likelihood)
+    step = (
+        AdaptiveTemperedWeighting(target, target_ess_ratio=0.8)
+        if adaptive
+        else FixedTemperedWeighting(target, beta_increment=0.5)
+    )
+    context = _adaptive_context() if adaptive else _context()
+    particles = jnp.arange(4.0).reshape(4, 1)
+    state = ParticleState(
+        particles, evaluation=target.evaluate(particles, context)
+    )
+    expected, _, _ = step.apply(state, context, RandomGenerator(backend="jax"))
+
+    def guarded(state, context, key):
+        return apply_functional_if(
+            jnp.asarray(True), step.apply_functional, state, context, key
+        )
+
+    updated, _, _, _ = jax.jit(guarded)(state, context, jax.random.key(42))
+    assert calls == [True]
+    assert set(updated.evaluation.components) == {
+        "log_prior",
+        "log_likelihood",
+    }
+    for name, value in state.evaluation.components.items():
+        np.testing.assert_array_equal(updated.evaluation[name], value)
+    np.testing.assert_allclose(updated.log_weights, expected.log_weights)
+
+
 def test_run_functional_initializes_metadata_automatically() -> None:
     smc, _, metadata = _fixed_blackjax_sampler()
     custom = jnp.asarray(7.0)
@@ -313,8 +353,9 @@ def test_functional_iteration_can_be_jitted() -> None:
     state = ParticleState(jnp.zeros((4, 2)))
     key = jax.random.key(42)
 
+    state, context = smc.initialize_functional(state, _context())
     updated, context, next_key, outputs = jax.jit(smc.functional_iteration)(
-        state, _context(), key
+        state, context, key
     )
 
     assert updated.particles.shape == (4, 2)
@@ -375,6 +416,7 @@ def test_functional_iteration_matches_host_iteration() -> None:
         rng=rng,
         metadata=context.metadata,
     )
+    state, context = smc.initialize_functional(state, context)
     actual_state, actual_context, actual_key, _ = jax.jit(
         smc.functional_iteration
     )(state, context, key)
@@ -408,7 +450,7 @@ def test_functional_iteration_matches_host_iteration() -> None:
 def test_functional_iteration_replays_from_same_random_state() -> None:
     smc, _, _ = _fixed_blackjax_sampler()
     state = ParticleState(jnp.zeros((4, 2)))
-    context = _context()
+    state, context = smc.initialize_functional(state, _context())
     key = jax.random.key(42)
     iteration = jax.jit(smc.functional_iteration)
 

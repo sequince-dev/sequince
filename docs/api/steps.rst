@@ -9,6 +9,33 @@ Common interface
    :undoc-members:
    :show-inheritance:
 
+Functional conditional execution
+--------------------------------
+
+``sequince.steps.apply_functional_if(predicate, apply, state, context, key)``
+is a reusable control-flow helper for functional steps, using ``acai.cond``.
+It executes
+``apply(state, context, key)`` only when the scalar predicate is true. Otherwise
+it returns the unchanged state, context, and RNG. On NumPy, CuPy, and PyTorch,
+only the selected branch executes and skipped output is None. PyTorch control
+flow is eager, without structured ``torch.compile`` guarantees. On JAX, skipped
+outputs contain zero array placeholders in the normal output structure, with
+static fields retained. Both JAX branches are traced; the operation must be
+pure and traceable even when skipped, and initialization must establish matching
+carry structures, shapes, and dtypes. Placeholder outputs do not describe
+executed transitions.
+
+After each functional step, the runner guards subsequent steps using the
+runtime ``context.stop_immediately`` flag. ``StopIf(immediate=True)``, NS-SMC
+shell steps, and custom steps returning ``context.request_stop_immediately()``
+all stop execution without an additional capability declaration. An ordinary
+stop request still permits the rest of the iteration to execute. Use
+``initialize_functional`` before directly invoking a compiled iteration so
+all guarded steps have compatible carries; ``run_functional`` and
+``compile_functional_iteration`` perform this initialization automatically.
+As in eager execution, runner-level automatic normalization still runs after
+the step sequence when enabled.
+
 Weighting strategies
 --------------------
 

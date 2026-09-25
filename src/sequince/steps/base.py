@@ -45,7 +45,12 @@ class FixedLengthMutation(Protocol):
 
 
 class SMCStep:
-    """Base class for steps with explicit context and output returns."""
+    """Base class for steps with explicit context and output returns.
+
+    Functional steps request immediate stopping through StepContext. The runner
+    conditionally skips later steps, which must have initialized, fixed-structure
+    functional carries under JAX.
+    """
 
     def __call__(
         self,

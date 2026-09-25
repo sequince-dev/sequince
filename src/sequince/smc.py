@@ -178,27 +178,37 @@ class SequentialMonteCarlo:
 
         Notes
         -----
-        This method deliberately does not inspect ``stop_immediately`` between
-        steps. Runtime-dependent early interruption of a compiled iteration
-        would require JAX control flow and fixed skipped-output structures.
-        Stop requests are therefore handled by the host loop after a complete
-        functional iteration.
+        After each step, ``context.stop_immediately`` guards subsequent steps,
+        preserving terminal particles and RNG state. Guarded JAX steps require
+        initialized carries with matching structures, shapes, and dtypes.
+        Ordinary stop requests are handled after the complete iteration.
+        Skipped JAX outputs contain zero placeholders with their usual structure;
+        eager backend skips return None as the step output.
         """
         xp = namespace(state.log_weights)
         outputs = []
 
-        for step in self._steps:
+        from .steps.control import apply_functional_if
+
+        for index, step in enumerate(self._steps):
             if not hasattr(step, "apply_functional"):
                 raise TypeError(
                     f"{type(step).__name__} does not provide "
                     "apply_functional()."
                 )
 
-            state, context, random_state, output = step.apply_functional(
-                state,
-                context,
-                random_state,
-            )
+            if index > 0:
+                state, context, random_state, output = apply_functional_if(
+                    ~xp.asarray(context.stop_immediately),
+                    step.apply_functional,
+                    state,
+                    context,
+                    random_state,
+                )
+            else:
+                state, context, random_state, output = step.apply_functional(
+                    state, context, random_state
+                )
             outputs.append(output)
 
         if self._auto_normalize:
