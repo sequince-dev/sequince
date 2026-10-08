@@ -1,15 +1,15 @@
 Using observations
 ==================
 
-Pass an iterable to ``observations`` when an SMC iteration should process one
-item from a data stream. The runner consumes at most one item at the beginning
+A common use-case of SMC is to iteratively process a sequence of observations
+constituting a data stream. To operate `sequince` in this mode, an iterable can
+be passed to the SMC runner, which consumes at most one item at the beginning
 of each iteration and exposes it as
-:attr:`~sequince.steps.context.StepContext.observation`. Every step and callback
-in that iteration sees the same observation.
+:attr:`~sequince.steps.context.StepContext.observation` to each SMC step / callback.
 
-An observation can be any object: a scalar measurement, an array, a batch, or a
-structured value containing several fields. Sequince does not interpret it; the
-configured steps or target functions decide how it affects the particle state.
+As the precise structure of an observation depends only on what the constituent SMC
+steps expect, it can be any object: a scalar measurement, an array, a batch, or a
+structured value containing several fields.
 
 A sequential likelihood update
 ------------------------------
@@ -52,17 +52,12 @@ step can evaluate the likelihood contribution from the current observation:
         shared_context={"observation_variance": 1.0},
     )
 
-This run produces three states: ``result.states[i]`` is the population after
+This example run produces three states: ``result.states[i]`` is the population after
 processing ``observations[i]``. The state before any observations were processed
 is available as ``result.initial_state``.
 
-Each item is one iteration
---------------------------
-
-``observations`` defines iteration input, not an automatically vectorized data
-axis. A list containing three arrays causes three iterations; each array is the
-complete ``context.observation`` for its iteration. All configured steps run
-once for each consumed item.
+Interplay with ``num_steps``
+----------------------------
 
 The interaction between ``observations`` and ``num_steps`` is important:
 
@@ -92,7 +87,7 @@ The interaction between ``observations`` and ``num_steps`` is important:
 
 A stop request can always end a run before either limit. Conversely, passing
 neither a finite observation stream nor ``num_steps`` requires the pipeline to
-request its own stop; otherwise the run has no natural bound.
+request its own stop; otherwise the run will continue indefinitely.
 
 A run must complete at least one iteration. Consequently, an empty observation
 iterable with no ``num_steps`` produces no state and raises ``ValueError``.
@@ -124,8 +119,8 @@ explicitly.
 Observation position
 --------------------
 
-``context.t`` is the zero-based SMC iteration. It is not necessarily an
-observation index because iterations may continue after the input is exhausted.
+While ``context.t`` is the SMC iteration, it is not necessarily an
+observation index because iterations may continue after the observations are exhausted.
 ``context.next_observation_index`` counts observations already consumed and is
 the position from which a resumable sequence will continue. During the
 iteration processing ``observations[i]``, it is already ``i + 1``.
@@ -138,7 +133,9 @@ Checkpointing and resuming
 --------------------------
 
 Checkpoints store ``next_observation_index`` but do not store the full input
-stream. When resuming a run that has already consumed observations, pass the
+stream, as the flexible nature of this iterable (and its contents) means it is not
+guaranteed to be compatible with inbuilt checkpointing schemes.
+When resuming a run that has already consumed observations, pass the
 original indexable sequence to ``run``:
 
 .. code-block:: python
@@ -153,17 +150,16 @@ original indexable sequence to ``run``:
     )
 
 The runner resumes with ``all_observations[checkpoint.next_observation_index]``.
-A one-shot iterator cannot be repositioned and is rejected after any
-observations have already been consumed. See :doc:`checkpointing` for the full
-checkpoint workflow.
+As generators cannot be repositioned, they are not compatible with this procedure.
+See :doc:`checkpointing` for the full checkpoint workflow.
 
-JAX observations
-----------------
+Observations with the JAX backend
+---------------------------------
 
-``run_functional`` has the same host-side observation and termination semantics.
-When using a compiled iteration, all observations must have a pytree structure,
-array shapes, and dtypes compatible with the compiled signature. Supply a
-representative first observation to the compilation helper:
+The jit-compilable :meth:`~sequince.smc.SequentialMonteCarlo.run_functional` follows the same
+same behaviour as the standard runner regarding observations. To use a compiled iteration,
+all observations must be compatible with tracing (e.g. static shapes and dtypes).
+For easy compilation, supply a representative first observation to the compilation helper:
 
 .. code-block:: python
 
