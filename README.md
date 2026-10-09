@@ -22,7 +22,10 @@ pip install sequince
 
 ## Quick start
 
-Fit a straight line, `y = slope * x + intercept`, to synthetic data with
+Below, we show a short example of how to use `sequince`, for more detailed examples,
+see the [documentation](https://sequince.readthedocs.io).
+
+Here, we fit a straight line, `y = slope * x + intercept`, to synthetic data with
 independent Gaussian measurement errors and uniform priors on both parameters.
 The log-prior and log-likelihood callbacks accept particles shaped
 `(n_particles, n_parameters)` and return one log density per particle.
@@ -75,6 +78,7 @@ bounds = [-5, 5]
 # Draw initial (slope, intercept) particles from the prior.
 n = 1000
 initial_particles = rng.uniform(*bounds, size=(n, 2))
+# Construct the initial state
 initial_state = ParticleState(particles=initial_particles)
 
 # Construct the shared context dictionary that will be exposed to the log_prior
@@ -102,9 +106,8 @@ print(f"Posterior mean slope: {mean_slope:.2f}")
 print(f"Posterior mean intercept: {mean_intercept:.2f}")
 ```
 
-See the [documentation](<https://sequince.readthedocs.io>) for details on the
-different components (shared context, metadata, results), composing custom pipelines and
-implementing additional steps.
+See the [documentation](https://sequince.readthedocs.io) for details on the
+different components (shared context, metadata, results), composing custom pipelines and implementing additional steps.
 
 ## Documentation
 
