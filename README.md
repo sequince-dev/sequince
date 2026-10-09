@@ -3,6 +3,14 @@
 Sequince is a modular Sequential Monte Carlo (SMC) library for Bayesian inference,
 particle filtering, and related sequential methods.
 
+## Installation
+
+`sequince` targets Python 3.11+ and can be installed directly from PyPI:
+
+```bash
+pip install sequince
+```
+
 ## Features
 
 - Array API support for NumPy, JAX, PyTorch, and CuPy backends.
@@ -11,14 +19,6 @@ particle filtering, and related sequential methods.
 - Analyse runs via `SMCResult`, including posterior resampling and diagnostics helpers.
 - Estimate Bayesian evidence alongside posterior sampling.
 - Save checkpoints and resume sampling runs.
-
-## Installation
-
-`sequince` targets Python 3.11+ and can be installed directly from PyPI:
-
-```bash
-pip install sequince
-```
 
 ## Quick start
 
