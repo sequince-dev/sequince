@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Callable, TypeAlias
+from typing import TYPE_CHECKING, Any, Callable, Self, TypeAlias
 
 from .array_api import namespace
 from .checkpoint import (
@@ -35,6 +35,40 @@ IterationCallable: TypeAlias = Callable[
     [ParticleState, StepContext, Any],
     tuple[ParticleState, StepContext, Any, tuple[Any, ...]],
 ]
+
+
+StepCallable: TypeAlias = Callable[
+    [ParticleState, StepContext, "RandomGenerator"],
+    tuple[ParticleState, StepContext, Any],
+]
+
+
+@dataclass(frozen=True)
+class SMCConfig:
+    """Read-only snapshot of runner settings, separate from runtime state.
+
+    Attributes
+    ----------
+    steps : tuple of callables
+        Ordered pipeline. Step objects retain their identity and mutable state.
+    callbacks : tuple of callables
+        Host callbacks invoked after each iteration.
+    checkpoint_writers : tuple of CheckpointWriter
+        Writers invoked at checkpoint boundaries.
+    auto_normalize : bool
+        Whether the runner normalizes weights after each iteration.
+
+    Notes
+    -----
+    Containers and fields are immutable; referenced steps, callbacks, and
+    writers are not copied or frozen. This is a host-side configuration view,
+    not a checkpoint payload or compiled carry.
+    """
+
+    steps: tuple[StepCallable, ...]
+    callbacks: tuple[Callable[..., StepContext | None], ...]
+    checkpoint_writers: tuple[CheckpointWriter, ...]
+    auto_normalize: bool
 
 
 @dataclass
@@ -83,12 +117,7 @@ class SequentialMonteCarlo:
 
     def __init__(
         self,
-        steps: Sequence[
-            Callable[
-                [ParticleState, StepContext, "RandomGenerator"],
-                tuple[ParticleState, StepContext, Any],
-            ]
-        ],
+        steps: Sequence[StepCallable],
         *,
         callbacks: Sequence[Callable[..., StepContext | None]] | None = None,
         checkpoint_writers: Sequence[CheckpointWriter] | None = None,
@@ -98,6 +127,43 @@ class SequentialMonteCarlo:
         self._callbacks = list(callbacks) if callbacks is not None else []
         self._checkpoint_writers = list(checkpoint_writers or ())
         self._auto_normalize = auto_normalize
+
+    @property
+    def config(self) -> SMCConfig:
+        """Return a read-only snapshot of the current runner settings."""
+        return SMCConfig(
+            steps=tuple(self._steps),
+            callbacks=tuple(self._callbacks),
+            checkpoint_writers=tuple(self._checkpoint_writers),
+            auto_normalize=self._auto_normalize,
+        )
+
+    @classmethod
+    def from_config(cls, config: SMCConfig) -> Self:
+        """Construct a runner from a configuration snapshot.
+
+        Parameters
+        ----------
+        config : SMCConfig
+            Runner settings, such as those returned by ``runner.config``.
+
+        Returns
+        -------
+        SequentialMonteCarlo
+            A new runner constructed through ``cls`` with the supplied settings.
+
+        Notes
+        -----
+        Steps, callbacks, and checkpoint writers are shared by reference.
+        This does not clone their mutable state or restore a checkpoint.
+        Subclasses must accept the same constructor arguments.
+        """
+        return cls(
+            config.steps,
+            callbacks=config.callbacks,
+            checkpoint_writers=config.checkpoint_writers,
+            auto_normalize=config.auto_normalize,
+        )
 
     def state_dict(self) -> dict[str, Any]:
         """Return mutable state for the configured step pipeline."""
@@ -178,27 +244,37 @@ class SequentialMonteCarlo:
 
         Notes
         -----
-        This method deliberately does not inspect ``stop_immediately`` between
-        steps. Runtime-dependent early interruption of a compiled iteration
-        would require JAX control flow and fixed skipped-output structures.
-        Stop requests are therefore handled by the host loop after a complete
-        functional iteration.
+        After each step, ``context.stop_immediately`` guards subsequent steps,
+        preserving terminal particles and RNG state. Guarded JAX steps require
+        initialized carries with matching structures, shapes, and dtypes.
+        Ordinary stop requests are handled after the complete iteration.
+        Skipped JAX outputs contain zero placeholders with their usual structure;
+        eager backend skips return None as the step output.
         """
         xp = namespace(state.log_weights)
         outputs = []
 
-        for step in self._steps:
+        from .steps.control import apply_functional_if
+
+        for index, step in enumerate(self._steps):
             if not hasattr(step, "apply_functional"):
                 raise TypeError(
                     f"{type(step).__name__} does not provide "
                     "apply_functional()."
                 )
 
-            state, context, random_state, output = step.apply_functional(
-                state,
-                context,
-                random_state,
-            )
+            if index > 0:
+                state, context, random_state, output = apply_functional_if(
+                    ~xp.asarray(context.stop_immediately),
+                    step.apply_functional,
+                    state,
+                    context,
+                    random_state,
+                )
+            else:
+                state, context, random_state, output = step.apply_functional(
+                    state, context, random_state
+                )
             outputs.append(output)
 
         if self._auto_normalize:
@@ -252,6 +328,13 @@ class SequentialMonteCarlo:
         context: StepContext,
     ) -> tuple[ParticleState, StepContext]:
         """Return shape-complete state and context for functional execution."""
+        config = self.config
+        for step in self._steps:
+            validator = getattr(
+                step, "validate_functional_configuration", None
+            )
+            if callable(validator):
+                validator(config, initial_state)
         initialized: Mapping[str, Any] = dict(context.metadata)
         for step in self._steps:
             initializer = getattr(step, "initialize_functional_metadata", None)
@@ -494,6 +577,12 @@ class SequentialMonteCarlo:
                 _, log_norm = normalize_log_weights(state.log_weights, xp=xp)
                 _validate_log_normalizer(log_norm, xp=xp)
                 _validate_log_normalizer(state.log_normalizing_constant, xp=xp)
+                for step in self._steps:
+                    validator = getattr(
+                        step, "validate_functional_state_and_context", None
+                    )
+                    if callable(validator):
+                        validator(state, context)
 
             outputs.append(iteration_outputs)
             produced_states.append(state)

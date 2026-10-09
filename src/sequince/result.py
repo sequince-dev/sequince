@@ -13,6 +13,7 @@ from numpy.random import Generator as NumPyGenerator
 from ._typing import Array
 from .array_api import asarray, get_device, namespace, to_numpy
 from .state import ParticleState
+from .steps.constraints import _STOP_REASONS, NestedSamplingLevel
 from .steps.context import StepContext
 from .steps.meta import META_SMC_OUTPUT_KEY
 from .utils.random import resolve_rng
@@ -425,7 +426,14 @@ class SMCResult:
         return self.final_state.log_normalizing_constant
 
     def log_evidence(self) -> Array:
-        """Alias for :meth:`log_normalizing_constant`."""
+        """Alias for :meth:`log_normalizing_constant` for ordinary SMC runs.
+
+        For NS-SMC, use :meth:`as_nested_sampling_result` for shell evidence.
+        """
+        if "nested_sampling" in self.final_state.metadata:
+            raise ValueError(
+                "NS-SMC evidence requires as_nested_sampling_result().log_evidence."
+            )
         return self.log_normalizing_constant()
 
     def log_normalizing_constant_variance(
@@ -783,6 +791,10 @@ class SMCResult:
         summary_dict["final_beta"] = float(to_numpy(beta_history)[-1])
         return summary_dict
 
+    def as_nested_sampling_result(self) -> NestedSamplingSMCResult:
+        """Interpret this run as a likelihood-constrained NS-SMC trajectory."""
+        return NestedSamplingSMCResult(self)
+
     def posterior_samples(
         self,
         *,
@@ -822,6 +834,11 @@ class SMCResult:
         sample_weights
             Normalized weights associated with ``samples``.
         """
+        if "nested_sampling" in self.final_state.metadata:
+            raise ValueError(
+                "NS-SMC posterior samples require "
+                "as_nested_sampling_result().posterior_samples()."
+            )
         final_state = self.final_state
         xp = namespace(final_state.particles, final_state.weights)
 
@@ -1403,3 +1420,201 @@ class MetaSMCResult:
         except Exception:
             pass
         return summary_dict
+
+
+@dataclass(frozen=True)
+class NestedSamplingSMCResult:
+    """Evidence and shell-weighted posterior view of an NS-SMC result.
+
+    The wrapped result's final state is a constrained prior, not a posterior.
+    Use this wrapper's posterior_samples method for Bayesian inference.
+    """
+
+    result: SMCResult
+
+    def __post_init__(self) -> None:
+        if "nested_sampling" not in self.final_state.metadata:
+            raise ValueError("Expected a result produced by NS-SMC.")
+
+    def __len__(self) -> int:
+        return len(self.result)
+
+    def __getitem__(self, index: int) -> ParticleState:
+        return self.result[index]
+
+    @property
+    def states(self) -> Sequence[ParticleState]:
+        return self.result.states
+
+    @property
+    def context(self) -> StepContext:
+        return self.result.context
+
+    @property
+    def final_state(self) -> ParticleState:
+        return self.result.final_state
+
+    @property
+    def _final_metadata(self) -> Mapping[str, Any]:
+        return self.final_state.metadata["nested_sampling"]
+
+    @property
+    def log_evidence(self) -> float:
+        """Accumulated shell evidence, including the live tail if finalized."""
+        return float(self._final_metadata["log_nested_evidence"])
+
+    @property
+    def complete(self) -> bool:
+        return bool(self._final_metadata["is_terminal"])
+
+    @property
+    def stop_reason(self) -> str | None:
+        """Readable stopping diagnostic for eager and functional executions."""
+        value = self._final_metadata["stop_reason"]
+        return (
+            value
+            if value is None or isinstance(value, str)
+            else _STOP_REASONS[int(value)]
+        )
+
+    def _shell_outputs(self) -> list[Mapping[str, Any]]:
+        return [
+            output
+            for iteration in self.result.outputs
+            for output in iteration
+            if isinstance(output, Mapping)
+            and NestedSamplingLevel.output_key in output
+            and bool(output.get("valid", True))
+        ]
+
+    def levels(self) -> list[NestedSamplingLevel]:
+        """Return per-shell diagnostics, including a terminal shell if present."""
+        levels = []
+        for output in self._shell_outputs():
+            fields = dict(output[NestedSamplingLevel.output_key])
+            fields = {
+                key: (
+                    bool(value)
+                    if key == "is_terminal"
+                    else int(value)
+                    if key in {"iteration", "n_surviving"}
+                    else None
+                    if value is None
+                    else float(value)
+                )
+                for key, value in fields.items()
+            }
+            if fields["is_terminal"]:
+                fields["shell_upper_threshold"] = None
+            levels.append(NestedSamplingLevel(**fields))
+        return levels
+
+    def _runtime_history(self, name: str) -> Array:
+        reference = self.final_state.log_weights
+        return asarray(
+            [state.metadata["nested_sampling"][name] for state in self.states],
+            xp=namespace(reference),
+            like=reference,
+        )
+
+    def _level_history(self, name: str) -> Array:
+        reference = self.final_state.log_weights
+        values = [getattr(level, name) for level in self.levels()]
+        return asarray(
+            [math.nan if value is None else value for value in values],
+            xp=namespace(reference),
+            like=reference,
+        )
+
+    def threshold_history(self) -> Array:
+        return self._runtime_history("threshold")
+
+    def survival_fraction_history(self) -> Array:
+        return self._runtime_history("survival_fraction")
+
+    def surviving_particles_history(self) -> Array:
+        return self._runtime_history("n_surviving")
+
+    def log_prior_volume_history(self) -> Array:
+        return self._runtime_history("log_prior_volume")
+
+    def log_prior_volume_increment_history(self) -> Array:
+        return self._runtime_history("log_prior_volume_increment")
+
+    def log_evidence_history(self) -> Array:
+        return self._level_history("log_evidence")
+
+    def log_evidence_increment_history(self) -> Array:
+        return self._level_history("log_evidence_increment")
+
+    def shell_lower_threshold_history(self) -> Array:
+        return self._level_history("shell_lower_threshold")
+
+    def shell_upper_threshold_history(self) -> Array:
+        return self._level_history("shell_upper_threshold")
+
+    def posterior_samples(
+        self,
+        *,
+        n_samples: int | None = None,
+        rng: RandomGenerator | NumPyGenerator | int | None = None,
+        method: Literal["multinomial", "rejection", "weights"] = "weights",
+    ) -> tuple[Array, Array]:
+        """Return shell particles weighted by their contribution to evidence.
+
+        Parameters and return values follow SMCResult.posterior_samples. A
+        finalized run with store_shell_particles=True is required. Particle
+        weights are quadrature weights; their ESS does not measure MCMC
+        independence or account for shared ancestors.
+        """
+        if not self.complete:
+            raise ValueError(
+                "NS-SMC run is incomplete; resume before drawing posterior samples."
+            )
+        shells = self._shell_outputs()
+        if not shells or any("particles" not in output for output in shells):
+            raise ValueError(
+                "Posterior reconstruction requires store_shell_particles=True."
+            )
+        if not math.isfinite(self.log_evidence):
+            raise ValueError(
+                "Posterior is undefined for zero or non-finite evidence."
+            )
+        xp = namespace(self.final_state.particles)
+        particles = xp.concat(
+            tuple(
+                output["particles"][output["mask"]]
+                if "mask" in output
+                else output["particles"]
+                for output in shells
+            )
+        )
+        log_weights = xp.concat(
+            tuple(
+                output["log_weights"][output["mask"]]
+                if "mask" in output
+                else output["log_weights"]
+                for output in shells
+            )
+        )
+        posterior = ParticleState(
+            particles, log_weights=log_weights - self.log_evidence
+        )
+        return SMCResult(
+            states=[posterior], context=self.context
+        ).posterior_samples(n_samples=n_samples, rng=rng, method=method)
+
+    def summary(self) -> dict[str, Any]:
+        runtime = self._final_metadata
+        return {
+            "iterations": len(self),
+            "shells": len(self.levels()),
+            "final_log_likelihood_threshold": runtime["threshold"],
+            "final_log_prior_volume": runtime["log_prior_volume"],
+            "final_log_evidence": self.log_evidence,
+            "final_survival_fraction": runtime["survival_fraction"],
+            "final_n_surviving": runtime["n_surviving"],
+            "final_ess": self.final_state.effective_sample_size(),
+            "terminal_shell_recorded": self.complete,
+            "stop_reason": self.stop_reason,
+        }

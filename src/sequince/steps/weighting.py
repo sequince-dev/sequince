@@ -352,6 +352,36 @@ class BaseTemperedStep(SMCStep):
             context.add_evaluation_counts(counts),
         )
 
+    @staticmethod
+    def _preserve_functional_cache(
+        original: ParticleState, updated: ParticleState
+    ) -> ParticleState:
+        """Keep a derived increment local unless it was in the initialized cache.
+
+        Mutation caches hold density components, while weighting may temporarily
+        add log_increment. Retaining that extra leaf until mutation would change
+        the carry structure at the mutation's conditional boundary. Preserve all
+        refreshed density values, removing only this transient derived entry.
+        """
+        evaluation = updated.evaluation
+        if (
+            original.evaluation is not None
+            and "log_increment" not in original.evaluation
+            and evaluation is not None
+            and "log_increment" in evaluation
+        ):
+            updated = updated.with_updates(
+                evaluation=replace(
+                    evaluation,
+                    components={
+                        name: value
+                        for name, value in evaluation.components.items()
+                        if name != "log_increment"
+                    },
+                )
+            )
+        return updated
+
     def evaluate_log_increment(
         self,
         state: ParticleState,
@@ -643,7 +673,9 @@ class FixedTemperedWeighting(BaseTemperedStep):
         random_state: Any,
     ) -> tuple[ParticleState, StepContext, Any, dict[str, Any]]:
         """Apply fixed tempering without host scalar conversions."""
+        original = state
         state, context, output, _, _ = self._transition(state, context)
+        state = self._preserve_functional_cache(original, state)
         return state, context, random_state, output
 
     def _transition(
@@ -913,7 +945,9 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         random_state: Any,
     ) -> tuple[ParticleState, StepContext, Any, dict[str, Any]]:
         """Apply adaptive tempering while explicitly threading random state."""
+        original = state
         state, context, output, _, _, _ = self._transition(state, context)
+        state = self._preserve_functional_cache(original, state)
         return state, context, random_state, output
 
     def _transition(

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
+from acai import cond
+
+from .._typing import Array
+from ..array_api import is_jax_namespace, namespace
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:
@@ -13,6 +17,72 @@ if TYPE_CHECKING:
     from ..state import ParticleState
 
 logger = logging.getLogger(__name__)
+
+
+def apply_functional_if(
+    predicate: bool | Array,
+    apply: Callable[
+        [ParticleState, StepContext, Any],
+        tuple[ParticleState, StepContext, Any, Any],
+    ],
+    state: ParticleState,
+    context: StepContext,
+    random_state: Any,
+) -> tuple[ParticleState, StepContext, Any, Any]:
+    """Conditionally execute a functional step through backend control flow.
+
+    Parameters
+    ----------
+    predicate : bool or scalar array
+        Execute the step when true; otherwise preserve the entire input carry.
+    apply : callable
+        Pure, traceable ``apply(state, context, random_state)`` operation.
+    state : ParticleState
+        Initialized particle state, including any evaluation cache.
+    context : StepContext
+        Initialized context with all metadata required by the operation.
+    random_state : object
+        Explicit backend random state.
+
+    Returns
+    -------
+    state, context, random_state, output : tuple
+        Executed step results, or unchanged inputs. Skipped output is None on
+        eager backends. On JAX it contains zero array placeholders in the step's
+        output structure, with static fields unchanged.
+
+    Notes
+    -----
+    Uses acai.cond: eager backends execute only the selected branch. On JAX,
+    abstract evaluation traces ``apply`` even when skipped, but does not execute
+    transitions or consume random draws. Both branches must preserve the carry's
+    pytree structure, shapes, and dtypes. Initialize missing leaves with the
+    functional initialization hooks before calling this helper. Output leaves
+    must support JAX zero construction; placeholders are not step diagnostics.
+    PyTorch execution is eager; structured torch.compile is not guaranteed.
+    """
+    xp = namespace(state.particles)
+    carry = (state, context, random_state)
+    empty = None
+    if is_jax_namespace(xp):
+        import jax
+
+        abstract = jax.eval_shape(apply, *carry)
+        if jax.tree.structure(abstract[:3]) != jax.tree.structure(carry):
+            raise ValueError(
+                "Conditional step changes its carry structure. Initialize all "
+                "state, context, and evaluation-cache leaves before guarding it."
+            )
+        empty = jax.tree.map(
+            lambda leaf: xp.zeros(leaf.shape, leaf.dtype), abstract[3]
+        )
+    return cond(
+        predicate,
+        lambda carry: apply(*carry),
+        lambda carry: (*carry, empty),
+        carry,
+        xp=xp,
+    )
 
 
 @dataclass(frozen=True)
@@ -89,6 +159,21 @@ class StopIf(SMCStep):
     ):
         self._predicate = predicate
         self._immediate = immediate
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, None]:
+        """Evaluate a traceable predicate without consuming random state."""
+        xp = namespace(state.particles)
+        stop = xp.asarray(self._predicate(state, context), dtype=bool)
+        context = replace(
+            context,
+            stop_requested=xp.where(stop, True, context.stop_requested),
+            stop_immediately=xp.where(
+                stop, self._immediate, context.stop_immediately
+            ),
+        )
+        return state, context, random_state, None
 
     def apply(
         self,
