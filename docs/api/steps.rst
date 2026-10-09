@@ -62,7 +62,11 @@ Nested-sampling SMC
 
 Use ``make_nested_sampling_smc`` to construct the composable pipeline and wrap its
 result in ``NestedSamplingSMCResult`` for shell evidence and posterior samples.
-``NestedSamplingLevel`` provides the per-shell diagnostics.
+``NestedSamplingLevel`` provides the per-shell diagnostics. The ordinary
+``SMCResult.log_evidence()`` and ``SMCResult.posterior_samples()`` methods raise
+an error for NS-SMC results and direct callers to this wrapper.
+``SMCResult.log_normalizing_constant()`` remains available for the constrained
+prior normalization.
 
 Custom threshold schedules must implement
 ``schedule(log_likelihoods, state, context) -> float | scalar array``. All three arguments are

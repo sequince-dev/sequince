@@ -426,7 +426,14 @@ class SMCResult:
         return self.final_state.log_normalizing_constant
 
     def log_evidence(self) -> Array:
-        """Alias for :meth:`log_normalizing_constant`."""
+        """Alias for :meth:`log_normalizing_constant` for ordinary SMC runs.
+
+        For NS-SMC, use :meth:`as_nested_sampling_result` for shell evidence.
+        """
+        if "nested_sampling" in self.final_state.metadata:
+            raise ValueError(
+                "NS-SMC evidence requires as_nested_sampling_result().log_evidence."
+            )
         return self.log_normalizing_constant()
 
     def log_normalizing_constant_variance(
@@ -827,6 +834,11 @@ class SMCResult:
         sample_weights
             Normalized weights associated with ``samples``.
         """
+        if "nested_sampling" in self.final_state.metadata:
+            raise ValueError(
+                "NS-SMC posterior samples require "
+                "as_nested_sampling_result().posterior_samples()."
+            )
         final_state = self.final_state
         xp = namespace(final_state.particles, final_state.weights)
 

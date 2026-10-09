@@ -514,3 +514,19 @@ def test_context_owns_runtime_and_state_records_completed_levels() -> None:
         terminal.metadata["nested_sampling"]["threshold"]
         == snapshot["threshold"]
     )
+
+
+def test_ordinary_result_rejects_ns_evidence_and_posterior() -> None:
+    nested = run()
+    result = nested.result
+    with pytest.raises(ValueError, match="as_nested_sampling_result"):
+        result.log_evidence()
+    with pytest.raises(ValueError, match="as_nested_sampling_result"):
+        result.posterior_samples()
+    assert float(result.log_normalizing_constant()) == pytest.approx(
+        nested.summary()["final_log_prior_volume"]
+    )
+    assert nested.log_evidence == pytest.approx(math.log(2.5))
+    np.testing.assert_allclose(
+        nested.posterior_samples()[1], [0.1, 0.2, 0.3, 0.4]
+    )
