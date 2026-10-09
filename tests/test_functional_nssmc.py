@@ -572,3 +572,80 @@ def test_weighted_shells_without_resampling(mode: str) -> None:
     np.testing.assert_array_equal(
         jax.random.key_data(final_key), jax.random.key_data(key)
     )
+
+
+@pytest.mark.parametrize("mode", ["eager", "functional", "compiled"])
+def test_shell_preserves_earlier_stop_request(mode: str) -> None:
+    from sequince.smc import SequentialMonteCarlo
+    from sequince.steps.control import StopIf
+
+    base, _, metadata = make_sampler()
+    sampler = SequentialMonteCarlo(
+        [
+            StopIf(lambda state, context: True, immediate=False),
+            *base.config.steps,
+        ],
+        auto_normalize=False,
+    )
+    state = ParticleState(jnp.arange(4.0)[:, None])
+    key = jax.random.key(42)
+    if mode == "eager":
+        result = sampler.run(
+            state,
+            metadata=metadata,
+            rng=RandomGenerator(backend="jax", generator=key),
+            num_steps=10,
+        )
+    else:
+        iteration = (
+            compile_functional_iteration(
+                sampler, state, key, metadata=metadata
+            )
+            if mode == "compiled"
+            else None
+        )
+        result, _ = sampler.run_functional(
+            state,
+            metadata=metadata,
+            random_state=key,
+            num_steps=10,
+            iteration=iteration,
+        )
+    assert len(result) == 1
+    assert result.context.stop_requested
+    assert not result.context.stop_immediately
+    ns = result.as_nested_sampling_result()
+    assert not ns.complete
+    assert ns.levels()[0].n_surviving == 2
+    assert float(ns.final_state.log_normalizing_constant) == pytest.approx(
+        math.log(0.5), abs=1e-6
+    )
+
+
+@pytest.mark.parametrize("mode", ["functional", "compiled"])
+@pytest.mark.parametrize("schedule", ["worst", [1.0 + 2**-25]])
+@pytest.mark.parametrize("mass_stop", [None, -0.1])
+def test_mixed_precision_bookkeeping_and_thresholds(
+    mode: str, schedule: Any, mass_stop: float | None
+) -> None:
+    with jax.enable_x64():
+        threshold = 1.0 + 2**-25
+        state = ParticleState(
+            jnp.asarray([threshold, 1.0 + 2**-24, 2.0, 3.0])[:, None],
+            log_weights=jnp.full((4,), -math.log(4), dtype=jnp.float32),
+        )
+        options = dict(
+            threshold_schedule=schedule, min_log_prior_volume=mass_stop
+        )
+        expected, expected_key = run_mode("eager", state, **options)
+        actual, key = run_mode(mode, state, **options)
+        assert_results(actual, expected)
+        assert actual.levels()[0].shell_upper_threshold == threshold
+        assert actual.levels()[0].n_surviving == 3
+        assert actual.final_state.log_weights.dtype == jnp.float32
+        runtime = actual.final_state.metadata["nested_sampling"]
+        assert runtime["log_nested_evidence"].dtype == jnp.float64
+        assert runtime["threshold"].dtype == jnp.float64
+        np.testing.assert_array_equal(
+            jax.random.key_data(key), jax.random.key_data(expected_key)
+        )

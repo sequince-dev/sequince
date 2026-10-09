@@ -226,6 +226,25 @@ def _normalized_weights(state: ParticleState) -> Array:
     return weights
 
 
+def _shell_weights(
+    log_likelihoods: Array,
+    log_weights: Array,
+    threshold: float | Array,
+    *,
+    inclusive: bool,
+    is_terminal: bool | Array,
+) -> tuple[Array, Array]:
+    """Select active shell particles and their log likelihood-weight products."""
+    xp = namespace(log_likelihoods)
+    mask = (
+        log_likelihoods < threshold
+        if inclusive
+        else log_likelihoods <= threshold
+    )
+    mask = (mask | is_terminal) & xp.isfinite(log_weights)
+    return mask, xp.where(mask, log_weights + log_likelihoods, -math.inf)
+
+
 @dataclass(frozen=True)
 class FixedLikelihoodThresholdSchedule:
     """Use a strictly increasing sequence of log-likelihood thresholds.
@@ -431,9 +450,14 @@ class LikelihoodThresholdSelection(SMCStep):
                 if key in {"started", "is_terminal"}
                 else xp.int32
                 if key in {"stop_reason", "error", "n_surviving"}
-                else state.log_weights.dtype
+                else None
             )
-            runtime[key] = asarray(value, like=state.log_weights, dtype=dtype)
+            # Floating values are converted after evaluating the likelihood,
+            # when its dtype is available. Preserve checkpoint precision here.
+            if dtype is not None:
+                runtime[key] = asarray(
+                    value, like=state.log_weights, dtype=dtype
+                )
         runtime["functional"] = ()
         return {**metadata, "nested_sampling": runtime}
 
@@ -451,12 +475,30 @@ class LikelihoodThresholdSelection(SMCStep):
             evaluation=state.evaluation,
             return_counts=True,
         )
+        xp = namespace(state.log_weights)
+        dtype = xp.result_type(
+            state.log_weights.dtype, evaluation["log_likelihood"].dtype
+        )
+        runtime = dict(context.metadata["nested_sampling"])
+        for key, value in runtime.items():
+            if key not in {
+                "functional",
+                "started",
+                "is_terminal",
+                "stop_reason",
+                "error",
+                "n_surviving",
+            }:
+                runtime[key] = asarray(
+                    value, like=state.log_weights, dtype=dtype
+                )
+        context = context.with_metadata(nested_sampling=runtime)
         state = state.with_updates(
             evaluation=evaluation,
             log_normalizing_constant=asarray(
                 state.log_normalizing_constant,
                 like=state.log_weights,
-                dtype=state.log_weights.dtype,
+                dtype=dtype,
             ),
         )
         context = context.add_evaluation_counts(counts)
@@ -523,21 +565,26 @@ class LikelihoodThresholdSelection(SMCStep):
                 exhausted = xp.asarray(
                     context.t >= len(self.schedule.thresholds)
                 )
-            return asarray(value, like=weights, dtype=weights.dtype), exhausted
+            return asarray(
+                value, like=values, dtype=runtime["threshold"].dtype
+            ), exhausted
 
         # Uncompiled execution retains Python schedule exhaustion and exceptions.
         if _is_traced(evidence_stop):
             threshold, exhausted = jax.lax.cond(
                 evidence_stop,
                 lambda: (
-                    xp.asarray(math.inf, dtype=weights.dtype),
+                    xp.full_like(runtime["threshold"], math.inf),
                     xp.asarray(False),
                 ),
                 select,
             )
         else:
             threshold, exhausted = (
-                (xp.asarray(math.inf, dtype=weights.dtype), xp.asarray(False))
+                (
+                    xp.full_like(runtime["threshold"], math.inf),
+                    xp.asarray(False),
+                )
                 if bool(evidence_stop)
                 else select()
             )
@@ -684,13 +731,13 @@ class ShellEvidenceStep(SMCStep):
         xp = namespace(values)
         runtime = _nested_sampling_metadata(context.metadata)
         weights = _normalized_weights(state)
-        mask = (
-            values < runtime["next_threshold"]
-            if self.target.inclusive
-            else values <= runtime["next_threshold"]
+        mask, shell_weights = _shell_weights(
+            values,
+            weights,
+            runtime["next_threshold"],
+            inclusive=self.target.inclusive,
+            is_terminal=runtime["is_terminal"],
         )
-        mask = (mask | runtime["is_terminal"]) & xp.isfinite(weights)
-        shell_weights = xp.where(mask, weights + values, -math.inf)
         expectation = logsumexp(shell_weights)
         increment = runtime["log_prior_volume"] + expectation
         runtime["log_nested_evidence"] = xp.logaddexp(
@@ -723,8 +770,8 @@ class ShellEvidenceStep(SMCStep):
             )
         context = replace(
             context.with_metadata(nested_sampling=runtime),
-            stop_requested=runtime["is_terminal"],
-            stop_immediately=runtime["is_terminal"],
+            stop_requested=context.stop_requested | runtime["is_terminal"],
+            stop_immediately=context.stop_immediately | runtime["is_terminal"],
         )
         # Snapshot keys are already established by functional initialization.
         state = _record_nested_sampling_snapshot(state, context)
@@ -743,14 +790,13 @@ class ShellEvidenceStep(SMCStep):
             )
         xp = namespace(values)
         weights = _normalized_weights(state)
-        if runtime["is_terminal"]:
-            mask = xp.ones_like(values, dtype=bool)
-        elif self.target.inclusive:
-            mask = values < runtime["next_threshold"]
-        else:
-            mask = values <= runtime["next_threshold"]
-        mask = mask & xp.isfinite(weights)
-        shell_weights = xp.where(mask, weights + values, -math.inf)
+        mask, shell_weights = _shell_weights(
+            values,
+            weights,
+            runtime["next_threshold"],
+            inclusive=self.target.inclusive,
+            is_terminal=runtime["is_terminal"],
+        )
         log_expectation = float(logsumexp(shell_weights))
         log_increment = runtime["log_prior_volume"] + log_expectation
         runtime["log_nested_evidence"] = float(
@@ -811,6 +857,9 @@ class LikelihoodThresholdWeighting(SMCStep):
         weights, norm = normalize_log_weights(
             xp.where(mask, _normalized_weights(state), -math.inf), xp=xp
         )
+        # Keep bookkeeping stable across conditional branches even when the
+        # survivor-weight reduction uses a lower precision than likelihoods.
+        norm = xp.astype(norm, runtime["log_prior_volume"].dtype)
         runtime.update(
             threshold=threshold,
             started=xp.asarray(True),
