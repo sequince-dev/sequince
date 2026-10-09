@@ -1,20 +1,20 @@
 # sequince
 
-Modular Sequential Monte Carlo (SMC) building blocks for Bayesian inference,
+Sequince is module Sequential Monte Carlo (SMC) library for Bayesian inference,
 particle filtering, and related sequential methods.
 
 ## Features
 
 - Compose SMC pipelines from reusable weighting, resampling, mutation, and control steps.
-- Bootstrap workflows quickly with `make_standard_bayesian_smc` and other pre-built recipes.
+- Prebuilt pipelines with `make_standard_bayesian_smc` and other pre-built recipes.
 - Analyse runs via `SMCResults`, including posterior resampling and diagnostics helpers.
 
 ## Installation
 
-`sequince` targets Python 3.11+ and can be installed directly from the main branch:
+`sequince` targets Python 3.11+ and can be installed directly from PyPI:
 
 ```bash
-pip install git+https://github.com/sequince-dev/sequince.git
+pip install sequince
 ```
 
 ## Quick start
@@ -56,21 +56,16 @@ the Docs: <https://sequince.readthedocs.io>
 
 ## Examples
 
-- `examples/adaptive_schedule.py` – Adaptive tempering starting from the prior distribution.
-- `examples/adaptive_schedule_proposal.py` – Tempering with an informative proposal distribution.
-- `examples/gmm_transdimensional.py` – Adaptive annealing with on-the-fly component expansion for a Gaussian mixture model.
-
-Run a script with `python examples/<name>.py` inside an environment where
-`sequince` and its dependencies are installed.
+The [`sequince-examples`](https://github.com/sequince-dev/sequince-examples)
+repository and corresponding documentation contains various examples highlight
+different features in `sequince`.
 
 ## Contributing
 
 Bug reports, feature requests, and pull requests are welcome via the GitHub
-repository. Run the test suite with:
+repository. Please see the [contributing guidelines](https://github.com/sequince-dev/sequince/blob/main/CONTRIBUTING.md)
+and [AI policy](https://github.com/sequince-dev/sequince/blob/main/AI_POLICY.md).
 
-```bash
-pytest
-```
 
 ## License
 
