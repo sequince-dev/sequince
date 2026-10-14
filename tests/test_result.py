@@ -1,14 +1,19 @@
 import warnings
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 
-from sequince.array_api import to_numpy
+from sequince.array_api import get_device, to_numpy
 from sequince.result import MetaSMCResult, SMCResult
 from sequince.state import ParticleState
 from sequince.steps.context import StepContext
 from sequince.steps.meta import META_SMC_OUTPUT_KEY
 from sequince.target import EvaluationCounts
+
+if TYPE_CHECKING:
+    from conftest import BackendCase
 
 
 @pytest.fixture
@@ -543,3 +548,26 @@ def test_smc_results_plot_corner(dummy_results: SMCResult) -> None:
 
     ax = dummy_results.plot_corner()
     plt.close(ax.get_figure())
+
+
+def test_weighted_covariance_known_values(
+    backend: str, backend_factory: Callable[[str], "BackendCase"]
+) -> None:
+    """Nonuniform weights give the same covariance on every array backend."""
+    case = backend_factory(backend)
+    xp = case.xp
+    particles = xp.asarray(
+        [[0.0, 0.0], [2.0, 0.0], [0.0, 4.0]], dtype=case.particles.dtype
+    )
+    weights = xp.asarray([0.5, 0.25, 0.25], dtype=particles.dtype)
+    state = ParticleState(particles, log_weights=xp.log(weights))
+    result = SMCResult([state], StepContext(t=0))
+
+    covariance = result.weighted_covariance()
+
+    assert case.matches_namespace(covariance)
+    assert covariance.dtype == particles.dtype
+    assert get_device(covariance) == get_device(particles)
+    np.testing.assert_allclose(
+        to_numpy(covariance), [[0.75, -0.5], [-0.5, 3.0]], atol=1e-6
+    )

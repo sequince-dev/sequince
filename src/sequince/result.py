@@ -982,7 +982,7 @@ class SMCResult:
         centered = particles - mean
         weights_column = xp.reshape(weights, (weights.shape[0], 1))
         weighted = centered * weights_column
-        cov = xp.matmul(xp.transpose(centered), weighted)
+        cov = xp.matmul(xp.permute_dims(centered, (1, 0)), weighted)
         weight_sum = float(to_numpy(xp.sum(weights)))
         if ddof != 0:
             weight_sum = max(weight_sum - ddof, 1e-12)
