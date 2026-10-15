@@ -230,6 +230,7 @@ Choose the prefix that best describes the change:
 | `MAINT` | Refactor or maintain code without changing intended behavior |
 | `TST` | Add or improve tests |
 | `DOC` | Update documentation |
+| `JOSS` | Update the JOSS paper or its submission materials |
 | `BLD` | Change packaging, dependencies, or build configuration |
 | `CI` | Change continuous integration workflows |
 | `REL` | Prepare or maintain a release |

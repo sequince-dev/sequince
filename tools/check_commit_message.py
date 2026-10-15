@@ -5,7 +5,7 @@ import re
 import sys
 from pathlib import Path
 
-PREFIX_PATTERN = r"(?:BUG|ENH|PERF|API|DEP|MAINT|TST|DOC|BLD|CI|STY|REL)"
+PREFIX_PATTERN = r"(?:BUG|ENH|PERF|API|DEP|MAINT|TST|DOC|BLD|CI|STY|REL|JOSS)"
 SUBJECT_PATTERN = re.compile(
     rf"{PREFIX_PATTERN}(?:/{PREFIX_PATTERN})?"
     r"(?:\([a-z][a-z0-9_.-]*\))?: [a-z][^\r\n]*"
@@ -46,7 +46,8 @@ def main() -> int:
         "Expected PREFIX(scope): lowercase summary, or PREFIX: lowercase "
         "summary.\n"
         "Two prefixes may be joined with '/', e.g. BUG/TST(smc): fix weights\n"
-        "Prefixes: BUG, ENH, PERF, API, DEP, MAINT, TST, DOC, BLD, CI, STY, REL.\n"
+        "Prefixes: BUG, ENH, PERF, API, DEP, MAINT, TST, DOC, BLD, CI, STY, "
+        "REL, JOSS.\n"
         "Optional scopes start with a lowercase letter and contain only "
         "lowercase letters, digits, '.', '_', or '-'.\n"
         "Use a single-line subject without trailing whitespace or a period.\n"
