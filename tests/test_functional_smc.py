@@ -23,6 +23,59 @@ compile_functional_iteration = pytest.importorskip(
 ).compile_functional_iteration
 
 
+@pytest.mark.parametrize("n_particles", [16, 17])
+def test_compiled_differential_evolution_replays(n_particles: int) -> None:
+    from sequince import make_standard_bayesian_smc
+    from sequince._typing import Array
+
+    def prior(particles: Array, context: StepContext) -> Array:
+        return -0.5 * jnp.sum(particles**2, axis=-1) - jnp.log(2 * jnp.pi)
+
+    def likelihood(particles: Array, context: StepContext) -> Array:
+        return -0.5 * jnp.sum(particles**2, axis=-1)
+
+    initial = ParticleState(
+        jax.random.normal(jax.random.key(10), (n_particles, 2))
+    )
+    key = jax.random.key(20)
+    smc, _, metadata = make_standard_bayesian_smc(
+        log_prior=prior,
+        log_likelihood=likelihood,
+        adaptive=False,
+        num_steps=2,
+        always_resample=True,
+        mutation="differential-evolution",
+        mutation_n_steps=2,
+        particle_transform="affine",
+        logging_frequency=0,
+    )
+    iteration = compile_functional_iteration(
+        smc, initial, key, metadata=metadata
+    )
+    result, final_key = smc.run_functional(
+        initial, random_state=key, metadata=metadata, iteration=iteration
+    )
+    replay, replay_key = smc.run_functional(
+        initial, random_state=key, metadata=metadata, iteration=iteration
+    )
+    np.testing.assert_array_equal(
+        result.final_state.particles, replay.final_state.particles
+    )
+    np.testing.assert_array_equal(
+        jax.random.key_data(final_key), jax.random.key_data(replay_key)
+    )
+    assert not np.array_equal(
+        jax.random.key_data(key), jax.random.key_data(final_key)
+    )
+    assert result.final_state.particles.shape == (n_particles, 2)
+    assert result.final_state.particles.dtype == initial.particles.dtype
+    assert float(result.context.metadata["beta"]) == pytest.approx(1.0)
+    acceptance = float(
+        result.context.metadata["metropolis_hastings_acceptance"]
+    )
+    assert 0.0 <= acceptance <= 1.0
+
+
 @pytest.mark.parametrize("invalid", [-np.inf, np.inf, np.nan])
 @pytest.mark.parametrize("resample", [False, True])
 def test_jitted_runner_rejects_invalid_second_iteration(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, TypeGuard
 
@@ -392,6 +393,18 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             raise ValueError("n_steps must be >= 1.")
         self._n_steps = int(n_steps)
 
+    def initialize_functional_metadata(
+        self, state: ParticleState, metadata: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Initialize acceptance metadata before tracing red-blue updates."""
+        xp = namespace(state.particles)
+        return {
+            **metadata,
+            "metropolis_hastings_acceptance": xp.asarray(
+                0.0, dtype=state.particles.dtype
+            ),
+        }
+
     @property
     def kernel(self) -> ComplementaryEnsembleKernel:
         """Fixed complementary kernel; replace between mutation calls."""
@@ -452,7 +465,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         Array,
         "TargetEvaluation | None",
         EvaluationCounts,
-        int,
+        Array,
         Array,
         Any,
     ]:
@@ -528,7 +541,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 active_evaluation,
             )
 
-        accepted_count = int(to_numpy(xp.sum(accepted)))
+        accepted_count = xp.astype(xp.sum(accepted), current.dtype)
         return (
             current,
             current_log_prob,
