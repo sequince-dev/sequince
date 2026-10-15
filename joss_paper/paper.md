@@ -8,190 +8,68 @@ tags:
 authors:
 - name: Michael J. Williams
   orcid: 0000-0003-2198-2974
-  affiliation: 1
+  affiliation: "1, 2"
 - name: Christian E. A. Chapman-Bird
   orcid: 0000-0002-2728-9612
-  affiliation: 2
+  affiliation: 3
 affiliations:
-- name: Institute of Cosmology and Gravitation, University of Portsmouth, United Kingdom
+- name: Max Planck Institute for Gravitational Physics (Albert Einstein Institute), Potsdam, Germany
   index: 1
-- name: Institute for Gravitational Wave Astronomy, University of Birmingham, United Kingdom
+- name: Institute of Cosmology and Gravitation, University of Portsmouth, United Kingdom
   index: 2
-date: 18 June 2026
+- name: Institute for Gravitational Wave Astronomy, University of Birmingham, United Kingdom
+  index: 3
+date: 15 October 2026
 bibliography: paper.bib
 ---
 
 # Summary
 
 Sequential Monte Carlo (SMC) methods are a flexible family of algorithms for
-approximating sequences of probability distributions using weighted particles,
-resampling, and mutation steps [@delmoral2006smc; @chopin2020introduction].
-Such sequences arise naturally in applications including Bayesian computation,
-particle filtering, model comparison, and sequential inference, for example
-through likelihood tempering or observations arriving over time.
+approximating sequences of probability distributions using a population of weighted samples, known as particles
+[@delmoral2006smc; @chopin2020introduction].
+Such sequences arise naturally in applications including Bayesian inference,
+and particle filtering, for example through likelihood tempering or observations arriving over time.
 
-`sequince` is a Python toolkit for constructing SMC methods from reusable
-components rather than exposing only a small number of fixed algorithms. It
-provides abstractions for defining sequences of target distributions and for
-composing the weighting, resampling, mutation, transformation, and control
-steps used to evolve a particle population between them. It is designed for
-users who need to adapt SMC to new scientific problems, including
-domain-specific workflows in astrophysics and other research areas.
+`sequince` is a Python toolkit for constructing SMC methods from reusable and extensible
+components. It provides abstractions for defining sequences of target
+distributions and for composing the operations used to evolve a particle population between them.
+These include weighting, resampling, mutation, transformation, and control steps.
+It is designed for researchers developing new SMC methods or adapting existing methods to scientific applications, including astrophysical inference, with checkpointing to support long-running analyses. Its core components follow the Python Array API standard, supporting NumPy, JAX, PyTorch, and CuPy arrays and enabling compatible workflows to run on CPUs or GPUs.
 
 # Statement of need
 
-SMC is often most useful when it is customised. Researchers may need to combine
-adaptive tempering, resampling strategies, mutation kernels, deterministic
-transformations, stopping rules, or multi-stage procedures in ways that differ
-from standard textbook pipelines. The sequence of target distributions itself
-may also be problem dependent, for example when targets are constructed through
-annealing or updated as new observations become available. In many projects,
-this logic ends up embedded in application-specific code, making it harder to
-compare methods, reuse components, and move prototype algorithms into stable
-analysis software.
+Scientific applications often require SMC methods tailored to a particular problem. Researchers may need to combine adaptive tempering, mutation kernels, transformations, stopping rules, or multi-stage procedures, and to define problem-specific sequences of target distributions. When this logic is embedded in application-specific code, it becomes harder to compare methods, reuse components, and move prototype algorithms into stable analysis software.
 
-`sequince` addresses this gap by providing a general-purpose, step-oriented
-framework for SMC. Its central abstraction is the evolution of a particle
-population through a sequence of target distributions using interchangeable
-algorithmic components. Users can start from pre-built samplers for common
-problems, such as tempered Bayesian inference and persistent sampling, or
-construct SMC pipelines manually when they require full control over weighting,
-resampling, mutation, transformations, and control flow. This makes the package
-suitable both for routine inference and for methodological work in which new
-SMC variants are developed and tested.
+`sequince` addresses these needs through a general-purpose, step-oriented framework with interchangeable algorithmic components. Researchers can start from pre-built samplers for common inference problems or construct custom pipelines with explicit control over the operations and their execution order. The same framework therefore supports both established inference methods and methodological research into new SMC variants.
 
-The package is also designed around backend-aware core abstractions so that
-particle states, target evaluations, weight updates, and standard SMC
-operations can use arrays from multiple Python array libraries where possible.
-In particular, `sequince` aligns these core abstractions with the Python Array
-API standard [@python_array_api], while allowing specialised components to
-target particular ecosystems when required. This facilitates integration with
-hardware-accelerated numerical libraries that are increasingly common in
-scientific computing.
+Scientific models are also increasingly implemented using different numerical libraries to exploit automatic differentiation and hardware acceleration. Coupling an SMC implementation to a single array library can restrict its integration with these models. `sequince` uses the Python Array API standard [@python_array_api] to support reusable core operations across multiple numerical backends, while allowing specialised components to target particular ecosystems.
 
 # State of the field
 
-The Python ecosystem already contains several useful SMC-related tools. The
-`particles` package accompanying @chopin2020introduction provides
-implementations of many established SMC and particle-filtering methods and is
-particularly useful for teaching and methodological prototyping. `SMCPy`
-focuses on uncertainty quantification and Bayesian calibration using parallel
-likelihood-tempering SMC samplers, including fixed and adaptive tempering
-variants [@smcpy_repo]. `pocomc` implements persistent sampling with
-normalizing flows for posterior inference [@karamanis2025persistent].
+The Python ecosystem already contains several useful SMC-related tools. The `particles` package accompanying @chopin2020introduction provides implementations of many established SMC and particle-filtering methods and is particularly useful for teaching and methodological prototyping. `SMCPy` focuses on uncertainty quantification and Bayesian calibration using parallel likelihood-tempering SMC samplers, including fixed and adaptive tempering variants [@smcpy_repo]. `pocomc` implements persistent sampling with normalizing flows for posterior inference [@karamanis2025persistent].
 
-Broader Bayesian software ecosystems also expose SMC functionality. `PyMC`
-includes a sequential Monte Carlo sampler within a general probabilistic
-programming framework [@abrilpla2023pymc], while `BlackJAX` provides composable
-inference components in the JAX ecosystem and includes SMC methods alongside
-other Monte Carlo algorithms [@cabezas2024blackjax]. Recent domain-specific
-frameworks such as SHARPy target gravitational-wave inference with
-JAX-accelerated SMC and gradient-based mutation kernels [@demasi2026sharpy].
+Broader Bayesian software ecosystems also expose SMC functionality. `PyMC` includes a sequential Monte Carlo sampler within a general probabilistic programming framework [@abrilpla2023pymc], while `BlackJAX` provides composable inference components in the JAX ecosystem and includes SMC methods alongside other Monte Carlo algorithms [@cabezas2024blackjax]. Recent domain-specific frameworks such as SHARPy target gravitational-wave inference with JAX-accelerated SMC and gradient-based mutation kernels [@demasi2026sharpy].
 
-`sequince` differs from these tools by prioritising a general, modular
-architecture for constructing bespoke SMC algorithms. Rather than defining a
-single inference procedure, it separates the target distribution, particle
-state, and operations that evolve the population. Users can therefore
-reconfigure the sequence of SMC operations, introduce custom target sequences
-and transformations, use mutation kernels from different sampling ecosystems,
-attach problem-specific diagnostics, or compose higher-level SMC procedures
-from the same underlying components. This emphasis on composability is intended
-to make `sequince` useful both as research infrastructure for developing new
-methods and as a foundation for application-specific downstream packages.
+`sequince` combines support for multiple SMC variants, including tempering, persistent sampling [@karamanis2025persistent], nested sampling via SMC (NS-SMC) [@salomone2025unbiased], and waste-free SMC [@dau2022wastefree], with a modular architecture for constructing bespoke algorithms. Shared interfaces allow users to reconfigure target sequences, transformations, mutation kernels, and control flow, supporting both the comparison of existing methods and the development of new variants. Support for multiple array backends and integrations with different sampling ecosystems further enable these components to be reused across scientific applications and numerical libraries. This combination makes `sequince` useful as research infrastructure for methodological work and as a foundation for application-specific downstream packages.
 
 # Software design
 
-The distributions approximated during an SMC run are represented in `sequince`
-by target objects. A target evaluates named components of a probability
-distribution for a population of particles, while sequential targets describe
-how that distribution changes between stages of an SMC procedure. For example,
-a tempered Bayesian target constructs a sequence between a prior and posterior
-using an inverse-temperature parameter, whereas other targets may depend on
-observations supplied sequentially during a run.
+`sequince` separates target distributions, particle populations, and the operations used to evolve them. The following outlines the main design choices; the documentation and runnable examples provide detailed descriptions of the interfaces and their use.
 
-Target evaluations are stored as particle-aligned collections of named
-quantities. These evaluations can be propagated through operations such as
-resampling and mutation, allowing previously computed quantities to be reused
-where possible. Separating target evaluation from the SMC operations that
-consume it also provides a common interface for weighting and mutation steps
-across different forms of sequential inference.
+The distributions approximated during an SMC run are represented by target objects. A target evaluates named components of a probability distribution for a population of particles, while sequential targets describe how that distribution changes between stages. Separating the target from the operations that evolve the particles allows weighting and mutation components to be reused across different inference procedures. For example, tempered SMC and nested-sampling SMC use different target sequences while sharing resampling and compatible mutation components.
 
-Particle populations are represented by a `ParticleState`, which stores the
-particles, their log weights, accumulated normalising-constant information, and
-associated target evaluations. Specialised states extend this representation
-where an algorithm requires additional information. For example, persistent SMC
-retains particles from previous populations in a persistent particle state.
+Target evaluations are stored as particle-aligned collections of named quantities. These can be propagated through resampling and updated during mutation, allowing previously computed quantities to be reused where valid. This is particularly useful for scientific applications in which likelihood evaluations dominate the computational cost. A `ParticleState` stores the particles, their log weights, accumulated normalising-constant information, and associated target evaluations. Specialised states provide additional information where required, such as the archive of previous populations used by persistent SMC.
 
-The SMC algorithm itself is expressed as an ordered collection of steps. Each
-step receives the current particle state, a runtime context, and a random
-number generator and returns an updated state, updated context, and structured
-outputs. These outputs can contain algorithm-specific quantities such as
-effective sample sizes, tempering parameters, acceptance statistics, or other
-diagnostics. The runner accumulates these outputs during execution so that the
-trajectory of the SMC procedure can be inspected after sampling.
+An SMC algorithm is expressed as an ordered collection of steps. Each step receives the current particle state, a runtime context, and a random number generator, and returns an updated state, updated context, and structured outputs. Weighting, resampling, mutation, transformation, and control operations can therefore be implemented independently and combined into different algorithms. Higher-level steps can conditionally execute or compose other steps, keeping algorithm-specific control flow outside the runner. For example, waste-free SMC combines resampling with a mutation component that retains intermediate chain states.
 
-The small step interface allows weighting, resampling, mutation, proposal,
-transformation, and control operations to be implemented independently and
-combined into different algorithms. Higher-level steps can conditionally
-execute or compose other steps, allowing algorithmic control flow to be
-represented within the same framework rather than being embedded directly in
-the runner. This also makes it possible to reuse individual components across
-otherwise different SMC constructions.
+A `SequentialMonteCarlo` runner repeatedly applies the configured steps. The runtime context contains the current iteration and observation, shared user-provided information, metadata used for communication between steps, and stopping controls. The runner accepts an iterable of observations, supporting both static inference problems and procedures in which targets change as new data become available. Separating particle state, runtime context, and algorithm configuration allows the execution machinery to remain common across different SMC constructions.
 
-A `SequentialMonteCarlo` runner repeatedly applies the configured sequence of
-steps. The runtime context records the current iteration, the current
-observation when processing sequential data, shared user-provided information,
-and metadata used for communication between steps. It also exposes explicit
-stopping controls. The runner accepts an iterable of observations and advances
-through them as the SMC procedure progresses, allowing the same execution model
-to support both static target sequences and problems in which the target
-changes as new data become available.
+Each step can return structured outputs containing quantities such as effective sample sizes, tempering parameters, acceptance statistics, and other diagnostics. These outputs and the recorded particle states are collected in an `SMCResult` for subsequent analysis. New components can therefore introduce diagnostics without requiring changes to the runner or coupling their implementation to plotting and logging code. Callbacks provide logging, plotting, and other monitoring functionality during execution.
 
-The output of a run is represented by an `SMCResult`, which separates
-analysis-facing results from the mutable objects used while the sampler is
-executing. In addition to the final particle state, the result records outputs
-accumulated throughout the SMC procedure. This allows quantities such as
-tempering schedules, effective sample sizes, mutation diagnostics, evidence
-estimates, and other step-specific information to be inspected after sampling.
-Because individual steps can return structured outputs, new algorithms can
-extend the information recorded by a result without requiring corresponding
-changes to the runner.
+The core abstractions follow the Python Array API standard where possible [@python_array_api], allowing backend-native arrays to pass through the SMC procedure. Random number generation is similarly abstracted through `orng`. This design supports reuse across numerical libraries while allowing specialised components to depend on a particular ecosystem. Alongside conventional eager execution, `sequince` provides a functional execution path that passes random state explicitly between steps. Compatible iterations can be compiled using facilities such as `jax.jit`, while the runner manages observations, callbacks, and result recording. Mutation integrations include ecosystem-specific packages such as `BlackJAX` [@cabezas2024blackjax].
 
-This distinction between runtime state and stored results is important for
-methodological work. The particle state represents the current approximation to
-a target distribution, the runtime context contains information required while
-the sampler is executing, and the result provides the persistent record used
-for subsequent analysis. In this way, diagnostics produced by experimental
-weighting, mutation, or control steps can be recorded systematically without
-coupling them to plotting or logging code.
-
-The core particle-state, target, weighting, transformation, and runner
-abstractions are written around the Python Array API standard where possible
-[@python_array_api], allowing backend-native arrays to flow through the SMC
-procedure. Random number generation is similarly abstracted through the `orng`
-interface. In addition to conventional eager execution, `sequince` provides a
-functional execution path in which random state is explicitly threaded through
-each step. Compatible step pipelines can therefore be transformed using
-facilities such as `jax.jit`, while specialised mutation methods can still
-integrate with ecosystem-specific packages including `BlackJAX`.
-
-Callbacks provide observational functionality such as logging, plotting, and
-diagnostics without coupling these tasks to the SMC steps themselves.
-Checkpointing is handled separately from result recording. Checkpoint writers
-capture the information required to resume an analysis, including the current
-particle state, runtime progress, random-number state, and mutable state
-belonging to individual SMC steps. By contrast, `SMCResult` provides the
-analysis product of a completed or partially completed run. Results and
-checkpoints can be serialised using portable HDF5 representations, avoiding
-reliance on serialising live Python objects and allowing analyses to be
-inspected or resumed independently of the original process.
-
-Together, the target, particle-state, step, context, result, and runner
-abstractions provide a compact foundation from which both standard and
-experimental SMC algorithms can be constructed. Pre-built configurations cover
-common Bayesian workflows, while the same interfaces are used to implement more
-specialised procedures such as persistent SMC and sequential inference with
-observations arriving over time.
+Checkpointing is separate from result recording. Checkpoints capture the particle state, runtime progress, random-number state, and mutable step state needed to continue sampling with a reconstructed sampler configuration. Results provide the analysis record of a completed or partially completed run. Both support HDF5 storage, making numerical data and supported metadata available for inspection independently of the running process.
 
 # Research impact statement
 
@@ -199,8 +77,8 @@ observations arriving over time.
 methodological research and problem-specific inference workflows. Current
 applications include customised sampling strategies for astrophysical inference
 problems relevant to ongoing LIGO-Virgo-KAGRA analyses and future observations
-with the Laser Interferometer Space Antenna (LISA), as well as integration with
-broader Bayesian inference ecosystems such as bilby [@ashton2019bilby]. The
+with the Laser Interferometer Space Antenna (LISA) [@williams2026efficient], as well as integration with
+broader Bayesian inference ecosystems such as `bilby` [@ashton2019bilby] via `sequince-bilby` [@sequince_bilby]. The
 same methodology is also relevant to future ground-based observatories such as
 the Einstein Telescope (ET) and Cosmic Explorer (CE).
 
@@ -214,22 +92,18 @@ compare algorithm-specific diagnostics across these different methods.
 
 The modular design of `sequince` additionally supports downstream packages that
 add method- or domain-specific functionality without requiring those
-dependencies in the core library. For example, `sequince-density` provides
+dependencies in the core library. For example, `sequince-density` [@sequince_density] provides
 density-estimation components based on Gaussian mixture models and normalizing
 flows. These can be combined with the core SMC machinery for learned
 preconditioning, proposal construction, and other density-assisted SMC methods,
 including approaches related to `pocomc` and ASPIRE \[@karamanis2025persistent;
-@Williams:2025aar\]. The wider sequince ecosystem also includes
+@williams2025accelerated\]. The wider sequince ecosystem also includes
 `sequince-examples`, which provides runnable examples demonstrating common
-workflows and more specialised uses of the package.
+workflows and more specialised uses of the package [@sequince_examples].
 
 # AI usage disclosure
 
-Generative AI tools were used to assist with code implementation and
-refactoring from targeted prompts. OpenAI Codex, via ChatGPT 5.3, 5.4 and 5.6,
-and GitHub Copilot were used during software development. The authors reviewed,
-edited, and validated all AI-assisted outputs and retain responsibility for the
-design and implementation decisions.
+Generative AI tools, including OpenAI Codex and GitHub Copilot, were used to assist with code implementation and refactoring. ChatGPT was also used to assist with the organisation and editing of the manuscript. The authors made the core scientific and software design decisions and reviewed, edited, and validated all AI-assisted contributions. The authors retain full responsibility for the software and manuscript.
 
 # Acknowledgements
 
