@@ -119,10 +119,34 @@ def test_legacy_checkpoint_policy() -> None:
         dynamic.load_state_dict(static.state_dict())
 
 
+def test_checkpoint_preserves_terminal_resampling_choice() -> None:
+    target = TemperedPosterior(zero, zero)
+    weighted = PersistentAdaptiveTemperedWeighting(target)
+    resampled = PersistentAdaptiveTemperedWeighting(
+        target, resample_at_end=True
+    )
+    resampled.load_state_dict(resampled.state_dict())
+    with pytest.raises(ValueError, match="mismatch"):
+        resampled.load_state_dict(weighted.state_dict())
+    with pytest.raises(ValueError, match="mismatch"):
+        weighted.load_state_dict(resampled.state_dict())
+    legacy = weighted.state_dict()
+    del legacy["resample_at_end"]
+    weighted.load_state_dict(legacy)
+    with pytest.raises(ValueError, match="mismatch"):
+        resampled.load_state_dict(legacy)
+    with pytest.raises(ValueError, match="mismatch"):
+        resampled.load_state_dict({})
+
+
+@pytest.mark.parametrize("resample_at_end", [False, True])
 @pytest.mark.parametrize("checkpoint_format", ["pickle", "hdf5"])
 @pytest.mark.parametrize("dynamic", [False, True])
 def test_initialization_resume(
-    tmp_path: Any, dynamic: bool, checkpoint_format: str
+    tmp_path: Any,
+    dynamic: bool,
+    checkpoint_format: str,
+    resample_at_end: bool,
 ) -> None:
     draws = np.arange(16, dtype=float).reshape(-1, 1)
     initial = ParticleState(draws)
@@ -138,6 +162,7 @@ def test_initialization_resume(
             mutation="none",
             logging_frequency=0,
             checkpoint_writers=writers,
+            resample_at_end=resample_at_end,
         )[0]
 
     reference = build().run(initial, rng=45, num_steps=30)
@@ -176,10 +201,11 @@ def test_initialization_resume(
     np.testing.assert_array_equal(
         resumed.final_state.log_weights, reference.final_state.log_weights
     )
-    np.testing.assert_array_equal(resumed.final_state.betas[:4], 0.0)
-    np.testing.assert_array_equal(resumed.final_state.particles[:16], draws)
+    archive = sampler._steps[0].persistent_state
+    np.testing.assert_array_equal(archive.betas[:4], 0.0)
+    np.testing.assert_array_equal(archive.particles[:16], draws)
     assert resumed.context.stop_requested
-    assert float(resumed.final_state.effective_sample_size()) >= 24
+    assert float(resumed.outputs[-1][1]["effective_sample_size"]) >= 24
     assert (
         float(resumed.context.evaluation_counts.log_likelihood_evaluations)
         == 16
@@ -275,6 +301,7 @@ def test_dynamic_gaussian_moments_evidence_and_resume(
             mutation_kwargs={"step_fn": "tpcn"},
             logging_frequency=0,
             checkpoint_writers=writers,
+            resample_at_end=False,
         )[0]
 
     reference = build().run(initial, rng=5678, num_steps=100)

@@ -4,6 +4,7 @@ from typing import Literal
 
 import numpy as np
 import pytest
+from orng import RandomGenerator
 
 from sequince import ParticleState, PersistentParticleState, TemperedPosterior
 from sequince.prebuilt_samplers import (
@@ -384,6 +385,7 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
         n_particles=n_particles,
         target_ess=2 * n_particles,
         mutation="none",
+        resample_at_end=False,
     )
     particles = np.linspace(-1.0, 1.0, n_particles)[:, None]
     context = StepContext(t=0, metadata={"beta": 0.0})
@@ -406,6 +408,46 @@ def test_make_persistent_bayesian_smc_returns_weighted_persistent_population(
     )
 
 
+@pytest.mark.parametrize("target_total_ess", [None, 12.0])
+def test_persistent_default_finishes_terminal_mutation(
+    target_total_ess: float | None,
+) -> None:
+    terminal_calls: list[ParticleState] = []
+
+    class RecordMutation(SMCStep):
+        def apply(
+            self,
+            state: ParticleState,
+            context: StepContext,
+            rng: RandomGenerator,
+        ) -> tuple[ParticleState, StepContext, None]:
+            if context.stop_requested:
+                terminal_calls.append(state)
+            return state, context, None
+
+    smc, _, metadata = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        n_particles=4,
+        target_ess=8,
+        target_total_ess=target_total_ess,
+        mutation=RecordMutation(),
+        logging_frequency=0,
+    )
+    result = smc.run(
+        ParticleState(np.arange(4.0)[:, None]), metadata=metadata, rng=123
+    )
+    assert len(terminal_calls) == 1
+    assert result.context.stop_requested
+    assert not result.context.stop_immediately
+    assert type(result.final_state) is ParticleState
+    assert result.final_state.particles.shape == (4, 1)
+    np.testing.assert_allclose(result.final_state.weights, 0.25)
+    assert result.final_state.log_evidence == pytest.approx(0.0)
+    required_ess = target_total_ess or 8
+    assert result.outputs[-1][1]["effective_sample_size"] >= required_ess
+
+
 def test_persistent_zero_support_preserves_evidence(rng) -> None:
     smc, _, metadata = make_persistent_bayesian_smc(
         _zero_log_likelihood,
@@ -413,6 +455,7 @@ def test_persistent_zero_support_preserves_evidence(rng) -> None:
         n_particles=4,
         target_ess=2,
         mutation="none",
+        resample_at_end=False,
         logging_frequency=0,
     )
     result = smc.run(
