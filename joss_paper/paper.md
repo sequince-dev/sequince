@@ -67,7 +67,7 @@ A `SequentialMonteCarlo` runner repeatedly applies the configured steps. The run
 
 Each step can return structured outputs containing quantities such as effective sample sizes, tempering parameters, acceptance statistics, and other diagnostics. These outputs and the recorded particle states are collected in an `SMCResult` for subsequent analysis. New components can therefore introduce diagnostics without requiring changes to the runner or coupling their implementation to plotting and logging code. Callbacks provide logging, plotting, and other monitoring functionality during execution.
 
-The core abstractions follow the Python Array API standard where possible [@python_array_api], allowing backend-native arrays to pass through the SMC procedure. Random number generation is similarly abstracted through `orng`. This design supports reuse across numerical libraries while allowing specialised components to depend on a particular ecosystem. Alongside conventional eager execution, `sequince` provides a functional execution path that passes random state explicitly between steps. Compatible iterations can be compiled using facilities such as `jax.jit`, while the runner manages observations, callbacks, and result recording. Mutation integrations include ecosystem-specific packages such as `BlackJAX` [@cabezas2024blackjax].
+The core abstractions follow the Python Array API standard where possible [@python_array_api], allowing backend-native arrays to pass through the SMC procedure. Random number generation is similarly abstracted through `orng` [@orng]. This design supports reuse across numerical libraries while allowing specialised components to depend on a particular ecosystem. Alongside conventional eager execution, `sequince` provides a functional execution path that passes random state explicitly between steps. Compatible iterations can be compiled using facilities such as `jax.jit`, while the runner manages observations, callbacks, and result recording. Mutation integrations include ecosystem-specific packages such as `BlackJAX` [@cabezas2024blackjax].
 
 Checkpointing is separate from result recording. Checkpoints capture the particle state, runtime progress, random-number state, and mutable step state needed to continue sampling with a reconstructed sampler configuration. Results provide the analysis record of a completed or partially completed run. Both support HDF5 storage, making numerical data and supported metadata available for inspection independently of the running process.
 
@@ -77,8 +77,8 @@ Checkpointing is separate from result recording. Checkpoints capture the particl
 methodological research and problem-specific inference workflows. Current
 applications include customised sampling strategies for astrophysical inference
 problems relevant to ongoing LIGO-Virgo-KAGRA analyses and future observations
-with the Laser Interferometer Space Antenna (LISA) [@williams2026efficient], as well as integration with
-broader Bayesian inference ecosystems such as `bilby` [@ashton2019bilby] via `sequince-bilby` [@sequince_bilby]. The
+with the Laser Interferometer Space Antenna (LISA) [@williams2026inprep], as well as integration with
+broader Bayesian inference ecosystems such as `bilby` \[@ashton2019bilby,@bilby\] via `sequince-bilby` [@sequince_bilby]. The
 same methodology is also relevant to future ground-based observatories such as
 the Einstein Telescope (ET) and Cosmic Explorer (CE).
 
@@ -96,8 +96,8 @@ dependencies in the core library. For example, `sequince-density` [@sequince_den
 density-estimation components based on Gaussian mixture models and normalizing
 flows. These can be combined with the core SMC machinery for learned
 preconditioning, proposal construction, and other density-assisted SMC methods,
-including approaches related to `pocomc` and ASPIRE \[@karamanis2025persistent;
-@williams2025accelerated\]. The wider sequince ecosystem also includes
+including approaches related to `pocomc` and `aspire` \[@karamanis2025persistent;
+@williams2026accelerated\]. The wider sequince ecosystem also includes
 `sequince-examples`, which provides runnable examples demonstrating common
 workflows and more specialised uses of the package [@sequince_examples].
 
