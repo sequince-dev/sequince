@@ -3,8 +3,7 @@ User guide
 
 The Sequential Monte Carlo (SMC) loop in ``sequince`` is assembled from
 composable steps. Each step receives the current particle state and runtime
-context, then returns an updated state, context, and optional output. The same
-mutation implementations can also be used through the standalone MCMC runner.
+context, then returns an updated state, context, and optional output.
 At the end of an iteration, callbacks can inspect the accumulated result and
 update the context. This proceeds until a user-specified termination
 criterion is satisfied, which returns a result object for further processing
@@ -19,9 +18,10 @@ through the SMC loop, and more specialised execution and extension points.
    :caption: Running inference
 
    smc_configuration
-   mcmc_sampler
    observations
    evidence_uncertainty
+   jax_support
+   mcmc_sampler
 
 .. toctree::
    :maxdepth: 1

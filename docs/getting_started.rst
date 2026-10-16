@@ -15,71 +15,89 @@ available as optional extras.
 Quick start
 -----------
 
-The library exposes a high-level helper,
-``sequince.make_standard_bayesian_smc``, that wires together a sensible set of
-steps for many Bayesian posterior inference workflows. The basic usage is as
-follows:
+Below, we show a short example of how to use `sequince`.
+For more details, see the [user guide](https://sequince.readthedocs.io/user_guide), and
+see [`sequince-examples`](https://github.com/sequince-dev/sequince-examples) for more advanced usage.
+Here, we fit a straight line, `y = slope * x + intercept`, to synthetic data with
+independent Gaussian measurement errors and uniform priors on both parameters.
+The log-prior and log-likelihood callbacks accept particles shaped
+`(n_particles, n_parameters)` and return one log density per particle.
 
-.. code-block:: python
-
-    import numpy as np
-    from sequince import ParticleState, make_standard_bayesian_smc
-
-    # Set RNG
-    rng = np.random.default_rng(42)
-
-    # User-supplied log-density functions, these must be vectorized
-    # Theta is a 2D array of shape (n_particles, n_parameters)
-    # Context is dataclass that contains additional information
-    def log_prior(theta, context):
-        """Uniform prior over the specified bounds"""
-        bounds = context.shared["bounds"]
-        return np.where(
-            np.all((theta >= bounds[0]) & (theta <= bounds[1]), axis=1),
-            0.0,
-            -np.inf,
-        )
-
-    def log_likelihood(theta, context):
-        """Unnormalized Gaussian likelihood with mean 0 and std 1"""
-        return -0.5 * np.sum(theta**2, axis=1)
+```python
+import numpy as np
+from sequince import ParticleState, make_standard_bayesian_smc
 
 
-    # Create a standard SMC runner for Bayesian inference
-    # smc is the main runner
-    # posterior is a convenience wrapper around the log-likelihood and log-prior
-    # metadata is dictionary that can be used to pass information between steps
-    # in the SMC loop
-    smc, posterior, metadata = make_standard_bayesian_smc(
-        log_prior,
-        log_likelihood,
+def log_prior(theta, context):
+    """Uniform log-prior"""
+    # log-prior and -likelihood can optionally accept context to access shared data.
+    lower, upper = context.shared["bounds"]
+    inside = np.all((theta >= lower) & (theta <= upper), axis=-1)
+    log_density = -theta.shape[-1] * np.log(upper - lower)
+    return np.where(inside, log_density, -np.inf)
+
+
+def log_likelihood(theta, context):
+    """Gaussian log-likelihood"""
+    x = context.shared["x"]
+    y = context.shared["y"]
+    sigma = context.shared["sigma"]
+    slope = theta[..., 0, None]
+    intercept = theta[..., 1, None]
+    residual = (y - (slope * x + intercept)) / sigma
+    return -0.5 * np.sum(
+        residual**2 + np.log(2 * np.pi * sigma**2), axis=-1
     )
 
-    # Shared context is a dictionary that can be used to pass user-defined
-    # information to steps and the log-density functions.
-    shared_context = dict(
-        bounds=[-5.0, 5.0]
-    )
 
-    # Build the initial particle cloud with samples from the prior
-    n = 500
-    initial_particles = rng.uniform(*shared_context["bounds"], size=(n, 2))
-    # Create a particle state object to hold the initial particles
-    # Unless specified, the particles are assumed to be equally weighted
-    initial_state = ParticleState(particles=initial_particles)
+# Construct the runner
+# `smc` is the main runner
+# `posterior` contains definitions of the tempered posterior
+# `metadata` contains metadata passed between the SMC steps
+smc, posterior, metadata = make_standard_bayesian_smc(
+    log_prior,
+    log_likelihood,
+)
 
-    # Run the SMC sampler
-    result = smc.run(
-        initial_state,
-        rng=rng,
-        shared_context=shared_context,
-        metadata=metadata,
-    )
+rng = np.random.default_rng(42)
 
-    # Extract the posterior samples and log-evidence from the result object
-    samples = result.posterior_samples()
-    log_evidence = result.log_evidence()
-    log_evidence_error = result.log_evidence_error()
+# Generate observations with true slope 2 and intercept 1.
+x = np.linspace(-1, 1, 20)
+sigma = 0.5
+y = 2 * x + 1 + rng.normal(scale=sigma, size=x.shape)
+
+bounds = [-5, 5]
+
+# Draw initial (slope, intercept) particles from the prior.
+n = 1000
+initial_particles = rng.uniform(*bounds, size=(n, 2))
+# Construct the initial state
+initial_state = ParticleState(particles=initial_particles)
+
+# Construct the shared context dictionary that will be exposed to the log_prior
+# and log_likelihood
+shared_context = dict(bounds=bounds, x=x, y=y, sigma=sigma)
+
+# Run the SMC
+results = smc.run(
+    initial_state,
+    rng=rng,
+    shared_context=shared_context,
+    metadata=metadata,
+)
+
+# Obtain equal-weight posterior samples and their weights
+samples, sample_weights = results.posterior_samples(
+    rng=rng, method="rejection"
+)
+
+# Compare the posterior means with the true slope 2 and intercept 1.
+mean_slope, mean_intercept = np.average(
+    samples, weights=sample_weights, axis=0
+)
+print(f"Posterior mean slope: {mean_slope:.2f}")
+print(f"Posterior mean intercept: {mean_intercept:.2f}")
+```
 
 Next steps
 ----------

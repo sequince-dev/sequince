@@ -18,15 +18,15 @@ Bayesian inference pipeline is the pre-built helper:
         callbacks=[TracePlot()],
     )
 
-``make_standard_bayesian_smc`` wires together
-:class:`~sequince.steps.weighting.AdaptiveTemperedWeighting`,
-a configurable resampling step, and a configurable mutation step. See
-:doc:`resampling_options` and :doc:`mutation_options` for the available
-sampling strategies, and :doc:`jax_support` for JAX-backed execution.
-For a mutation kernel without SMC weighting and resampling, see
-:doc:`mcmc_sampler`.
+``make_standard_bayesian_smc`` constructs an SMC runner that adaptively
+steps through a series of simulated annealing temperatures
+(:class:`~sequince.steps.weighting.AdaptiveTemperedWeighting`), applying
+See :doc:`resampling_options` and :doc:`mutation_options` for the available
+sampling strategies.
+See :doc:`jax_support` for JAX-backed execution, which needs some additional
+function calls to enable full JAX functionality (``jit``, ``vmap``, ``grad``, ...).
 
-Pass the returned metadata when starting the run:
+When starting the run, pass the ``metadata`` returned by the convenience constructor:
 
 .. code-block:: python
 
