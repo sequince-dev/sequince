@@ -492,7 +492,7 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
     beta is bisected over the interval from the current beta to 1. If the
     requested ESS cannot be attained while advancing, the current
     beta is repeated so that another batch can be added to the archive.
-    Once beta = 1 is selected, the weighting requests an immediate
+    Once beta = 1 is selected, the weighting requests a
     runner stop. When ``target_total_ess`` is configured, beta = 1
     batches are instead accumulated until the complete archive reaches that
     ESS.
@@ -510,6 +510,9 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         Adapt the integer ESS threshold for the next iteration using expected
         multinomial unique entries. Defaults to False. The fixed reference is
         set by the initial threshold; the terminal target never adapts.
+    resample_at_end : bool, optional
+        If True, let downstream resampling and mutation finish before stopping.
+        Defaults to False, returning the terminal weighted archive immediately.
     beta_tolerance:
         Stop bisection once the beta bracket is no wider than this.
     max_bisection_iter:
@@ -519,6 +522,7 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
     """
 
     _dynamic: bool
+    _resample_at_end: bool
     _initial_target_ess: float
     _target_ess: float
     _target_total_ess: float | None
@@ -532,6 +536,7 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         target_ess: float = 512,
         target_total_ess: float | None = None,
         dynamic: bool = False,
+        resample_at_end: bool = False,
         beta_tolerance: float = 1e-6,
         max_bisection_iter: int = 30,
         refresh_components: Collection[str] = (),
@@ -555,9 +560,12 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
             raise ValueError("max_bisection_iter must be positive.")
         if not isinstance(dynamic, bool):
             raise TypeError("dynamic must be a bool.")
+        if not isinstance(resample_at_end, bool):
+            raise TypeError("resample_at_end must be a bool.")
         if dynamic and target_ess < 1:
             raise ValueError("Dynamic target_ess must be at least one.")
         self._dynamic = dynamic
+        self._resample_at_end = resample_at_end
         self._initial_target_ess = int(target_ess) if dynamic else target_ess
         self._target_ess = self._initial_target_ess
         self._target_total_ess = target_total_ess
@@ -707,7 +715,11 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
             self._target_total_ess is None
             or float(output["effective_sample_size"]) >= self._target_total_ess
         ):
-            context = context.request_stop_immediately()
+            context = (
+                context.request_stop()
+                if self._resample_at_end
+                else context.request_stop_immediately()
+            )
         return weighted, context, output
 
     def state_dict(self) -> dict[str, Any]:
@@ -717,18 +729,28 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
             target_ess=self._target_ess,
             initial_target_ess=self._initial_target_ess,
             target_total_ess=self._target_total_ess,
+            resample_at_end=self._resample_at_end,
         )
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
         """Load matching configuration; legacy empty state is static only."""
         if not state:
+            if self._resample_at_end:
+                raise ValueError(
+                    "Checkpoint weighting configuration mismatch."
+                )
             if self._dynamic:
                 raise ValueError(
                     "Legacy static checkpoint cannot resume dynamically."
                 )
             return
         for key, value in self.state_dict().items():
-            if key != "target_ess" and state.get(key) != value:
+            saved = (
+                state.get(key, False)
+                if key == "resample_at_end"
+                else state.get(key)
+            )
+            if key != "target_ess" and saved != value:
                 raise ValueError(
                     "Checkpoint weighting configuration mismatch."
                 )
