@@ -326,6 +326,7 @@ def make_persistent_bayesian_smc(
     dynamic: bool = False,
     weighting_kwargs: Dict[str, Any] | None = None,
     resampling: ResamplingStrategy | ResamplingStep = "systematic",
+    resample_at_end: bool = True,
     resampling_kwargs: Dict[str, Any] | None = None,
     mutation: MutationStrategy | SMCStep = "minipcn",
     mutation_n_steps: int = 5,
@@ -364,9 +365,14 @@ def make_persistent_bayesian_smc(
 
     A one-batch initial state preserves the existing initialization behavior.
     The first persistence step prepares evaluations and archives the state at beta
-    zero. The adaptive weighting step requests an immediate runner stop once its
-    terminal ESS condition is met. Progress is logged every
-    ``logging_frequency`` iterations and once more for the terminal weighted
+    zero. Once the terminal archive ESS condition is met,
+    ``resample_at_end=True`` (default) finishes resampling and the configured
+    mutation, returning an equally weighted active population of ``n_particles``.
+    With ``resample_at_end=False``, stop immediately after weighting and return
+    the complete weighted archive. The final active population is not appended
+    to the archive, and its mutation does not change the evidence estimate.
+    Progress is logged every
+    ``logging_frequency`` iterations and once more for the terminal
     state. Set ``logging_frequency=0`` to disable it.
 
     For more details see https://arxiv.org/abs/2407.20722.
@@ -390,6 +396,7 @@ def make_persistent_bayesian_smc(
         target_ess=target_ess,
         target_total_ess=target_total_ess,
         dynamic=dynamic,
+        resample_at_end=resample_at_end,
         **weighting_kwargs or {},
     )
 
