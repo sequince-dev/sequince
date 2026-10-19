@@ -16,16 +16,16 @@ selects a mutation implementation with ``mutation``:
      - Implementation
      - Typical use
    * - ``"minipcn"``
-     - :class:`~sequince.steps.mutation.MiniPCNMutation`
+     - :class:`~sequince.steps.mutation.minipcn.MiniPCNMutation`
      - General default with eager and functional execution support.
    * - ``"emcee"``
-     - :class:`~sequince.steps.mutation.EmceeMutation`
+     - :class:`~sequince.steps.mutation.emcee.EmceeMutation`
      - Ensemble MCMC with emcee's collection of proposal moves.
    * - ``"blackjax"``
-     - :class:`~sequince.steps.mutation.BlackJAXMutation`
+     - :class:`~sequince.steps.mutation.blackjax.BlackJAXMutation`
      - JAX-backed NUTS, HMC, or random-walk mutation.
    * - ``"metropolis-hastings"``
-     - :class:`~sequince.steps.mutation.MetropolisHastingsMutation`
+     - :class:`~sequince.steps.mutation.metropolis.MetropolisHastingsMutation`
      - Explicit control over a proposal kernel and transition ratio.
    * - ``"none"`` or ``None``
      - No mutation step

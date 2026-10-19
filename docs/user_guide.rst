@@ -20,7 +20,6 @@ through the SMC loop, and more specialised execution and extension points.
    smc_configuration
    observations
    evidence_uncertainty
-   jax_support
    mcmc_sampler
 
 .. toctree::

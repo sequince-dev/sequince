@@ -34,16 +34,18 @@ extensions = [
 autodoc_typehints = "description"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
+# AutoAPI already emits attribute directives from source annotations.
+napoleon_use_ivar = True
 
 # Generate module pages from source without importing optional backends.
 autoapi_dirs = ["../src/sequince"]
 autoapi_add_toctree_entry = False
+# Document each object in its defining module to avoid ambiguous re-exports.
 autoapi_options = [
     "members",
     "undoc-members",
     "show-inheritance",
     "show-module-summary",
-    "imported-members",
 ]
 
 templates_path = ["_templates"]

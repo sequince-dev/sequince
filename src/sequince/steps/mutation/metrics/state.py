@@ -71,8 +71,9 @@ class MutationTransition:
 
     Parameters
     ----------
-    displacement : array, shape (n_particles, n_dimensions)
-        Accepted displacement in mutation coordinates, zero for rejected rows.
+    displacement : array
+        Accepted displacement in mutation coordinates with shape
+        ``(n_particles, n_dimensions)``, zero for rejected rows.
     kernel_auxiliary : pytree, optional
         Read-only auxiliary information from the kernel sample, or None.
         Red-blue sweeps restore particle-aligned leaves to population order.

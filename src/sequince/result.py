@@ -820,11 +820,12 @@ class SMCResult:
             Method used to construct the returned posterior representation:
 
             - ``"weights"``: return weighted particles, optionally uniformly
-            down-selected without replacement.
-            - ``"rejection"``: independently retain each particle with probability
-            proportional to its weight, returning equal-weight unique samples.
+              down-selected without replacement.
+            - ``"rejection"``: independently retain each particle with
+              probability proportional to its weight, returning equal-weight
+              unique samples.
             - ``"multinomial"``: draw equal-weight samples with replacement
-            according to the particle weights.
+              according to the particle weights.
 
         Returns
         -------

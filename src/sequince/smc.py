@@ -373,8 +373,10 @@ class SequentialMonteCarlo:
 
         Returns
         -------
-        result, random_state:
-            The completed SMC result and final backend-native random state.
+        result : SMCResult
+            The completed SMC result.
+        random_state : object
+            The final backend-native random state.
         """
         if runtime is None and random_state is None:
             raise ValueError(
