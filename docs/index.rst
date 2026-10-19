@@ -13,7 +13,7 @@ Markov chain Monte Carlo runner.
    getting_started
    user_guide
    examples
-   api/index
+   API reference <autoapi/sequince/index>
 
 Indices and tables
 ------------------

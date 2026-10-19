@@ -2,15 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from datetime import datetime
-
-# Ensure the package is importable without installation
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SRC_DIR = os.path.join(PROJECT_ROOT, "src")
-if SRC_DIR not in sys.path:
-    sys.path.insert(0, SRC_DIR)
 
 # -- Project information -----------------------------------------------------
 
@@ -33,24 +25,25 @@ version = release
 # -- General configuration ---------------------------------------------------
 
 extensions = [
-    "sphinx.ext.autodoc",
-    "sphinx.ext.autosummary",
+    "autoapi.extension",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
 ]
 
-autosummary_generate = True
 autodoc_typehints = "description"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
 
-autodoc_mock_imports = [
-    "numpy",
-    "scipy",
-    "matplotlib",
-    "emcee",
-    "minipcn",
+# Generate module pages from source without importing optional backends.
+autoapi_dirs = ["../src/sequince"]
+autoapi_add_toctree_entry = False
+autoapi_options = [
+    "members",
+    "undoc-members",
+    "show-inheritance",
+    "show-module-summary",
+    "imported-members",
 ]
 
 templates_path = ["_templates"]

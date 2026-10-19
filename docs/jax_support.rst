@@ -164,4 +164,5 @@ key.
 API reference
 -------------
 
-.. autofunction:: sequince.jax.compile_functional_iteration
+See :func:`~sequince.jax.compile_functional_iteration` in the generated API
+reference.

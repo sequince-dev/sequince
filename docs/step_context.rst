@@ -145,5 +145,4 @@ the resumed runtime because it is deliberately not stored in the checkpoint.
 API reference
 -------------
 
-.. autoclass:: sequince.steps.context.StepContext
-   :members:
+See :class:`~sequince.steps.context.StepContext` in the generated API reference.
