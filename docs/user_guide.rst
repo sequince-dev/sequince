@@ -14,38 +14,10 @@ output. The remaining sections explain sampling choices, the objects passed
 through the SMC loop, and more specialised execution and extension points.
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Running inference
+   :maxdepth: 2
 
-   smc_configuration
-   observations
-   evidence_uncertainty
-   mcmc_sampler
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Sampling options
-
-   resampling_configuration
-   mutation_configuration
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Core concepts
-
-   particle_state
-   step_context
-   random_number_generation
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Advanced workflows
-
-   jax_support
-   checkpointing
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Extending Sequince
-
-   custom_steps_callbacks
+   user_guide/running_inference
+   user_guide/sampling_options
+   user_guide/core_concepts
+   user_guide/advanced_workflows
+   user_guide/extending_sequince
