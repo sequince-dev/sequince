@@ -1,94 +1,88 @@
-Resampling options
-==================
+Resampling configuration
+========================
 
-Resampling replaces a weighted particle population with equally weighted
-particles drawn from it. This prevents a small number of particles from
-carrying almost all of the weight, at the cost of duplicating some particles.
-Mutation is commonly applied afterwards to restore diversity.
+Resampling draws particles from a weighted population and assigns equal
+weights to the result. Some particles may be duplicated; mutation can then
+move them to new positions.
 
-Choosing a strategy
--------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 18 20 30 32
 
-The :func:`~sequince.prebuilt_samplers.make_standard_bayesian_smc` helper
-selects the ancestor-sampling algorithm with ``resampling``:
+   * - Method
+     - ``resampling`` name
+     - Implementation
+     - Ancestor selection
+   * - Systematic
+     - ``"systematic"``
+     - :class:`~sequince.steps.resampling.SystematicResampling`
+     - Equally spaced positions with one random offset.
+   * - Stratified
+     - ``"stratified"``
+     - :class:`~sequince.steps.resampling.StratifiedResampling`
+     - One random position in each equal-width stratum.
+   * - Multinomial
+     - ``"multinomial"``
+     - :class:`~sequince.steps.resampling.MultinomialResampling`
+     - Independent draws according to particle weights.
 
-``"systematic"``
-    Use :class:`~sequince.steps.resampling.SystematicResampling`. This is the
-    default and uses one random offset for the complete population.
+Common configuration
+--------------------
 
-``"stratified"``
-    Use :class:`~sequince.steps.resampling.StratifiedResampling`, with one
-    random position in each equal-width stratum.
-
-``"multinomial"``
-    Use :class:`~sequince.steps.resampling.MultinomialResampling`, drawing each
-    ancestor independently according to the particle weights.
-
-For example:
-
-.. code-block:: python
-
-    smc, posterior, metadata = make_standard_bayesian_smc(
-        log_prior,
-        log_likelihood,
-        resampling="stratified",
-    )
-
-Choosing when to resample
--------------------------
-
-The resampling algorithm and its schedule are configured separately:
+The method determines how ancestors are drawn. Constructor options control
+when to resample and how many particles to draw:
 
 .. code-block:: python
 
-    smc, posterior, metadata = make_standard_bayesian_smc(
-        log_prior,
-        log_likelihood,
-        weighting_criterion="cess",
-        resampling="stratified",
-        resampling_ess_threshold=0.4,
-        always_resample=False,
-    )
+    from sequince.steps.resampling import StratifiedResampling
 
-With ``always_resample=False``, resampling occurs when the effective sample size
-divided by the number of particles falls below ``resampling_ess_threshold``.
-Set the threshold to ``None`` to disable threshold-triggered resampling. With
-``always_resample=True``, the runner resamples every iteration and ignores the
-threshold.
-
-When ``always_resample`` is omitted, its default depends on
-``weighting_criterion``: ESS-based tempering resamples every iteration, while
-CESS-based tempering uses the ESS threshold. Setting ``always_resample=False``
-with ``weighting_criterion="ess"`` is invalid because ESS-based tempering relies
-on resampling to meet its target.
-
-Functional execution currently requires ``always_resample=True``. See
-:doc:`jax_support` for the other functional-execution constraints.
-
-Configuring a resampling step directly
----------------------------------------
-
-In a manually assembled pipeline, instantiate the selected step with the same
-schedule arguments:
-
-.. code-block:: python
-
-    from sequince.steps import StratifiedResampling
-
-    resampling = StratifiedResampling(
+    resampling_step = StratifiedResampling(
         ess_threshold=0.4,
         always_resample=False,
+        resample_at_end=True,
     )
 
-The step records the pre-resampling ESS and whether resampling occurred in both
-the context metadata and its output. The particle state records selected
-ancestor indices when resampling occurs, which allows particle genealogies to
-be reconstructed.
+All three methods accept:
 
-Resampling and evidence estimates
----------------------------------
+* ``ess_threshold``: resample when ESS divided by the input particle count
+  falls below this value (default: ``0.5``). ``None`` disables the ESS trigger.
+* ``always_resample``: resample on every call, regardless of ESS
+  (default: ``False``).
+* ``resample_at_end``: resample when ``context.stop_requested`` is set,
+  regardless of ESS (default: ``True``).
+* ``n_samples``: number of output particles when resampling occurs. ``None``
+  (default) keeps the input count. Skipped resampling leaves the count unchanged.
 
-The resampling strategy affects Monte Carlo variability even though all three
-built-in algorithms target the same weighted population. See
-:doc:`evidence_uncertainty` for the uncertainty estimators and their resampling
-requirements.
+To disable resampling, set ``ess_threshold=None``, ``always_resample=False``,
+and ``resample_at_end=False``.
+
+Functional execution currently requires ``always_resample=True``. Compiled
+pipelines must also preserve the particle count; see :doc:`jax_support`.
+
+Outputs and ancestry
+--------------------
+
+The step returns :class:`~sequince.steps.resampling.ResamplingOutput` with
+``ess`` (before resampling), ``resampled``, ``ancestors``, and
+``resampling_scheme``. ``ancestors`` indexes the input population; when
+resampling is skipped, it contains the identity indices. The context metadata
+also records ``ess`` and ``resampled``.
+
+The state tracks each particle's original ancestor in
+``initial_ancestor_indices``. Resampling leaves the accumulated normalizing
+constant unchanged. See :doc:`evidence_uncertainty` for the assumptions needed
+by genealogy-based evidence estimators, including multinomial resampling.
+
+Prebuilt samplers
+-----------------
+
+:func:`~sequince.prebuilt_samplers.make_standard_bayesian_smc` selects a method
+with ``resampling`` (default: ``"systematic"``). Set the ESS threshold through
+``resampling_ess_threshold`` (default: ``0.5``); ``always_resample`` and
+``resample_at_end`` are also helper arguments. Pass extra constructor options,
+such as ``n_samples``, through ``resampling_kwargs``.
+
+With ``weighting_criterion="ess"`` (default), the helper resamples every
+iteration and rejects ``always_resample=False``. With
+``weighting_criterion="cess"``, it defaults to ESS-triggered resampling.
+Terminal resampling remains enabled unless ``resample_at_end=False``.

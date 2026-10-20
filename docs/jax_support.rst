@@ -7,8 +7,8 @@ loop, making one SMC iteration suitable for ``jax.jit`` while retaining
 normal result collection, callbacks, and checkpoint handling between
 iterations.
 
-Install JAX support with ``uv add "sequince[jax]"``. To use BlackJAX mutation,
-install ``uv add "sequince[blackjax]"`` instead; BlackJAX brings its JAX
+Install JAX support with ``pip install "sequince[jax]"``. To use BlackJAX mutation,
+install ``pip install "sequince[blackjax]"`` instead; BlackJAX brings its JAX
 dependency with it.
 
 The functional API is not limited to BlackJAX. Any pipeline whose steps obey
