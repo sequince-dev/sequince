@@ -34,7 +34,7 @@ Next steps
 
 See :doc:`evidence_uncertainty` for interpreting the evidence estimate and its
 uncertainty. To customise the run, continue with :doc:`smc_configuration` and
-the sampling choices in :doc:`resampling_options` and :doc:`mutation_options`.
+the sampling choices in :doc:`resampling_configuration` and :doc:`mutation_configuration`.
 The :doc:`step_context` guide explains the distinction between shared inputs
 and evolving metadata. For sampling without SMC weighting and resampling, see
 :doc:`mcmc_sampler`.

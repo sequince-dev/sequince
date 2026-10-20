@@ -26,8 +26,8 @@ through the SMC loop, and more specialised execution and extension points.
    :maxdepth: 1
    :caption: Sampling options
 
-   resampling_options
-   mutation_options
+   resampling_configuration
+   mutation_configuration
 
 .. toctree::
    :maxdepth: 1
