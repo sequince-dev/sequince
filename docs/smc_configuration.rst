@@ -20,11 +20,10 @@ Bayesian inference pipeline is the pre-built helper:
 
 ``make_standard_bayesian_smc`` constructs an SMC runner that adaptively
 steps through a series of simulated annealing temperatures
-(:class:`~sequince.steps.weighting.AdaptiveTemperedWeighting`), applying
+(:class:`~sequince.steps.weighting.AdaptiveTemperedWeighting`), applying a resampling step (:class:`~sequince.steps.resampling.SystematicResampling`) and a mutation step
+(:class:`~sequince.steps.mutation.base.MutationStep`) at each iteration.
 See :doc:`resampling_configuration` and :doc:`mutation_configuration` for the available
-sampling strategies.
-See :doc:`jax_support` for JAX-backed execution, which needs some additional
-function calls to enable full JAX functionality (``jit``, ``vmap``, ``grad``, ...).
+reasmpling and mutation options and configuration.
 
 When starting the run, pass the ``metadata`` returned by the convenience constructor:
 
