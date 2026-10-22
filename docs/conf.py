@@ -7,8 +7,8 @@ from datetime import datetime
 # -- Project information -----------------------------------------------------
 
 project = "sequince"
-copyright = f"{datetime.now():%Y}, Michael J. Williams"
-author = "Michael J. Williams"
+copyright = f"{datetime.now():%Y}, Sequince Developers"
+author = "Sequince Developers"
 
 try:
     from importlib import metadata as importlib_metadata

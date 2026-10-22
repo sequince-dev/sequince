@@ -17,6 +17,7 @@ For implementing new sampling components, see
 
 .. toctree::
    :maxdepth: 1
+   :caption: Contents
 
    Contributing <CONTRIBUTING>
    AI policy <AI_POLICY>
