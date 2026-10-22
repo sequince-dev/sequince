@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Self
 
 import numpy as np
+from array_api_compat import device as get_device
 from numpy.random import Generator as NumPyGenerator
 
 from ._typing import Array
-from .array_api import asarray, get_device, namespace, to_numpy
+from .array_api import asarray, namespace, to_numpy
 from .state import ParticleState
 from .steps.constraints import _STOP_REASONS, NestedSamplingLevel
 from .steps.context import StepContext

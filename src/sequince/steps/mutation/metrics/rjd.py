@@ -6,10 +6,11 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from array_api_compat import device as get_device
 from orng import RandomGenerator
 
 from ...._typing import Array
-from ....array_api import asarray, get_device, namespace, to_numpy
+from ....array_api import asarray, namespace, to_numpy
 from ....utils.pytrees import pytree_dataclass
 from ...base import validate_n_steps
 from ...context import StepContext

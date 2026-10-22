@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING, Any, Callable, TypeGuard
 
 import array_api_extra as xpx
 import optree
+from array_api_compat import device as get_device
 
 from ..._typing import Array
-from ...array_api import asarray, get_device, namespace, to_numpy
+from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
 from ...utils.pytrees import OPTREE_NAMESPACE

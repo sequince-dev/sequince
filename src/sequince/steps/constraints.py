@@ -8,10 +8,11 @@ from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 import numpy as np
+from array_api_compat import is_jax_namespace
 from orng import RandomGenerator
 
 from .._typing import Array
-from ..array_api import asarray, is_jax_namespace, logsumexp, namespace
+from ..array_api import asarray, logsumexp, namespace
 from ..array_api import copy as array_copy
 from ..state import (
     ParticleState,
