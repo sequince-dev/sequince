@@ -18,6 +18,8 @@ Overview
   repository.
 * The :doc:`API reference <autoapi/sequince/index>` lists classes, functions,
   and their parameters.
+* The :doc:`developer_guide/index` links to the contribution guidelines and
+  AI policy.
 
 .. toctree::
    :maxdepth: 2
@@ -28,6 +30,7 @@ Overview
    user_guide/index
    examples
    API reference <autoapi/sequince/index>
+   developer_guide/index
 
 Indices and tables
 ------------------

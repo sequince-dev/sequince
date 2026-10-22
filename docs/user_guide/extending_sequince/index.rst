@@ -25,6 +25,7 @@ into a pipeline.
 
 .. toctree::
    :maxdepth: 1
+   :caption: Contents
 
    custom_steps
    custom_callbacks

@@ -21,5 +21,6 @@ The Sequince maintainers welcome contributions, including those developed with t
 5. **Maintainer discretion**
    Maintainers may close or decline pull requests that are low quality, excessively burdensome to review, appear to lack meaningful human oversight, or otherwise are not in the best interests of the project.
 
-> [!NOTE]
+> **Note:**
+>
 > This policy is informed by similar guidance adopted in the Scientific Python ecosystem, including Astropy, Matplotlib, and scikit-learn.

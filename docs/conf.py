@@ -26,6 +26,7 @@ version = release
 
 extensions = [
     "autoapi.extension",
+    "myst_parser",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
