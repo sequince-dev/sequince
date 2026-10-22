@@ -8,11 +8,12 @@ sequential methods.
 Overview
 --------
 
-* :doc:`getting_started` covers installation and a complete straight-line
+* :doc:`getting_started` gives a complete straight-line
   fitting example.
-* :doc:`user_guide` explains how to configure sampling, work with particle
+* :doc:`installation` covers dependencies and optional integrations.
+* :doc:`user_guide/index` explains how to configure sampling, work with particle
   states and results, and build custom pipelines. After the quickstart,
-  continue with :doc:`smc_configuration` and :doc:`evidence_uncertainty`.
+  continue with :doc:`user_guide/core_concepts/index` and :doc:`user_guide/running_inference/index`.
 * :doc:`examples` links to worked examples in the ``sequince-examples``
   repository.
 * The :doc:`API reference <autoapi/sequince/index>` lists classes, functions,
@@ -23,7 +24,8 @@ Overview
    :caption: Contents
 
    getting_started
-   user_guide
+   installation
+   user_guide/index
    examples
    API reference <autoapi/sequince/index>
 

@@ -76,7 +76,7 @@ inside the iteration uses JAX-compatible operations. Pass a JAX key as
 :meth:`~sequince.smc.SequentialMonteCarlo.run_functional` returns both the
 :class:`~sequince.result.SMCResult` and the advanced random state. Reuse the
 returned key, rather than the input key, when continuing random work.
-See :doc:`random_number_generation` for the corresponding eager-execution
+See :doc:`../core_concepts/random_number_generation` for the corresponding eager-execution
 contract and reproducibility guidance.
 
 The example selects BlackJAX's default NUTS mutation. Configure the number of

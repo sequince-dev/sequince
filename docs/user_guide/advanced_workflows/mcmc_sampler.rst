@@ -79,7 +79,7 @@ helper: ``"minipcn"``, ``"emcee"``, ``"blackjax"``, and
         },
     )
 
-See :doc:`mutation_configuration` for available backends, optional dependencies, and
+See :doc:`../sampling_options/mutation_configuration` for available backends, optional dependencies, and
 kernel configuration. A configured
 :class:`~sequince.steps.mutation.base.MutationStep` can also be passed directly to
 :class:`~sequince.mcmc.MarkovChainMonteCarlo`; the runner enables chain storage

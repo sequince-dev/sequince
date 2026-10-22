@@ -56,10 +56,15 @@ Use the result helpers to preserve those weights when computing summaries:
     final_state = result.final_state
     mean = result.weighted_mean()
     covariance = result.weighted_covariance()
-    samples = result.posterior_samples(1_000, rng=42)
+    samples, weights = result.posterior_samples(
+        n_samples=1_000, method="multinomial", rng=42
+    )
 
-``posterior_samples`` draws an equally weighted sample from the final weighted
-population. For diagnostics across the complete run, use ``result.summary()``,
+With ``method="multinomial"``, ``posterior_samples`` draws an equally weighted
+sample with replacement from the final weighted population. The default
+``method="weights"`` returns weighted particles. For diagnostics across the
+complete run, use ``result.summary()``,
 ``result.effective_sample_sizes()``, ``result.log_evidence_history()``, and
-``result.metadata_history(key)``. See :doc:`evidence_uncertainty` for
-interpreting the final evidence estimate and its uncertainty.
+``result.metadata_history(key)``. See :doc:`../running_inference/evidence_uncertainty` for
+interpreting the final evidence estimate and its uncertainty, and
+:doc:`../running_inference/results` for posterior extraction and nested-sampling results.

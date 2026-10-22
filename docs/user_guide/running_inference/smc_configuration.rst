@@ -22,8 +22,10 @@ Bayesian inference pipeline is the pre-built helper:
 steps through a series of simulated annealing temperatures
 (:class:`~sequince.steps.weighting.AdaptiveTemperedWeighting`), applying a resampling step (:class:`~sequince.steps.resampling.SystematicResampling`) and a mutation step
 (:class:`~sequince.steps.mutation.base.MutationStep`) at each iteration.
-See :doc:`resampling_configuration` and :doc:`mutation_configuration` for the available
+See :doc:`../sampling_options/resampling_configuration` and :doc:`../sampling_options/mutation_configuration` for the available
 reasmpling and mutation options and configuration.
+
+See :doc:`callbacks` for the available plotting callbacks and their settings.
 
 When starting the run, pass the ``metadata`` returned by the convenience constructor:
 
@@ -36,7 +38,7 @@ When starting the run, pass the ``metadata`` returned by the convenience constru
         metadata=metadata,
     )
 
-See :doc:`step_context` for the distinction between static ``shared_context``
+See :doc:`../core_concepts/step_context` for the distinction between static ``shared_context``
 data and evolving metadata.
 
 Building a pipeline manually
@@ -67,4 +69,6 @@ to reproduce the pre-built SMC defined above:
 Each entry in ``steps`` must follow the
 :class:`~sequince.steps.base.SMCStep` interface. Each callback must follow the
 :class:`~sequince.callbacks.SMCCallback` interface. See
-:doc:`custom_steps_callbacks` when implementing either interface yourself.
+:doc:`../extending_sequince/custom_steps` and
+:doc:`../extending_sequince/custom_callbacks` when implementing these
+interfaces yourself.

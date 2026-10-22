@@ -3,7 +3,7 @@ Mutation configuration
 
 Mutation steps apply MCMC transitions to a particle population without changing
 its weights. Use them in an SMC pipeline or with the standalone
-:class:`~sequince.mcmc.MarkovChainMonteCarlo` runner; see :doc:`mcmc_sampler`.
+:class:`~sequince.mcmc.MarkovChainMonteCarlo` runner; see :doc:`../advanced_workflows/mcmc_sampler`.
 Each step takes a target callable or :class:`~sequince.target.Target` object.
 
 .. list-table::
@@ -84,7 +84,7 @@ when resampling occurs.
 
 Install optional backends with ``pip install "sequince[emcee]"``,
 ``pip install "sequince[eryn]"``, or ``pip install "sequince[blackjax]"``.
-See :doc:`jax_support` for compiled execution.
+See :doc:`../advanced_workflows/jax_support` for compiled execution.
 
 Particle transforms
 -------------------
@@ -156,5 +156,5 @@ and default execution flags, it runs only after resampling unless
 
 You can also pass a configured step as ``mutation``. Set its target, transform,
 and options directly: the helper does not apply ``mutation_n_steps`` or
-``mutation_kwargs`` to it. See :doc:`smc_configuration` for custom pipelines
+``mutation_kwargs`` to it. See :doc:`../running_inference/smc_configuration` for custom pipelines
 and the API links above for method-specific options and outputs.

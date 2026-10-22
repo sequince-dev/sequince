@@ -25,7 +25,7 @@ Fields
     The observation selected for the current iteration, or ``None`` when no
     observation is available. If ``num_steps`` is specified, a run can continue
     after its observations are exhausted; those additional iterations receive
-    ``None``. See :doc:`observations` for complete iteration and exhaustion
+    ``None``. See :doc:`../running_inference/observations` for complete iteration and exhaustion
     semantics.
 
 ``next_observation_index``

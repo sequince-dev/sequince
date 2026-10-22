@@ -9,15 +9,16 @@ update the context. This proceeds until a user-specified termination
 criterion is satisfied, which returns a result object for further processing
 and results visualisation.
 
-Start with the workflow guides when configuring a run and interpreting its
-output. The remaining sections explain sampling choices, the objects passed
-through the SMC loop, and more specialised execution and extension points.
+Start with the core concepts to understand the objects passed through the
+SMC loop. The running-inference guides cover pre-built samplers, configuration,
+and interpreting outputs. The remaining sections explain sampling choices and
+more specialised execution and extension points.
 
 .. toctree::
    :maxdepth: 2
 
-   user_guide/running_inference
-   user_guide/sampling_options
-   user_guide/core_concepts
-   user_guide/advanced_workflows
-   user_guide/extending_sequince
+   core_concepts/index
+   running_inference/index
+   sampling_options/index
+   advanced_workflows/index
+   extending_sequince/index

@@ -11,8 +11,7 @@ Eager execution
 ---------------
 
 The ``rng`` argument accepted by
-:meth:`~sequince.smc.SequentialMonteCarlo.run` and
-:meth:`~sequince.mcmc.MarkovChainMonteCarlo.run` may be:
+:meth:`~sequince.smc.SequentialMonteCarlo.run` may be:
 
 .. list-table::
    :header-rows: 1
@@ -54,8 +53,8 @@ object to another operation continues its stream; it does not restart from the
 original seed. To reproduce a run, recreate both the initial state and runner
 inputs from the same seed and configuration.
 
-Randomness in custom steps
---------------------------
+RNG in custom steps
+-------------------
 
 An eager step receives an :class:`orng.RandomGenerator` as its third argument:
 
@@ -90,7 +89,7 @@ Functional execution does not mutate a generator. Pass backend-native state as
 
 Each functional step accepts the current random state and must return its
 replacement. Reusing the input key instead of the returned key repeats the same
-random stream. See :doc:`jax_support` for compiling the functional iteration
+random stream. See :doc:`../advanced_workflows/jax_support` for compiling the functional iteration
 and splitting a key for random particle initialisation.
 
 Checkpointing and resuming
@@ -104,7 +103,7 @@ uninterrupted run.
 With ``save_rng=False``, pass ``rng`` to ``resume_from`` to deliberately start
 the continuation from a new random state. Once a runtime has been prepared,
 pass only ``runtime`` to ``run``; RNG and context arguments cannot be supplied
-again. See :doc:`checkpointing` for the complete resume workflow.
+again. See :doc:`../advanced_workflows/checkpointing` for the complete resume workflow.
 
 Random posterior draws
 ----------------------

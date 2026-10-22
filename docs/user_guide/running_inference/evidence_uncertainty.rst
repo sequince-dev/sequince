@@ -1,6 +1,17 @@
 Evidence and uncertainty
 ========================
 
+For Bayesian inference, the evidence is the integral of the likelihood against
+the normalized prior. It is the normalizing constant of the unnormalized
+posterior density. Interpreting this value as Bayesian evidence requires
+retaining the likelihood's normalization constants.
+
+For tempered SMC, the full posterior is reached at ``beta=1``. Evidence at an
+earlier temperature is the normalizing constant of that intermediate target.
+For nested-sampling SMC, use the shell-evidence interface described in
+:doc:`results`; the ordinary state normalizing constant tracks constrained-prior
+mass instead. The uncertainty estimators below apply to ordinary SMC weighting.
+
 :class:`~sequince.result.SMCResult` provides three estimates of log-evidence
 uncertainty from a single SMC run:
 

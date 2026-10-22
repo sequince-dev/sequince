@@ -57,7 +57,7 @@ To disable resampling, set ``ess_threshold=None``, ``always_resample=False``,
 and ``resample_at_end=False``.
 
 Functional execution currently requires ``always_resample=True``. Compiled
-pipelines must also preserve the particle count; see :doc:`jax_support`.
+pipelines must also preserve the particle count; see :doc:`../advanced_workflows/jax_support`.
 
 Outputs and ancestry
 --------------------
@@ -70,7 +70,7 @@ also records ``ess`` and ``resampled``.
 
 The state tracks each particle's original ancestor in
 ``initial_ancestor_indices``. Resampling leaves the accumulated normalizing
-constant unchanged. See :doc:`evidence_uncertainty` for the assumptions needed
+constant unchanged. See :doc:`../running_inference/evidence_uncertainty` for the assumptions needed
 by genealogy-based evidence estimators, including multinomial resampling.
 
 Prebuilt samplers

@@ -151,7 +151,7 @@ original indexable sequence to ``run``:
 
 The runner resumes with ``all_observations[checkpoint.next_observation_index]``.
 As generators cannot be repositioned, they are not compatible with this procedure.
-See :doc:`checkpointing` for the full checkpoint workflow.
+See :doc:`../advanced_workflows/checkpointing` for the full checkpoint workflow.
 
 Observations with the JAX backend
 ---------------------------------
@@ -181,5 +181,5 @@ For easy compilation, supply a representative first observation to the compilati
         iteration=iteration,
     )
 
-See :doc:`jax_support` for compilation, random-state threading, and fixed-carry
+See :doc:`../advanced_workflows/jax_support` for compilation, random-state threading, and fixed-carry
 requirements.
