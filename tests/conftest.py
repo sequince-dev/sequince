@@ -8,9 +8,11 @@ import pytest
 from orng import RandomGenerator
 
 from sequince.array_api import namespace
+from sequince.checkpoint import CheckpointWriter, SMCCheckpoint
 from sequince.posterior import TemperedPosterior
 from sequince.state import ParticleState
 from sequince.steps.base import StepContext
+from sequince.transforms import IdentityTransform
 from sequince.utils.random import resolve_rng
 
 
@@ -191,6 +193,44 @@ def _backend_factory(backend: str) -> BackendCase:
     raise ValueError(f"Unsupported backend '{backend}'.")
 
 
+class CheckpointRecorder(CheckpointWriter):
+    def __init__(self, *, save_rng: bool = True) -> None:
+        super().__init__(save_rng=save_rng)
+        self.checkpoints: list[SMCCheckpoint] = []
+
+    def _write(self, checkpoint: SMCCheckpoint) -> None:
+        self.checkpoints.append(checkpoint)
+
+
+class SignFoldingTransform(IdentityTransform):
+    """Test-only many-to-one transform with explicit branch information."""
+
+    def forward(self, particles, context=None, *, rng=None):
+        del context, rng
+        xp = namespace(particles)
+        values = xp.asarray(particles)
+        signs = xp.where(
+            values < 0, -xp.ones_like(values), xp.ones_like(values)
+        )
+        return xp.abs(values), xp.zeros_like(values[..., 0]), signs
+
+    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
+        del context
+        xp = namespace(values)
+        values = xp.asarray(values)
+        if auxiliary is None:
+            if rng is None:
+                raise ValueError(
+                    "SignFoldingTransform inverse requires auxiliary or rng."
+                )
+            choices = xp.asarray(rng.choice(2, size=values.shape))
+            auxiliary = 2 * choices - 1
+        return (
+            values * xp.asarray(auxiliary),
+            xp.zeros_like(values[..., 0]),
+        )
+
+
 @pytest.fixture
 def backend_factory() -> Callable[[str], BackendCase]:
     """Return the shared Array API backend constructor."""
@@ -297,3 +337,13 @@ def context_factory() -> Callable[..., StepContext]:
 def step_context(context_factory: Callable[..., StepContext]) -> StepContext:
     """Convenience fixture for a default StepContext."""
     return context_factory()
+
+
+@pytest.fixture
+def checkpoint_recorder_factory() -> type[CheckpointRecorder]:
+    return CheckpointRecorder
+
+
+@pytest.fixture
+def sign_folding_transform_factory() -> type[SignFoldingTransform]:
+    return SignFoldingTransform

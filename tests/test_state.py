@@ -151,14 +151,12 @@ def test_state_resamples_and_serializes_target_evaluation() -> None:
     )
 
 
-def test_effective_sample_size_matches_expected(
-    particle_state: ParticleState,
-) -> None:
-    state = particle_state.normalize()[0]
-    ess = state.effective_sample_size()
-    weights = state.weights
-    expected_ess = 1.0 / np.sum(np.square(weights))
-    assert pytest.approx(ess) == expected_ess
+def test_effective_sample_size_matches_expected() -> None:
+    state = ParticleState(
+        np.zeros((4, 1)),
+        log_weights=np.array([0.0, 0.0, np.log(2.0), -np.inf]) + 1000,
+    )
+    assert state.effective_sample_size() == pytest.approx(8 / 3)
 
 
 def test_with_updates_returns_new_state(particle_state: ParticleState) -> None:

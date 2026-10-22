@@ -548,38 +548,34 @@ def test_evolving_target_ess_ratio_validates_arguments(
         evolving_target_ess_ratio(**kwargs)
 
 
-def test_adaptive_tempered_weighting_reaches_max_beta(
-    particle_state: ParticleState,
-    context_factory,
-    rng,
-    unit_log_likelihood,
+@pytest.mark.parametrize(
+    ("criterion", "target_ratio"), [("ess", 49 / 74), ("cess", 49 / 52)]
+)
+def test_adaptive_tempering_solves_known_two_particle_target(
+    criterion: Literal["ess", "cess"], target_ratio: float, rng
 ) -> None:
+    # At delta=1/2, g=(1,2). Starting from W=(1/4,3/4),
+    # E[g]=7/4 and E[g^2]=13/4, so CESS=49/52.
+    # Updated W=(1/7,6/7) gives ESS/n=49/74.
+    state = ParticleState(
+        np.array([[0.0], [1.0]]), log_weights=np.log([0.25, 0.75])
+    )
     step = AdaptiveTemperedWeighting(
-        unit_log_likelihood,
-        target_ess_ratio=0.8,
-        max_beta=0.6,
-        min_delta=0.05,
-        max_bisection_iter=10,
+        lambda x: np.array([0.0, np.log(4.0)]),
+        criterion=criterion,
+        target_ess_ratio=target_ratio,
+        min_delta=1e-10,
+        max_bisection_iter=60,
     )
 
-    state = particle_state.with_updates(metadata={"beta": 0.0})
+    updated, context, output = step(state, StepContext(t=0), rng)
 
-    stop_step = None
-    for t in range(20):
-        context = context_factory(t=t)
-        state, context, _ = step(state, context, rng)
-        if context.stop_requested:
-            stop_step = t
-            break
-
-    assert stop_step is not None, (
-        "Adaptive tempering did not request stop within 20 iterations."
-    )
-    assert state.metadata["beta"] == pytest.approx(0.6, abs=1e-6)
-    assert context.metadata["beta"] == pytest.approx(state.metadata["beta"])
-    assert "delta_beta" in context.metadata
-    assert context.stop_requested
-    assert not context.stop_immediately
+    assert float(output["delta_beta"]) == pytest.approx(0.5, abs=1e-9)
+    np.testing.assert_allclose(updated.weights, [1 / 7, 6 / 7], atol=1e-9)
+    assert updated.log_evidence == pytest.approx(np.log(7 / 4), abs=1e-9)
+    assert float(output["ess_ratio"]) == pytest.approx(49 / 74)
+    assert float(output["cess_ratio"]) == pytest.approx(49 / 52)
+    assert not context.stop_requested
 
 
 def test_adaptive_endpoint_skips_bisection(monkeypatch) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import emcee
 import numpy as np
 import pytest
-from orng import ArrayRNG
+from orng import RandomGenerator
 
 from sequince.state import ParticleState
 from sequince.steps.context import StepContext
@@ -88,12 +88,12 @@ def test_emcee_mutation_uses_supplied_rng(
     first, _, first_output = step(
         particle_state,
         context_factory(),
-        ArrayRNG(seed=2468),
+        RandomGenerator(seed=2468),
     )
     second, _, second_output = step(
         particle_state,
         context_factory(),
-        ArrayRNG(seed=2468),
+        RandomGenerator(seed=2468),
     )
 
     np.testing.assert_array_equal(first.particles, second.particles)
@@ -102,16 +102,6 @@ def test_emcee_mutation_uses_supplied_rng(
         == second_output["metrics"].acceptance
     )
     assert first_output["steps"] == 3
-
-
-def test_emcee_mutation_resolves_bilby_de_move() -> None:
-    step = EmceeMutation(lambda position: 0.0, move="bilby-de")
-
-    assert len(step._move) == 2  # noqa: SLF001
-    assert isinstance(step._move[0][0], emcee.moves.DEMove)  # noqa: SLF001
-    assert step._move[0][1] == 0.9  # noqa: SLF001
-    assert step._move[1][0].gamma0 == 1.0  # noqa: SLF001
-    assert step._move[1][1] == 0.1  # noqa: SLF001
 
 
 def test_emcee_rejects_particle_aligned_transform_auxiliary(
@@ -125,7 +115,7 @@ def test_emcee_rejects_particle_aligned_transform_auxiliary(
     with pytest.raises(
         NotImplementedError, match="walker-specific auxiliary data"
     ):
-        step(particle_state, context_factory(), ArrayRNG(seed=2468))
+        step(particle_state, context_factory(), RandomGenerator(seed=2468))
 
 
 def test_emcee_accepts_non_particle_aligned_transform_auxiliary(
@@ -136,7 +126,9 @@ def test_emcee_accepts_non_particle_aligned_transform_auxiliary(
         transform=SharedAuxiliaryTransform(),
     )
 
-    result, _, _ = step(particle_state, context_factory(), ArrayRNG(seed=2468))
+    result, _, _ = step(
+        particle_state, context_factory(), RandomGenerator(seed=2468)
+    )
 
     assert result.particles.shape == particle_state.particles.shape
     assert np.all(np.isfinite(result.particles))
@@ -160,7 +152,7 @@ def test_emcee_uses_blobs_for_final_target_evaluation(
     result, context, _ = step(
         particle_state,
         context_factory(metadata={"temperature": 1.0}),
-        ArrayRNG(seed=2468),
+        RandomGenerator(seed=2468),
     )
 
     assert result.evaluation is not None

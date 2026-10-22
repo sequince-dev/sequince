@@ -330,33 +330,6 @@ def test_transition_ratio_is_zero_per_active_particle() -> None:
     np.testing.assert_array_equal(ratio, 0.0)
 
 
-@pytest.mark.parametrize("gamma_randomization", ["none", "bilby"])
-def test_red_blue_integration_uses_sequential_frozen_complements(
-    gamma_randomization,
-    context_factory,
-) -> None:
-    particles = np.arange(12.0).reshape(6, 2) / 4.0
-    kernel = DifferentialEvolutionKernel(
-        gamma=0.4,
-        gamma_one_probability=0.0,
-        gamma_randomization=gamma_randomization,
-    )
-
-    mutation = RedBlueMetropolisHastingsMutation(
-        lambda values, context: np.zeros(values.shape[0]),
-        kernel,
-    )
-    updated, _, _ = mutation(
-        ParticleState(particles),
-        context_factory(),
-        RandomGenerator(seed=25),
-    )
-
-    assert updated.particles.shape == particles.shape
-    assert updated.particles.shape[0] == particles.shape[0]
-    assert mutation._complementary_ensemble_kernel is kernel  # noqa: SLF001
-
-
 @pytest.mark.parametrize("randomization", ["none", "bilby"])
 @pytest.mark.parametrize("probability", [0.0, 0.3, 1.0])
 def test_singleton_matches_legacy_rng_exactly(

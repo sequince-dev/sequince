@@ -19,11 +19,6 @@ from sequince.steps.mutation.metropolis import (
 from sequince.transforms import ParticleTransform
 
 
-def _zero_log_prob(particles, context):
-    del context
-    return np.zeros(particles.shape[0])
-
-
 class ShiftKernel(SymmetricComplementaryEnsembleKernel):
     def __init__(self, amount: float = 1.0) -> None:
         self.amount = amount
@@ -94,6 +89,7 @@ def test_split_is_a_random_partition(n_particles: int) -> None:
 
 
 def test_persistent_red_blue_kernel_receives_each_frozen_complement(
+    flat_log_prob,
     context_factory,
 ) -> None:
     class RecordingKernel(SymmetricComplementaryEnsembleKernel):
@@ -109,7 +105,7 @@ def test_persistent_red_blue_kernel_receives_each_frozen_complement(
 
     particles = np.arange(6.0).reshape(6, 1)
     kernel = RecordingKernel()
-    mutation = RedBlueMetropolisHastingsMutation(_zero_log_prob, kernel)
+    mutation = RedBlueMetropolisHastingsMutation(flat_log_prob, kernel)
 
     updated, _, _ = mutation(
         ParticleState(particles),
@@ -126,6 +122,7 @@ def test_persistent_red_blue_kernel_receives_each_frozen_complement(
 
 
 def test_persistent_red_blue_kernel_transition_ratio_is_applied(
+    flat_log_prob,
     context_factory,
 ) -> None:
     class RejectingKernel(ComplementaryEnsembleKernel):
@@ -139,7 +136,7 @@ def test_persistent_red_blue_kernel_transition_ratio_is_applied(
 
     particles = np.arange(6.0).reshape(6, 1)
     mutation = RedBlueMetropolisHastingsMutation(
-        _zero_log_prob,
+        flat_log_prob,
         RejectingKernel(),
     )
 
@@ -213,10 +210,12 @@ def test_only_active_particles_are_evaluated(context_factory) -> None:
     assert returned_context.evaluation_counts.log_proposal_evaluations == 0
 
 
-def test_acceptance_updates_only_the_active_half(context_factory) -> None:
+def test_acceptance_updates_only_the_active_half(
+    flat_log_prob, context_factory
+) -> None:
     particles = np.arange(6.0).reshape(6, 1)
     kernel = AcceptFirstHalfKernel(10.0)
-    mutation = RedBlueMetropolisHastingsMutation(_zero_log_prob, kernel)
+    mutation = RedBlueMetropolisHastingsMutation(flat_log_prob, kernel)
     updated, _, output = mutation(
         ParticleState(particles),
         context_factory(),
@@ -326,27 +325,33 @@ class StructuredAuxiliaryTransform(ParticleTransform):
             },
             "shared": np.asarray(1.0),
         }
-        return values, np.zeros(values.shape[0]), auxiliary
+        return (
+            values - auxiliary["nested"]["offset"],
+            np.zeros(values.shape[0]),
+            auxiliary,
+        )
 
     def inverse(self, values, context=None, *, auxiliary=None, rng=None):
         del context, rng
         assert auxiliary is not None
         offsets = auxiliary["nested"]["offset"]
         self.inverse_batch_sizes.append(offsets.shape[0])
-        values = (
-            np.asarray(values) + np.asarray(0.0, dtype=values.dtype) * offsets
-        )
+        values = np.asarray(values) + offsets
         return values, np.zeros(values.shape[0])
 
 
 def test_structured_transform_auxiliary_is_sliced(context_factory) -> None:
     transform = StructuredAuxiliaryTransform()
+    evaluated = []
+
+    def target(particles, context):
+        evaluated.append(particles.copy())
+        return np.zeros(len(particles))
+
     mutation = RedBlueMetropolisHastingsMutation(
-        _zero_log_prob,
-        _shift_kernel(),
-        transform=transform,
+        target, _shift_kernel(), transform=transform
     )
-    particles = np.zeros((5, 1), dtype=np.float32)
+    particles = 10 * np.arange(5, dtype=np.float32)[:, None]
 
     updated, _, _ = mutation(
         ParticleState(particles),
@@ -354,15 +359,19 @@ def test_structured_transform_auxiliary_is_sliced(context_factory) -> None:
         RandomGenerator(backend="numpy", seed=5),
     )
 
-    assert transform.inverse_batch_sizes == [5, 2, 3, 5]
-    assert updated.particles.shape == particles.shape
+    np.testing.assert_array_equal(evaluated[0], particles)
+    proposals = np.concatenate(evaluated[1:])[:, 0]
+    np.testing.assert_array_equal(np.sort(proposals), particles[:, 0] + 1)
+    np.testing.assert_array_equal(updated.particles, particles + 1)
     assert updated.particles.dtype == particles.dtype
 
 
-def test_transform_is_prepared_once_per_apply(context_factory) -> None:
+def test_transform_is_prepared_once_per_apply(
+    flat_log_prob, context_factory
+) -> None:
     transform = StructuredAuxiliaryTransform()
     mutation = RedBlueMetropolisHastingsMutation(
-        _zero_log_prob,
+        flat_log_prob,
         _shift_kernel(),
         transform=transform,
         n_steps=3,
@@ -378,10 +387,12 @@ def test_transform_is_prepared_once_per_apply(context_factory) -> None:
     assert transform.forward_calls == 1
 
 
-def test_store_chains_records_complete_sweeps(context_factory) -> None:
+def test_store_chains_records_complete_sweeps(
+    flat_log_prob, context_factory
+) -> None:
     particles = np.zeros((5, 2), dtype=np.float32)
     mutation = RedBlueMetropolisHastingsMutation(
-        _zero_log_prob,
+        flat_log_prob,
         _shift_kernel(),
         n_steps=3,
         store_chains=True,
@@ -453,16 +464,18 @@ def test_gaussian_target_is_stable_under_symmetric_kernel(
     assert np.std(updated.particles) == pytest.approx(1.0, abs=0.06)
 
 
-def test_red_blue_requires_two_particles(context_factory) -> None:
+def test_red_blue_requires_two_particles(
+    flat_log_prob, context_factory
+) -> None:
     with pytest.raises(ValueError, match="n_steps"):
         RedBlueMetropolisHastingsMutation(
-            _zero_log_prob,
+            flat_log_prob,
             _shift_kernel(),
             n_steps=0,
         )
 
     mutation = RedBlueMetropolisHastingsMutation(
-        _zero_log_prob,
+        flat_log_prob,
         _shift_kernel(),
     )
 
@@ -474,17 +487,19 @@ def test_red_blue_requires_two_particles(context_factory) -> None:
         )
 
 
-def test_red_blue_requires_complementary_ensemble_kernel() -> None:
+def test_red_blue_requires_complementary_ensemble_kernel(
+    flat_log_prob,
+) -> None:
     with pytest.raises(TypeError, match="ComplementaryEnsembleKernel"):
         RedBlueMetropolisHastingsMutation(
-            _zero_log_prob,
+            flat_log_prob,
             object(),  # type: ignore[arg-type]
         )
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
 def test_sample_only_correction_and_nested_transition_particle_order(
-    backend, backend_factory, context_factory
+    flat_log_prob, backend, backend_factory, context_factory
 ) -> None:
     from sequince.array_api import get_device, to_numpy
 
@@ -540,7 +555,7 @@ def test_sample_only_correction_and_nested_transition_particle_order(
             return state
 
     mutation = RedBlueMetropolisHastingsMutation(
-        _zero_log_prob, Kernel(), metrics=[Metric()]
+        flat_log_prob, Kernel(), metrics=[Metric()]
     )
     _, _, output = mutation(
         ParticleState(xp.arange(7, dtype=case.particles.dtype)[:, None]),

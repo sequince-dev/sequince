@@ -8,7 +8,7 @@ import pytest
 from orng import RandomGenerator
 
 from sequince import ParticleState
-from sequince.checkpoint import CheckpointWriter, SMCCheckpoint
+from sequince.checkpoint import CheckpointWriter
 from sequince.steps import (
     AdaptiveTemperedWeighting,
     FixedTemperedWeighting,
@@ -122,15 +122,6 @@ def test_monotone_bisection_uses_jittable_control_flow() -> None:
 
     assert float(low) <= 0.7 <= float(high)
     assert float(high - low) <= 1e-6
-
-
-class CheckpointRecorder(CheckpointWriter):
-    def __init__(self) -> None:
-        super().__init__(save_rng=True)
-        self.checkpoints: list[SMCCheckpoint] = []
-
-    def _write(self, checkpoint: SMCCheckpoint) -> None:
-        self.checkpoints.append(checkpoint)
 
 
 def _fixed_blackjax_sampler(
@@ -634,7 +625,9 @@ def test_run_functional_can_continue_from_returned_random_state() -> None:
     )
 
 
-def test_run_functional_checkpoint_resume_matches_full_run() -> None:
+def test_run_functional_checkpoint_resume_matches_full_run(
+    checkpoint_recorder_factory,
+) -> None:
     state = ParticleState(jnp.zeros((4, 2)))
     key = jax.random.key(42)
 
@@ -647,7 +640,7 @@ def test_run_functional_checkpoint_resume_matches_full_run() -> None:
         iteration=jax.jit(full_smc.functional_iteration),
     )
 
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     first_smc, _, _ = _fixed_blackjax_sampler(checkpoint_writers=[recorder])
     first_smc.run_functional(
         state,
@@ -677,7 +670,9 @@ def test_run_functional_checkpoint_resume_matches_full_run() -> None:
     )
 
 
-def test_functional_resume_preserves_once_transform() -> None:
+def test_functional_resume_preserves_once_transform(
+    checkpoint_recorder_factory,
+) -> None:
     from sequince.smc import SequentialMonteCarlo
     from sequince.steps.mutation import BlackJAXMutation
     from sequince.transforms import AffineTransform
@@ -705,7 +700,7 @@ def test_functional_resume_preserves_once_transform() -> None:
         random_state=key,
         iteration=jax.jit(full_runner.functional_iteration),
     )
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     first_runner = make_runner(recorder)
     first_runner.run_functional(
         state,

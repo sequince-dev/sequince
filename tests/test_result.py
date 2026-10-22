@@ -20,9 +20,13 @@ if TYPE_CHECKING:
 def dummy_results(particle_state, context_factory) -> SMCResult:
     return SMCResult(
         [
-            particle_state,
-        ]
-        * 10,
+            particle_state.with_updates(
+                particles=particle_state.particles + i,
+                metadata={"beta": i / 10},
+                log_normalizing_constant=float(i),
+            )
+            for i in range(10)
+        ],
         context_factory(),
     )
 
@@ -35,9 +39,13 @@ def test_smc_results_indexing(
     dummy_results: SMCResult, particle_state
 ) -> None:
     for i in range(10):
-        assert dummy_results[i] == particle_state
-
-    assert dummy_results.final_state == particle_state
+        np.testing.assert_array_equal(
+            dummy_results[i].particles, particle_state.particles + i
+        )
+    assert dummy_results[-1] is dummy_results.final_state
+    np.testing.assert_array_equal(
+        dummy_results.log_evidence_history(), np.arange(10)
+    )
 
 
 def test_smc_result_exposes_evaluation_counts(particle_state) -> None:
@@ -66,7 +74,7 @@ def test_smc_results_append_state(
 def test_smc_results_summary(dummy_results: SMCResult) -> None:
     summary = dummy_results.summary()
 
-    assert summary["final_log_normalizing_constant"] == pytest.approx(0.0)
+    assert summary["final_log_normalizing_constant"] == pytest.approx(9.0)
     assert "final_log_evidence" not in summary
 
 
@@ -534,20 +542,32 @@ def test_get_meta_smc_results(dummy_results: SMCResult) -> None:
     meta_result = dummy_results.get_meta_results()
 
     assert isinstance(meta_result, MetaSMCResult)
+    assert len(meta_result) == 1
+    assert meta_result[0].states is dummy_results.states
+    assert meta_result.final_state is dummy_results.final_state
 
 
 def test_smc_results_plot_metadata_history(dummy_results: SMCResult) -> None:
     import matplotlib.pyplot as plt
 
     ax = dummy_results.plot_metadata_history("beta", default=0.0)
+    np.testing.assert_array_equal(ax.lines[0].get_xdata(), np.arange(10))
+    np.testing.assert_allclose(ax.lines[0].get_ydata(), np.arange(10) / 10)
+    assert ax.get_ylabel() == "beta"
     plt.close(ax.get_figure())
 
 
-def test_smc_results_plot_corner(dummy_results: SMCResult) -> None:
-    import matplotlib.pyplot as plt
+def test_smc_results_plot_corner(
+    dummy_results: SMCResult, monkeypatch
+) -> None:
+    from unittest.mock import Mock
 
-    ax = dummy_results.plot_corner()
-    plt.close(ax.get_figure())
+    plot = Mock()
+    monkeypatch.setattr("sequince.plot.plot_corner", plot)
+    dummy_results.plot_corner(state_index=2, include_weights=True)
+    args, kwargs = plot.call_args
+    np.testing.assert_array_equal(args[0], dummy_results[2].particles)
+    np.testing.assert_allclose(kwargs["weights"], dummy_results[2].weights)
 
 
 def test_weighted_covariance_known_values(
@@ -563,6 +583,7 @@ def test_weighted_covariance_known_values(
     state = ParticleState(particles, log_weights=xp.log(weights))
     result = SMCResult([state], StepContext(t=0))
 
+    np.testing.assert_allclose(to_numpy(result.weighted_mean()), [0.5, 1.0])
     covariance = result.weighted_covariance()
 
     assert case.matches_namespace(covariance)
