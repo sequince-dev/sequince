@@ -15,7 +15,7 @@ weighting, resampling, and mutation. It uses adaptive temperatures by default;
 ``adaptive=False`` with ``num_steps`` selects a fixed temperature schedule.
 The usual posterior endpoint is ``max_beta=1.0``.
 
-This is the helper used in :doc:`../../getting_started`. See
+This is the helper used in the :ref:`quick start <quick-start>`. See
 :doc:`smc_configuration` for configuration and manual pipeline assembly.
 
 Persistent Bayesian SMC
