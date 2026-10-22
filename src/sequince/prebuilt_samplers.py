@@ -365,12 +365,14 @@ def make_persistent_bayesian_smc(
 
     A one-batch initial state preserves the existing initialization behavior.
     The first persistence step prepares evaluations and archives the state at beta
-    zero. Once the terminal archive ESS condition is met,
-    ``resample_at_end=True`` (default) finishes resampling and the configured
-    mutation, returning an equally weighted active population of ``n_particles``.
+    zero. With ``resample_at_end=True`` (default), selecting beta one always
+    completes resampling and the configured mutation. The next iteration archives
+    that batch and reweights the complete archive before checking termination.
+    If ``target_total_ess`` is set, beta-one batches accumulate until the returned
+    weighted archive meets that threshold; no extra batch is generated afterward.
+    The final archive weighting also updates the evidence estimate.
     With ``resample_at_end=False``, stop immediately after weighting and return
-    the complete weighted archive. The final active population is not appended
-    to the archive, and its mutation does not change the evidence estimate.
+    the complete weighted archive without generating a final active batch.
     Progress is logged every
     ``logging_frequency`` iterations and once more for the terminal
     state. Set ``logging_frequency=0`` to disable it.

@@ -511,7 +511,9 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
         multinomial unique entries. Defaults to False. The fixed reference is
         set by the initial threshold; the terminal target never adapts.
     resample_at_end : bool, optional
-        If True, let downstream resampling and mutation finish before stopping.
+        If True, let downstream resampling and mutation generate a beta-one
+        batch before checking termination on the next archived, weighted state.
+        The terminal ESS requirement is checked after that batch is included.
         Defaults to False, returning the terminal weighted archive immediately.
     beta_tolerance:
         Stop bisection once the beta bracket is no wider than this.
@@ -711,15 +713,19 @@ class PersistentAdaptiveTemperedWeighting(BasePersistentTemperedWeighting):
             context = context.with_metadata(target_total_ess=target_total_ess)
             output["target_total_ess"] = target_total_ess
 
-        if selected_terminal and (
-            self._target_total_ess is None
-            or float(output["effective_sample_size"]) >= self._target_total_ess
-        ):
-            context = (
-                context.request_stop()
-                if self._resample_at_end
-                else context.request_stop_immediately()
+        if (
+            selected_terminal
+            # A newly selected beta of one still needs its resample/mutate
+            # cycle. On the next iteration, persistence includes that batch,
+            # and the stopping test uses the complete reweighted archive.
+            and (not self._resample_at_end or current_beta == 1.0)
+            and (
+                self._target_total_ess is None
+                or float(output["effective_sample_size"])
+                >= self._target_total_ess
             )
+        ):
+            context = context.request_stop_immediately()
         return weighted, context, output
 
     def state_dict(self) -> dict[str, Any]:

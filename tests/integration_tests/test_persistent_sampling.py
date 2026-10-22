@@ -59,22 +59,18 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
     assert delta_betas[:2] == pytest.approx([0.0, 0.0])
     assert betas[-1] == pytest.approx(1.0)
     assert result.context.stop_requested
-    assert result.context.stop_immediately is not resample_at_end
-    assert (
-        isinstance(result.final_state, PersistentParticleState)
-        is not resample_at_end
-    )
-    assert len(result.outputs[-1]) == (4 if resample_at_end else 2)
-    if resample_at_end:
-        assert result.final_state.particles.shape == (n_particles, 1)
-        np.testing.assert_allclose(result.final_state.weights, 1 / n_particles)
+    assert result.context.stop_immediately
+    assert isinstance(result.final_state, PersistentParticleState)
+    assert len(result.outputs[-1]) == 2
     np.testing.assert_allclose(result.final_state.weights.sum(), 1.0)
 
     persist = smc._steps[0]  # noqa: SLF001
     assert isinstance(persist, PersistParticles)
     assert persist.persistent_state is not None
-    assert persist.persistent_state.n_batches == len(result)
-    assert persist.persistent_state.n_particles == len(result) * n_particles
+    n_batches = len(result)
+    assert persist.persistent_state.n_batches == n_batches
+    assert persist.persistent_state.n_particles == n_batches * n_particles
+    assert result.final_state.particles.shape == (n_batches * n_particles, 1)
 
     final_particles = np.asarray(result.final_state.particles)[:, 0]
     final_weights = np.asarray(result.final_state.weights)
@@ -166,8 +162,10 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
     )
 
 
+@pytest.mark.parametrize("resample_at_end", [False, True])
 def test_persistent_checkpoint_resume_matches_uninterrupted_run(
     tmp_path,
+    resample_at_end: bool,
 ) -> None:
     n_particles = 32
     target_ess = 2 * n_particles
@@ -200,7 +198,7 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             n_particles=n_particles,
             target_ess=target_ess,
             target_total_ess=target_total_ess,
-            resample_at_end=False,
+            resample_at_end=resample_at_end,
             mutation_n_steps=2,
             mutation_kwargs={"step_fn": "tpcn"},
             checkpoint_writers=checkpoint_writers,

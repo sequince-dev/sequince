@@ -365,12 +365,12 @@ def test_make_persistent_bayesian_smc_logs_archive_progress(
 
     assert "Persistent SMC iteration 0" in caplog.messages[0]
     terminal_message = caplog.messages[-1]
-    assert "Persistent SMC iteration 1" in terminal_message
+    assert "Persistent SMC iteration 2" in terminal_message
     assert "Beta=1" in terminal_message
-    assert "Batches=2" in terminal_message
-    assert f"Archive size={2 * n_particles}" in terminal_message
+    assert "Batches=3" in terminal_message
+    assert f"Archive size={3 * n_particles}" in terminal_message
     assert (
-        f"Persistent ESS={2 * n_particles:.1f}/{2 * n_particles:.1f}"
+        f"Persistent ESS={3 * n_particles:.1f}/{2 * n_particles:.1f}"
         in terminal_message
     )
 
@@ -421,7 +421,7 @@ def test_persistent_default_finishes_terminal_mutation(
             context: StepContext,
             rng: RandomGenerator,
         ) -> tuple[ParticleState, StepContext, None]:
-            if context.stop_requested:
+            if float(context.metadata["beta"]) == 1.0:
                 terminal_calls.append(state)
             return state, context, None
 
@@ -437,25 +437,135 @@ def test_persistent_default_finishes_terminal_mutation(
     result = smc.run(
         ParticleState(np.arange(4.0)[:, None]), metadata=metadata, rng=123
     )
-    assert len(terminal_calls) == 1
+    assert len(terminal_calls) >= 1
     assert result.context.stop_requested
-    assert not result.context.stop_immediately
-    assert type(result.final_state) is ParticleState
-    assert result.final_state.particles.shape == (4, 1)
-    np.testing.assert_allclose(result.final_state.weights, 0.25)
+    assert result.context.stop_immediately
+    assert isinstance(result.final_state, PersistentParticleState)
+    n_batches = len(result)
+    assert result.final_state.particles.shape == (4 * n_batches, 1)
+    np.testing.assert_allclose(result.final_state.weights, 1 / (4 * n_batches))
+    np.testing.assert_allclose(
+        result.final_state.particles[-4:], terminal_calls[-1].particles
+    )
+    assert result.final_state.betas[-1] == pytest.approx(1.0)
     assert result.final_state.log_evidence == pytest.approx(0.0)
     required_ess = target_total_ess or 8
     assert result.outputs[-1][1]["effective_sample_size"] >= required_ess
 
 
-def test_persistent_zero_support_preserves_evidence(rng) -> None:
+@pytest.mark.parametrize("auto_normalize", [False, True])
+def test_persistent_final_batch_reweights_complete_archive(
+    auto_normalize: bool,
+) -> None:
+    terminal_batches: list[ParticleState] = []
+
+    class ShiftMutation(SMCStep):
+        def apply(
+            self,
+            state: ParticleState,
+            context: StepContext,
+            rng: RandomGenerator,
+        ) -> tuple[ParticleState, StepContext, None]:
+            # A deterministic marker verifies that the post-mutation batch is
+            # included, rather than its resampled parents. This is not MCMC.
+            state = state.replace_particles(state.particles + 0.5)
+            terminal_batches.append(state)
+            return state, context, None
+
+    def log_likelihood(particles: np.ndarray) -> np.ndarray:
+        return -0.5 * particles[:, 0] ** 2
+
+    sampler, posterior, _ = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        log_likelihood,
+        n_particles=4,
+        target_ess=1,
+        mutation=ShiftMutation(),
+        auto_normalize=auto_normalize,
+        logging_frequency=0,
+    )
+    initial = np.linspace(-1, 2, 4)[:, None]
+    result = sampler.run(ParticleState(initial), rng=123)
+    final = result.final_state
+    assert isinstance(final, PersistentParticleState)
+    assert len(terminal_batches) == 1
+    batch = terminal_batches[0]
+    np.testing.assert_array_equal(final.particles[:4], initial)
+    np.testing.assert_array_equal(final.particles[4:], batch.particles)
+    np.testing.assert_array_equal(final.betas, [0, 1])
+    np.testing.assert_array_equal(
+        final.initial_ancestor_indices[4:], batch.initial_ancestor_indices
+    )
+    log_z = np.log(np.mean(np.exp(log_likelihood(initial))))
+    np.testing.assert_allclose(final.log_normalizing_constants, [0, log_z])
+    likelihood = np.exp(log_likelihood(final.particles))
+    mixture = (1 + likelihood / np.exp(log_z)) / 2
+    raw_weights = likelihood / mixture
+    np.testing.assert_allclose(final.weights, raw_weights / raw_weights.sum())
+    assert final.log_evidence == pytest.approx(np.log(raw_weights.mean()))
+    assert final.evaluation is not None
+    expected_evaluation = posterior.prepare_evaluation(
+        final.particles, result.context
+    )
+    for name in expected_evaluation.components:
+        np.testing.assert_allclose(
+            final.evaluation[name], expected_evaluation[name]
+        )
+
+
+@pytest.mark.parametrize(
+    ("target_total_ess", "expected_batches"), [(3, 2), (9, 2), (14, 3)]
+)
+def test_persistent_checks_terminal_ess_after_mutation(
+    target_total_ess: float, expected_batches: int
+) -> None:
+    mutated_batches: list[ParticleState] = []
+
+    class RecordMutation(SMCStep):
+        def apply(
+            self,
+            state: ParticleState,
+            context: StepContext,
+            rng: RandomGenerator,
+        ) -> tuple[ParticleState, StepContext, None]:
+            assert not context.stop_requested
+            assert float(context.metadata["beta"]) == 1.0
+            mutated_batches.append(state)
+            return state, context, None
+
+    sampler, _, _ = make_persistent_bayesian_smc(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        n_particles=5,
+        target_ess=2,
+        target_total_ess=target_total_ess,
+        mutation=RecordMutation(),
+        logging_frequency=0,
+    )
+    result = sampler.run(ParticleState(np.arange(5.0)[:, None]), rng=123)
+    final = result.final_state
+    assert isinstance(final, PersistentParticleState)
+    assert final.n_batches == expected_batches
+    assert len(mutated_batches) == expected_batches - 1
+    assert final.effective_sample_size() >= target_total_ess
+    assert result.context.stop_immediately
+    np.testing.assert_array_equal(
+        final.particles[-5:], mutated_batches[-1].particles
+    )
+    np.testing.assert_array_equal(final.betas[1:], 1.0)
+
+
+@pytest.mark.parametrize("resample_at_end", [False, True])
+def test_persistent_zero_support_preserves_evidence(
+    rng, resample_at_end: bool
+) -> None:
     smc, _, metadata = make_persistent_bayesian_smc(
         _zero_log_likelihood,
         lambda p: np.where(p[:, 0] > 0, 0.0, -np.inf),
         n_particles=4,
         target_ess=2,
         mutation="none",
-        resample_at_end=False,
+        resample_at_end=resample_at_end,
         logging_frequency=0,
     )
     result = smc.run(
@@ -466,8 +576,9 @@ def test_persistent_zero_support_preserves_evidence(rng) -> None:
     )
     assert result.context.stop_requested
     assert result.context.metadata["beta"] == 1.0
+    n_supported = 7 if resample_at_end else 3
     np.testing.assert_allclose(
-        result.final_state.weights, [0, 1 / 3, 1 / 3, 1 / 3]
+        result.final_state.weights, [0] + [1 / n_supported] * n_supported
     )
     assert result.final_state.log_evidence == pytest.approx(np.log(0.75))
 
