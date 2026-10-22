@@ -15,9 +15,9 @@ from .context import (
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from .._typing import Array
     from ..posterior import TemperedPosterior
     from ..state import ParticleState
+    from ..typing import Array
 
 logger = logging.getLogger(__name__)
 

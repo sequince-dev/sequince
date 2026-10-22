@@ -5,8 +5,8 @@ from typing import Any, Callable
 from acai import while_loop
 from array_api_compat import is_jax_namespace
 
-from .._typing import Array
 from ..array_api import namespace
+from ..typing import Array
 
 
 def bisect_monotone_decreasing(

@@ -26,7 +26,7 @@ compile_functional_iteration = pytest.importorskip(
 @pytest.mark.parametrize("n_particles", [16, 17])
 def test_compiled_differential_evolution_replays(n_particles: int) -> None:
     from sequince import make_standard_bayesian_smc
-    from sequince._typing import Array
+    from sequince.typing import Array
 
     def prior(particles: Array, context: StepContext) -> Array:
         return -0.5 * jnp.sum(particles**2, axis=-1) - jnp.log(2 * jnp.pi)

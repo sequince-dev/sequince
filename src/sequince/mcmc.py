@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Self
 
-from ._typing import Array
 from .array_api import asarray, namespace
 from .checkpoint import CheckpointWriter, SMCCheckpoint
 from .result import SMCResult, _decode_result_output, _encode_result_output
@@ -13,6 +12,7 @@ from .state import ParticleState
 from .steps.base import StepContext
 from .steps.mutation import MutationStep, get_mutation_step
 from .transforms import ParticleTransform
+from .typing import Array
 
 if TYPE_CHECKING:
     import numpy as np

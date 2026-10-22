@@ -11,9 +11,9 @@ from uuid import uuid4
 import array_api_extra as xpx
 import numpy as np
 
-from ._typing import Array
 from .array_api import asarray, namespace
 from .array_api import copy as array_copy
+from .typing import Array
 from .utils.callables import call_with_optional_context
 from .utils.pytrees import pytree_dataclass
 

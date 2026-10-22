@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 import numpy as np
 
-from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts, Target
 from ...transforms import ParticleTransform, _repeat_transform_auxiliary
+from ...typing import Array
 from ...utils.callables import call_with_optional_context
 from ...utils.copying import array_safe_copy
 from ..base import SMCStep

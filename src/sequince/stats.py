@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from ._typing import Array
 from .array_api import asarray, logsumexp, namespace
 from .state import normalize_log_weights
+from .typing import Array
 
 
 def ess_from_log_weights(log_weights: Array) -> Array:

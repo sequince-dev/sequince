@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Self
 import numpy as np
 from numpy.random import Generator as NumPyGenerator
 
-from ._typing import Array
 from .array_api import asarray, get_device, namespace, to_numpy
 from .state import ParticleState
 from .steps.constraints import _STOP_REASONS, NestedSamplingLevel
 from .steps.context import StepContext
 from .steps.meta import META_SMC_OUTPUT_KEY
+from .typing import Array
 from .utils.random import resolve_rng
 
 if TYPE_CHECKING:

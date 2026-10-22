@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from ..._typing import Array
 from ...transforms import ParticleTransform
+from ...typing import Array
 from ..base import SMCStep
 from ..context import StepContext
 from .base import TransformRefit

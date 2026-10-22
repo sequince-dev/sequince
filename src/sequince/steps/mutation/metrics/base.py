@@ -6,8 +6,8 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
-from ...._typing import Array
 from ....array_api import asarray, namespace
+from ....typing import Array
 from ...context import StepContext
 from .state import MutationMetricsOutput, MutationStepState, MutationTransition
 

@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import array_api_extra as xpx
 from array_api_compat import device as get_device
 
-from .._typing import Array
 from ..array_api import asarray, namespace
 from ..state import normalize_log_weights
+from ..typing import Array
 from ..utils.pytrees import pytree_dataclass
 from .base import SMCStep, StepContext
 

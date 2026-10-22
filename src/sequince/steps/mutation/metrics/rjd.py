@@ -8,8 +8,8 @@ from typing import Literal
 
 from orng import RandomGenerator
 
-from ...._typing import Array
 from ....array_api import asarray, get_device, namespace, to_numpy
+from ....typing import Array
 from ....utils.pytrees import pytree_dataclass
 from ...base import validate_n_steps
 from ...context import StepContext

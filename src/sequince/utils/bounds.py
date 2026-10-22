@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .._typing import Array
 from ..array_api import namespace
+from ..typing import Array
 
 
 def in_bounds(particles: Array, bounds: Array, xp: Any | None = None) -> Array:

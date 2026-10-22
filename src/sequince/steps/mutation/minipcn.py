@@ -5,10 +5,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from ..._typing import Array
 from ...array_api import asarray, namespace
 from ...target import EvaluationCounts
 from ...transforms import ParticleTransform
+from ...typing import Array
 from ...utils.pytrees import pytree_dataclass
 from ..base import validate_n_steps
 from ..context import StepContext

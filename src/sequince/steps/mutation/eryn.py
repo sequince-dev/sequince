@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING, Any, Callable
 import numpy as np
 from array_api_compat import is_cupy_namespace
 
-from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
 from ...transforms import (
     ParticleTransform,
     has_particle_aligned_auxiliary,
 )
+from ...typing import Array
 from ..base import validate_n_steps
 from ..context import StepContext
 from .base import (
