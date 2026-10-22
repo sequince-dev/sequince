@@ -187,11 +187,6 @@ def test_fixed_policy_keeps_initial_budget(
     assert mutation.lengths == [3, 3]
 
 
-def _flat_log_prob(particles, context):
-    del context
-    return np.zeros(particles.shape[0])
-
-
 def _increment_kernel():
     return CallableMutationKernel(
         lambda particles, rng: particles + 1.0,
@@ -199,18 +194,12 @@ def _increment_kernel():
     )
 
 
-class NegateStep(SMCStep):
-    def apply(self, state, context, rng):
-        del rng
-        return state.replace_particles(-state.particles), context, None
-
-
 def test_repeat_step_receives_total_budget_and_keeps_round_schedule(
-    context_factory, rng
+    flat_log_prob, context_factory, rng
 ) -> None:
     state = ParticleState(np.array([[-1.0], [1.0]]))
     repeated = RepeatedMutationStep(
-        MetropolisHastingsMutation(_flat_log_prob, _increment_kernel()),
+        MetropolisHastingsMutation(flat_log_prob, _increment_kernel()),
         n_rounds=3,
     )
     adaptive = _adaptive(repeated, initial=5)
@@ -222,11 +211,13 @@ def test_repeat_step_receives_total_budget_and_keeps_round_schedule(
     np.testing.assert_array_equal(updated.particles, state.particles + 5.0)
 
 
-def test_repeated_symmetry_schedule_is_unchanged(context_factory, rng) -> None:
+def test_repeated_symmetry_schedule_is_unchanged(
+    flat_log_prob, negate_step, context_factory, rng
+) -> None:
     state = ParticleState(np.array([[-1.0], [1.0]]))
-    mutation = MetropolisHastingsMutation(_flat_log_prob, _increment_kernel())
+    mutation = MetropolisHastingsMutation(flat_log_prob, _increment_kernel())
     repeated = RepeatedMutationStep(
-        mutation, n_rounds=2, after_round=NegateStep()
+        mutation, n_rounds=2, after_round=negate_step
     )
     adaptive = _adaptive(repeated, initial=3)
 
@@ -280,17 +271,6 @@ def test_repeat_wrapper_preserves_nested_adaptive_state(
     restored.load_state_dict(wrapped.state_dict())
 
     assert restored.step.next_n_steps == 8
-
-
-def test_unwrapped_mutation_keeps_its_configured_length(
-    particle_state, context_factory, rng
-) -> None:
-    mutation = RecordingMutation()
-
-    mutation(particle_state, context_factory(t=0), rng)
-    mutation(particle_state, context_factory(t=1), rng)
-
-    assert mutation.lengths == [1, 1]
 
 
 def test_shared_adaptation_lifecycle(context_factory, rng):

@@ -11,22 +11,7 @@ from sequince.steps.mutation import (
     GaussianRandomWalk,
     MetropolisHastingsMutation,
 )
-from sequince.transforms import ParticleTransform, WhiteningTransform
-
-
-class SignFoldingTransform(ParticleTransform):
-    def forward(self, particles, context=None, *, rng=None):
-        del context, rng
-        values = np.asarray(particles)
-        signs = np.where(values < 0, -1.0, 1.0)
-        return np.abs(values), np.zeros(values.shape[0]), signs
-
-    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
-        del context, rng
-        if auxiliary is None:
-            raise ValueError("auxiliary signs are required")
-        values = np.asarray(values)
-        return values * auxiliary, np.zeros(values.shape[0])
+from sequince.transforms import WhiteningTransform
 
 
 def test_fixed_length_override_is_per_call_and_keeps_default(
@@ -162,6 +147,7 @@ def test_metropolis_hastings_mutation_accepts_symmetric_proposals(
 
 
 def test_metropolis_keeps_forward_auxiliary_through_mutation(
+    sign_folding_transform_factory,
     particle_state: ParticleState,
     context_factory,
     rng,
@@ -173,7 +159,7 @@ def test_metropolis_keeps_forward_auxiliary_through_mutation(
     step = MetropolisHastingsMutation(
         lambda particles, context: np.zeros(particles.shape[0]),
         kernel,
-        transform=SignFoldingTransform(),
+        transform=sign_folding_transform_factory(),
         store_chains=True,
     )
 

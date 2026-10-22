@@ -47,18 +47,9 @@ def test_callable_kernel_computes_ratio_from_density(rng) -> None:
         log_density_fn=log_density,
     )
     proposal_state = kernel.sample(particles, rng)
-    proposals = proposal_state
-
-    expected = log_density(proposals, particles) - log_density(
-        particles, proposals
-    )
+    # Moving from x to x+1 gives log q(x|x+1) - log q(x+1|x) = -3.
     np.testing.assert_allclose(
-        evaluate_log_transition_ratio(kernel, particles, proposal_state),
-        expected,
-    )
-    np.testing.assert_allclose(
-        evaluate_log_transition_ratio(kernel, particles, proposal_state),
-        expected,
+        evaluate_log_transition_ratio(kernel, particles, proposal_state), -3.0
     )
     _, counts = evaluate_log_transition_ratio(
         kernel, particles, proposal_state, return_counts=True
@@ -80,14 +71,19 @@ def test_callable_kernel_requires_one_transition_correction() -> None:
         )
 
 
-def test_legacy_density_kernel_transition_ratio(rng) -> None:
-    particles = np.array([[0.0], [1.0], [2.0]])
-    proposal_state = KernelSample(particles + 0.5)
-    kernel = GaussianRandomWalk(scale=0.3)
+def test_legacy_density_kernel_transition_ratio() -> None:
+    class DensityOnlyKernel:
+        def log_density(self, source, destination):
+            return np.where(source[:, 0] == 0, np.log(0.8), np.log(0.2))
 
-    ratio = evaluate_log_transition_ratio(kernel, particles, proposal_state)
+    particles = np.array([[0.0], [1.0]])
+    proposal = KernelSample(1.0 - particles)
+    ratio, counts = evaluate_log_transition_ratio(
+        DensityOnlyKernel(), particles, proposal, return_counts=True
+    )
 
-    np.testing.assert_allclose(ratio, 0.0)
+    np.testing.assert_allclose(ratio, [-np.log(4.0), np.log(4.0)])
+    assert counts.log_proposal_evaluations == 0
 
 
 def test_get_mutation_kernel_constructs_named_kernel() -> None:

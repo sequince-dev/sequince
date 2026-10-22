@@ -92,28 +92,6 @@ class ReplacingTransform(ParticleTransform):
         return ReplacingTransform(fitted=True)
 
 
-class SignFoldingTransform(ParticleTransform):
-    def __init__(self):
-        self.inverse_batch_sizes: list[int] = []
-
-    def forward(self, particles, context=None, *, rng=None):
-        del context, rng
-        values = np.asarray(particles)
-        signs = np.where(values < 0, -1.0, 1.0)
-        return np.abs(values), np.zeros(values.shape[0]), signs
-
-    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
-        del context, rng
-        values = np.asarray(values)
-        signs = np.asarray(auxiliary)
-        self.inverse_batch_sizes.append(values.shape[0])
-        if values.shape[0] != signs.shape[0]:
-            raise ValueError(
-                "auxiliary is not aligned with the particle batch"
-            )
-        return values * signs, np.zeros(values.shape[0])
-
-
 class PreparingMutation(MutationStep):
     def apply(self, state, context, rng):
         _, context = self._prepare_transform(state.particles, context, rng=rng)
@@ -414,9 +392,24 @@ def test_transform_refit_type_is_validated() -> None:
 
 
 def test_inverse_chain_reuses_particle_auxiliary_for_each_step(
+    sign_folding_transform_factory,
     context_factory,
 ) -> None:
-    transform = SignFoldingTransform()
+    class RecordingTransform(sign_folding_transform_factory):
+        def __init__(self):
+            self.inverse_batch_sizes: list[int] = []
+
+        def inverse(self, values, context=None, *, auxiliary=None, rng=None):
+            self.inverse_batch_sizes.append(values.shape[0])
+            if values.shape[0] != auxiliary.shape[0]:
+                raise ValueError(
+                    "auxiliary is not aligned with the particle batch"
+                )
+            return super().inverse(
+                values, context, auxiliary=auxiliary, rng=rng
+            )
+
+    transform = RecordingTransform()
     mutation = PreparingMutation(
         lambda particles, context: np.zeros(particles.shape[0]),
         transform=transform,

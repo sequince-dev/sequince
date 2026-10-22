@@ -22,35 +22,6 @@ from sequince.transforms import (
 from sequince.utils.pytrees import pytree_dataclass
 
 
-class SignFoldingTransform(IdentityTransform):
-    """Test-only many-to-one transform with explicit branch information."""
-
-    def forward(self, particles, context=None, *, rng=None):
-        del context, rng
-        xp = namespace(particles)
-        values = xp.asarray(particles)
-        signs = xp.where(
-            values < 0, -xp.ones_like(values), xp.ones_like(values)
-        )
-        return xp.abs(values), xp.zeros_like(values[..., 0]), signs
-
-    def inverse(self, values, context=None, *, auxiliary=None, rng=None):
-        del context
-        xp = namespace(values)
-        values = xp.asarray(values)
-        if auxiliary is None:
-            if rng is None:
-                raise ValueError(
-                    "SignFoldingTransform inverse requires auxiliary or rng."
-                )
-            choices = xp.asarray(rng.choice(2, size=values.shape))
-            auxiliary = 2 * choices - 1
-        return (
-            values * xp.asarray(auxiliary),
-            xp.zeros_like(values[..., 0]),
-        )
-
-
 @pytest.fixture
 def particles(backend, backend_factory):
     case = backend_factory(backend)
@@ -88,7 +59,7 @@ def test_transform_vector_log_det_is_scalar(transform):
 
 def test_affine_all_columns(particles):
     xp = namespace(particles)
-    transform = AffineTransform()
+    transform = AffineTransform(eps=1e-10)
     fitted = transform.fit(particles)
     assert fitted is not transform
     assert transform._mean is None
@@ -102,6 +73,7 @@ def test_affine_all_columns(particles):
     assert_allclose(restored, particles, atol=1e-6)
     assert_allclose(log_det + restore_log_det, 0.0, atol=1e-6)
     assert_allclose(xp.mean(latent, axis=0), 0.0, atol=1e-6)
+    assert_allclose(xp.var(latent, axis=0), 1.0, atol=1e-6)
 
 
 def test_affine_subset(particles):
@@ -424,10 +396,12 @@ def test_composite_transform(particles):
     assert_allclose(log_det + restore_log_det, 0.0, atol=1e-5)
 
 
-def test_whitening_composes_after_folding():
+def test_whitening_composes_after_folding(
+    sign_folding_transform_factory,
+):
     particles = np.array([[-3.0, 1.0], [2.0, 2.0], [-1.0, 4.0]])
     composite = CompositeTransform(
-        [SignFoldingTransform(), WhiteningTransform()]
+        [sign_folding_transform_factory(), WhiteningTransform()]
     ).fit(particles)
 
     latent, log_det, auxiliary = composite.forward(particles)
@@ -437,67 +411,11 @@ def test_whitening_composes_after_folding():
     assert_allclose(log_det + restore_log_det, 0.0, atol=1e-10)
 
 
-def test_auxiliary_interprets_mutated_transformed_values():
-    transform = SignFoldingTransform()
-    particles = np.array([[-2.0], [3.0]])
-
-    folded, _, auxiliary = transform.forward(particles)
-    reconstructed, _ = transform.inverse(folded + 1.0, auxiliary=auxiliary)
-
-    np.testing.assert_array_equal(reconstructed, [[-3.0], [4.0]])
-
-
-def test_auxiliary_from_overlapping_forward_calls_is_independent():
-    transform = SignFoldingTransform()
-    first = np.array([[-2.0], [3.0]])
-    second = np.array([[4.0], [-5.0]])
-
-    folded_first, _, auxiliary_first = transform.forward(first)
-    folded_second, _, auxiliary_second = transform.forward(second)
-    restored_first, _ = transform.inverse(
-        folded_first, auxiliary=auxiliary_first
-    )
-    restored_second, _ = transform.inverse(
-        folded_second, auxiliary=auxiliary_second
-    )
-
-    np.testing.assert_array_equal(restored_first, first)
-    np.testing.assert_array_equal(restored_second, second)
-
-
-def test_inverse_can_define_transform_specific_rng_fallback(rng):
-    transform = SignFoldingTransform()
-    values = np.ones((8, 1))
-
-    deterministic, _ = transform.inverse(
-        values, auxiliary=-np.ones_like(values)
-    )
-    sampled, _ = transform.inverse(values, rng=rng)
-
-    np.testing.assert_array_equal(deterministic, -values)
-    assert sampled.shape == values.shape
-    assert set(np.unique(sampled)).issubset({-1.0, 1.0})
-    with pytest.raises(ValueError, match="requires auxiliary or rng"):
-        transform.inverse(values)
-
-
-def test_rng_fallback_preserves_functional_backend(
-    particles, backend, backend_factory
+def test_composite_preserves_component_auxiliary_positionally(
+    sign_folding_transform_factory,
 ):
-    case = backend_factory(backend)
-    transform = SignFoldingTransform()
-    xp = namespace(particles)
-    values = xp.ones_like(particles)
-
-    sampled, _ = transform.inverse(values, rng=case.rng(7))
-
-    assert_preserves_namespace(sampled, particles)
-    assert set(np.unique(to_numpy(sampled))).issubset({-1.0, 1.0})
-
-
-def test_composite_preserves_component_auxiliary_positionally():
     composite = CompositeTransform(
-        [IdentityTransform(), SignFoldingTransform()]
+        [IdentityTransform(), sign_folding_transform_factory()]
     )
     particles = np.array([[-2.0], [3.0]])
 
@@ -509,9 +427,11 @@ def test_composite_preserves_component_auxiliary_positionally():
     np.testing.assert_array_equal(restored, particles)
 
 
-def test_composite_preserves_two_nontrivial_auxiliary_entries():
+def test_composite_preserves_two_nontrivial_auxiliary_entries(
+    sign_folding_transform_factory,
+):
     composite = CompositeTransform(
-        [SignFoldingTransform(), SignFoldingTransform()]
+        [sign_folding_transform_factory(), sign_folding_transform_factory()]
     )
     particles = np.array([[-2.0], [3.0]])
 
@@ -525,18 +445,22 @@ def test_composite_preserves_two_nontrivial_auxiliary_entries():
 
 
 @pytest.mark.parametrize("auxiliary", [(), (None,), (None, None, None)])
-def test_composite_rejects_incorrectly_sized_auxiliary(auxiliary):
+def test_composite_rejects_incorrectly_sized_auxiliary(
+    sign_folding_transform_factory, auxiliary
+):
     composite = CompositeTransform(
-        [IdentityTransform(), SignFoldingTransform()]
+        [IdentityTransform(), sign_folding_transform_factory()]
     )
 
     with pytest.raises(ValueError, match="expected 2"):
         composite.inverse(np.ones((2, 1)), auxiliary=auxiliary)
 
 
-def test_composite_rejects_malformed_auxiliary():
+def test_composite_rejects_malformed_auxiliary(
+    sign_folding_transform_factory,
+):
     composite = CompositeTransform(
-        [IdentityTransform(), SignFoldingTransform()]
+        [IdentityTransform(), sign_folding_transform_factory()]
     )
 
     with pytest.raises(TypeError, match="tuple or list"):
@@ -782,3 +706,39 @@ def test_builtin_transforms_are_jittable_dataclass_pytrees(mapping):
     assert auxiliary == (None, None)
     np.testing.assert_allclose(restored, particles, atol=1e-6)
     np.testing.assert_allclose(log_det + inverse_log_det, 0.0, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        AffineTransform(),
+        WhiteningTransform(),
+        *[
+            BoundedToUnboundedTransform({0: (-2.0, 3.0)}, mapping=mapping)
+            for mapping in ("logit", "probit", "cauchit")
+        ],
+        CompositeTransform(
+            [
+                BoundedToUnboundedTransform({0: (-2.0, 3.0)}),
+                AffineTransform(),
+            ]
+        ),
+    ],
+)
+def test_transform_log_det_matches_numerical_jacobian(transform) -> None:
+    cloud = np.array([[-1.0, 1.0], [0.0, -2.0], [1.0, 3.0], [2.0, 0.5]])
+    fitted = transform.fit(cloud)
+    point = np.array([[0.25, 1.5]])
+    _, log_det, _ = fitted.forward(point)
+    h = 1e-5
+    jacobian = np.empty((2, 2))
+    for column in range(2):
+        offset = np.zeros_like(point)
+        offset[0, column] = h
+        plus, _, _ = fitted.forward(point + offset)
+        minus, _, _ = fitted.forward(point - offset)
+        jacobian[:, column] = ((plus - minus) / (2 * h))[0]
+
+    # Central differences have O(h^2) truncation and O(eps/h) roundoff.
+    _, expected = np.linalg.slogdet(jacobian)
+    np.testing.assert_allclose(log_det, expected, atol=1e-8, rtol=1e-8)

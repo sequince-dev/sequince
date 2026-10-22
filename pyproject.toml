@@ -189,6 +189,8 @@ check-jax = "python -c \"import jax; import jax.numpy as jnp; device = jax.devic
 
 [tool.pixi.feature.torch-cpu.dependencies]
 pytorch-cpu = "*"
+# MKL's GNU interface activation can reference a missing runtime library.
+libblas = { version = "*", build = "*openblas" }
 
 # CUDA environments target NVIDIA GPUs on Linux. Pin the runtime separately
 # from the driver capability declared on the CUDA platform.

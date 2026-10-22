@@ -201,36 +201,35 @@ def test_blackjax_jax_key_consumption_can_be_jitted() -> None:
 
 
 def test_blackjax_array_boundary_accepts_dynamic_beta_under_jit() -> None:
+    posterior = TemperedPosterior(
+        lambda x: 0.0,
+        lambda x: jnp.where(x[..., 0] < 0, -jnp.inf, 0.0),
+    )
     mutation = BlackJAXMutation(
-        _posterior(),
+        posterior,
         algorithm="random-walk",
-        algorithm_kwargs={"sigma": 0.1},
-        n_steps=2,
+        algorithm_kwargs={"sigma": 1.0},
+        n_steps=1,
     )
 
     @jax.jit
-    def compiled_step(particles, beta, random_state):
-        state = ParticleState(particles=particles)
-        context = StepContext(t=0, metadata={"beta": beta})
-        updated, _, next_state, output = mutation.apply_functional(
-            state,
-            context,
-            random_state,
+    def compiled_step(beta):
+        updated, _, _, output = mutation.apply_functional(
+            ParticleState(jnp.zeros((32, 1))),
+            StepContext(t=0, metadata={"beta": beta}),
+            jax.random.key(42),
         )
-        return updated.particles, next_state, output["metrics"].acceptance
+        return updated.particles, output.metrics.acceptance
 
-    particles, next_state, acceptance = compiled_step(
-        _state().particles,
-        jnp.asarray(0.5),
-        jax.random.key(42),
-    )
-
-    assert particles.shape == (4, 2)
-    assert acceptance.shape == ()
-    assert not np.array_equal(
-        jax.random.key_data(next_state),
-        jax.random.key_data(jax.random.key(42)),
-    )
+    proposals, prior_acceptance = compiled_step(jnp.asarray(0.0))
+    constrained, posterior_acceptance = compiled_step(jnp.asarray(1.0))
+    # At beta=0 every proposal is accepted. At beta=1 negative proposals
+    # have zero density and must remain at their starting point, zero.
+    assert np.any(np.asarray(proposals) < 0)
+    assert np.any(np.asarray(proposals) > 0)
+    np.testing.assert_array_equal(constrained, jnp.maximum(proposals, 0.0))
+    assert float(prior_acceptance) == 1.0
+    assert float(posterior_acceptance) == np.mean(np.asarray(proposals) >= 0)
 
 
 def test_blackjax_runs_in_standard_smc() -> None:

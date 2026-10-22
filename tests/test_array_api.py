@@ -67,8 +67,12 @@ def test_to_numpy_from_supported_backends(backend, backend_factory):
 
     assert isinstance(result, np.ndarray)
     assert result.dtype == np.float64
-    np.testing.assert_allclose(result, np.asarray(to_numpy(particles)))
-    assert resolve_dtype("float32", xp) is not None
+    np.testing.assert_allclose(
+        result, [[0.0, 1.0], [1.0, 2.0], [2.0, 0.5], [-1.0, 1.5]]
+    )
+    assert resolve_dtype("float32", xp) == xp.float32
+    result[0, 0] = 99.0
+    assert float(particles[0, 0]) == 0.0
 
 
 def test_asarray_matches_reference_namespace_device(backend, backend_factory):

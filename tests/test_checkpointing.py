@@ -114,15 +114,6 @@ class OutputCallback:
         return context.with_metadata(callback_result_length=len(result))
 
 
-class CheckpointRecorder(CheckpointWriter):
-    def __init__(self, *, save_rng: bool = True) -> None:
-        super().__init__(save_rng=save_rng)
-        self.checkpoints: list[SMCCheckpoint] = []
-
-    def _write(self, checkpoint: SMCCheckpoint) -> None:
-        self.checkpoints.append(checkpoint)
-
-
 def _never_refit(particles, context) -> bool:
     return False
 
@@ -132,6 +123,7 @@ def _never_refit(particles, context) -> bool:
     "refit", ["once", "per-context", "always", _never_refit]
 )
 def test_resume_preserves_mutation_transform_cache(
+    checkpoint_recorder_factory,
     tmp_path: Path,
     storage: str,
     refit: TransformRefit,
@@ -155,7 +147,7 @@ def test_resume_preserves_mutation_transform_cache(
 
     initial = ParticleState(case.particles)
     full = make_runner().run(initial, num_steps=4, rng=case.rng(10))
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     make_runner(recorder).run(initial, num_steps=2, rng=case.rng(10))
     checkpoint = recorder.checkpoints[-1]
     if storage == "pickle":
@@ -276,6 +268,7 @@ def _make_smc(
 
 
 def _run_with_checkpoint_split(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
     observations: Sequence[float] | None,
     *,
@@ -291,7 +284,7 @@ def _run_with_checkpoint_split(
         metadata={"tag": "run"},
     )
 
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     _make_smc(recorder).run(
         particle_state,
         observations=observations,
@@ -439,9 +432,10 @@ def test_checkpoint_round_trip_allows_missing_rng_state(
 
 
 def test_checkpoint_writers_run_after_callbacks(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
 ) -> None:
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     result = _make_smc(recorder).run(
         particle_state,
         observations=[0.0, 1.0, 2.0],
@@ -549,13 +543,18 @@ def test_hdf5_checkpoint_serializes_each_result_state_once(
 @pytest.mark.parametrize("failure", ["state", "runtime", "commit"])
 @pytest.mark.parametrize("replace_states", [False, True])
 def test_interrupted_hdf5_write_preserves_committed_checkpoint(
-    particle_state, monkeypatch, tmp_path, failure, replace_states
+    checkpoint_recorder_factory,
+    particle_state,
+    monkeypatch,
+    tmp_path,
+    failure,
+    replace_states,
 ) -> None:
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     expected = _make_smc(recorder).run(particle_state, num_steps=3, rng=123)
     original, pending, retry = recorder.checkpoints
     if replace_states:
-        replacement_recorder = CheckpointRecorder()
+        replacement_recorder = checkpoint_recorder_factory()
         expected = _make_smc(replacement_recorder).run(
             particle_state.with_updates(
                 particles=particle_state.particles + 9
@@ -606,9 +605,9 @@ def test_interrupted_hdf5_write_preserves_committed_checkpoint(
 
 
 def test_hdf5_loads_runtime_without_commit_fields(
-    particle_state: ParticleState, tmp_path
+    checkpoint_recorder_factory, particle_state: ParticleState, tmp_path
 ) -> None:
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     expected = _make_smc(recorder).run(particle_state, num_steps=1, rng=123)
     with h5py.File(tmp_path / "legacy.h5", "w") as h5_file:
         recorder.checkpoints[0].save_hdf5(h5_file)
@@ -690,10 +689,12 @@ def test_pickle_checkpoint_writer_writes_latest_checkpoint(
 
 
 def test_resume_matches_uninterrupted_run_with_sequence_observations(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
 ) -> None:
     observations = [0.5, -1.0, 2.0, 0.25]
     full_result, resumed_result, checkpoint = _run_with_checkpoint_split(
+        checkpoint_recorder_factory,
         particle_state,
         observations,
         total_steps=4,
@@ -708,9 +709,11 @@ def test_resume_matches_uninterrupted_run_with_sequence_observations(
 
 
 def test_resume_matches_uninterrupted_run_with_none_observations(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
 ) -> None:
     full_result, resumed_result, checkpoint = _run_with_checkpoint_split(
+        checkpoint_recorder_factory,
         particle_state,
         None,
         total_steps=4,
@@ -722,6 +725,7 @@ def test_resume_matches_uninterrupted_run_with_none_observations(
 
 
 def test_resume_without_saved_rng_works_for_deterministic_steps(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
 ) -> None:
     full_result = _make_smc(step=DeterministicStep()).run(
@@ -731,7 +735,7 @@ def test_resume_without_saved_rng_works_for_deterministic_steps(
         rng=resolve_rng(2024),
     )
 
-    recorder = CheckpointRecorder(save_rng=False)
+    recorder = checkpoint_recorder_factory(save_rng=False)
     _make_smc(recorder, step=DeterministicStep()).run(
         particle_state,
         observations=[0.0, 1.0, 2.0, 3.0],
@@ -780,7 +784,9 @@ def test_resume_clears_transient_stop_controls(
     assert len(result.states) == 3
 
 
-def test_resume_restores_stateful_step(particle_state: ParticleState) -> None:
+def test_resume_restores_stateful_step(
+    checkpoint_recorder_factory, particle_state: ParticleState
+) -> None:
     full_step = StatefulStep()
     full_result = _make_smc(step=full_step).run(
         particle_state,
@@ -788,7 +794,7 @@ def test_resume_restores_stateful_step(particle_state: ParticleState) -> None:
         rng=123,
     )
 
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     first_step = StatefulStep()
     _make_smc(recorder, step=first_step).run(
         particle_state,
@@ -806,6 +812,7 @@ def test_resume_restores_stateful_step(particle_state: ParticleState) -> None:
 
 
 def test_emcee_resume_uses_checkpointed_master_rng(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
     standard_normal_log_prob,
 ) -> None:
@@ -816,7 +823,7 @@ def test_emcee_resume_uses_checkpointed_master_rng(
         step=EmceeMutation(standard_normal_log_prob, n_steps=2, vectorize=True)
     ).run(particle_state, num_steps=3, rng=123)
 
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     _make_smc(
         recorder,
         step=EmceeMutation(
@@ -834,9 +841,10 @@ def test_emcee_resume_uses_checkpointed_master_rng(
 
 
 def test_resume_rejects_different_step_pipeline(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
 ) -> None:
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     _make_smc(recorder, step=StatefulStep()).run(
         particle_state,
         num_steps=1,
@@ -850,9 +858,10 @@ def test_resume_rejects_different_step_pipeline(
 
 
 def test_resume_with_non_sequence_observations_raises(
+    checkpoint_recorder_factory,
     particle_state: ParticleState,
 ) -> None:
-    recorder = CheckpointRecorder()
+    recorder = checkpoint_recorder_factory()
     _make_smc(recorder).run(
         particle_state,
         observations=[0.0, 1.0],

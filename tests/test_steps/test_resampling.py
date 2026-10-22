@@ -122,25 +122,42 @@ def test_systematic_resampling_respects_resample_at_end(
         )
 
 
-def test_multinomial_resampling_resamples_particles(
-    particle_state: ParticleState, context_factory, rng
+@pytest.mark.parametrize(
+    "step_type",
+    [MultinomialResampling, StratifiedResampling, SystematicResampling],
+)
+def test_resampling_selects_particles_by_weight(
+    step_type, context_factory, rng
 ) -> None:
-    context = context_factory()
-    step = MultinomialResampling(always_resample=True)
+    probabilities = np.array([0.0, 0.25, 0.75, 0.0])
+    with np.errstate(divide="ignore"):
+        state = ParticleState(
+            np.arange(4.0)[:, None], log_weights=np.log(probabilities)
+        )
+    n = 4096 if step_type is MultinomialResampling else 8
 
-    resampled, context, output = step(particle_state, context, rng)
-
-    assert resampled.particles.shape == particle_state.particles.shape
-    assert np.allclose(
-        resampled.log_weights,
-        np.full_like(
-            resampled.log_weights, -np.log(resampled.log_weights.size)
-        ),
+    resampled, _, output = step_type(always_resample=True, n_samples=n)(
+        state, context_factory(), rng
     )
+
+    ancestors = output["ancestors"]
+    counts = np.bincount(ancestors, minlength=4)
+    assert counts[0] == counts[3] == 0
+    if step_type is MultinomialResampling:
+        # Hoeffding + union bound: P(any error > .05) < 2e-8 for 4 bins.
+        np.testing.assert_allclose(
+            counts / n, probabilities, atol=0.05, rtol=0
+        )
+    else:
+        # Each CDF interval contains an integer number of strata.
+        np.testing.assert_array_equal(counts, [0, 2, 6, 0])
+    np.testing.assert_array_equal(
+        resampled.particles, state.particles[ancestors]
+    )
+    np.testing.assert_allclose(resampled.log_weights, -np.log(n))
     assert "ancestors" not in resampled.metadata
-    assert "ancestors" in output
     assert output["resampled"] is True
-    assert output["resampling_scheme"] == "multinomial"
+    assert output["resampling_scheme"] == step_type.resampling_scheme
 
 
 @pytest.mark.parametrize(
