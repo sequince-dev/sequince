@@ -157,6 +157,19 @@ def particle_mean(particles: Array) -> Array:
     return xp.mean(particles, axis=0)
 ```
 
+## Building the documentation
+
+The documentation uses Sphinx and lives in `docs/`. From the repository root,
+build the HTML documentation with the dedicated Pixi environment:
+
+```bash
+pixi run -e docs docs
+```
+
+Pixi installs the documentation dependencies defined in `pyproject.toml` when
+preparing this environment. Open `docs/_build/html/index.html` in a browser to
+review the result. Rebuild after editing documentation or API docstrings.
+
 ## Checks and tests
 
 Run the following checks before requesting review:
