@@ -12,7 +12,8 @@ Contributions must comply with the project's
 [license](https://github.com/sequince-dev/sequince/blob/main/LICENSE). Preserve required
 attribution when incorporating third-party material.
 
-AI-assisted contributions are welcome under our [AI policy](AI_POLICY.md).
+AI-assisted contributions are welcome under our
+[AI policy](https://github.com/sequince-dev/sequince/blob/main/AI_POLICY.md).
 Contributors are responsible for understanding, validating, and explaining their
 changes, including their numerical correctness and performance.
 
