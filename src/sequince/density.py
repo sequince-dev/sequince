@@ -6,7 +6,6 @@ from collections.abc import Collection, Hashable
 from numbers import Real
 from typing import Callable
 
-from ._typing import Array
 from .steps.context import StepContext
 from .target import (
     EvaluationCounts,
@@ -17,6 +16,7 @@ from .target import (
     TemperedTarget,
     _evaluate_component,
 )
+from .typing import Array
 
 
 class _DensityComponents(Target):

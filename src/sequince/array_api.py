@@ -21,7 +21,7 @@ from array_api_compat import (
 )
 
 from ._scipy_compat import enable_scipy_array_api as _enable_scipy_array_api
-from ._typing import Array
+from .typing import Array
 
 IS_NAMESPACE_FUNCTIONS = {
     "numpy": is_numpy_namespace,

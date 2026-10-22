@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from acai import cond
 
-from .._typing import Array
 from ..array_api import is_jax_namespace, namespace
+from ..typing import Array
 from .base import SMCStep, StepContext
 
 if TYPE_CHECKING:

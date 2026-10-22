@@ -10,7 +10,6 @@ from collections.abc import Collection, Mapping
 from numbers import Integral
 from typing import TYPE_CHECKING, Any
 
-from .._typing import Array, ArrayLike
 from ..array_api import asarray, logsumexp, namespace
 from ..state import (
     ParticleState,
@@ -19,6 +18,7 @@ from ..state import (
 )
 from ..stats import ess_from_log_weights
 from ..target import EvaluationCounts, Target, TemperedTarget
+from ..typing import Array, ArrayLike
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep
 from .context import StepContext

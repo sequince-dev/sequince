@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Sequence, Tuple
 
 import numpy as np
 
-from ._typing import MetaData, MutationStrategy
 from .checkpoint import CheckpointWriter
 from .posterior import TemperedPosterior
 from .proposals import ProposalDistribution
@@ -42,6 +41,7 @@ from .steps.mutation import MutateIfResampled, get_mutation_step
 from .steps.resampling import ResamplingStep
 from .steps.weighting import TargetESSRatio
 from .transforms import ParticleTransform, get_prebuilt_transform
+from .typing import MetaData, MutationStrategy
 
 if TYPE_CHECKING:
     from .state import ParticleState

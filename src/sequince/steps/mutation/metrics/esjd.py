@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ...._typing import Array
 from ....array_api import asarray, namespace
+from ....typing import Array
 from ...context import StepContext
 from .state import MutationTransition
 

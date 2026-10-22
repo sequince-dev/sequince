@@ -14,7 +14,6 @@ from array_api_compat import is_array_api_obj
 from scipy.special import ndtr, ndtri
 from scipy.stats import circmean
 
-from ._typing import Array
 from .array_api import asarray, namespace, to_numpy
 from .flows import (
     NormalizingFlow,
@@ -23,6 +22,7 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
+from .typing import Array
 from .utils.pytrees import OPTREE_NAMESPACE, pytree_dataclass
 from .utils.random import RNGLike, resolve_rng
 

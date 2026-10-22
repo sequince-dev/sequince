@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any, MutableMapping, Self, cast
 
 from array_api_compat import device as get_device
 
-from ._typing import Array, ArrayLike
 from .array_api import asarray, logsumexp, namespace
 from .array_api import copy as array_copy
 from .exceptions import DegenerateWeightsError
+from .typing import Array, ArrayLike
 from .utils.copying import array_safe_copy
 from .utils.pytrees import pytree_dataclass
 

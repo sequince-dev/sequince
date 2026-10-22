@@ -1,3 +1,9 @@
+"""Type aliases for backend-neutral numerical interfaces.
+
+``Array`` and ``ArrayLike`` are the supported public aliases. Array shapes,
+dtype constraints, and accepted input conversions are specified by each API.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

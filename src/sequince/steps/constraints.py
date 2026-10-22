@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar
 import numpy as np
 from orng import RandomGenerator
 
-from .._typing import Array
 from ..array_api import asarray, is_jax_namespace, logsumexp, namespace
 from ..array_api import copy as array_copy
 from ..state import (
@@ -24,6 +23,7 @@ from ..target import (
     TargetEvaluation,
     _evaluate_component,
 )
+from ..typing import Array
 from .base import SMCStep
 from .context import StepContext
 from .control import apply_functional_if

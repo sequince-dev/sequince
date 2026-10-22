@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from array_api_compat import is_jax_namespace
 
-from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
 from ...transforms import (
@@ -16,6 +15,7 @@ from ...transforms import (
     has_particle_aligned_auxiliary,
     select_transform_auxiliary,
 )
+from ...typing import Array
 from ...utils.pytrees import pytree_dataclass
 from ..base import validate_n_steps
 from ..context import StepContext

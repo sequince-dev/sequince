@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, Callable, TypeGuard
 import array_api_extra as xpx
 import optree
 
-from ..._typing import Array
 from ...array_api import asarray, get_device, namespace, to_numpy
 from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
+from ...typing import Array
 from ...utils.pytrees import OPTREE_NAMESPACE
 from ..base import validate_n_steps
 from ..context import StepContext
