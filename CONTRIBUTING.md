@@ -295,6 +295,10 @@ should also follow this format and describe the final change.
 
 ## Pull requests and review
 
+For each pull request with user-visible changes, update
+[CHANGELOG.md](CHANGELOG.md) under `Unreleased` in the same pull request. Follow
+the entry categories and guidance in the releases section below.
+
 Push your branch and open a pull request targeting `sequince-dev/sequince:main`:
 
 ```bash
@@ -319,10 +323,26 @@ needed.
 
 ## Releases
 
+Maintain [CHANGELOG.md](CHANGELOG.md) using
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Add user-visible changes
+under `Unreleased`, grouped as `Added`, `Changed`, `Deprecated`, `Removed`,
+`Fixed`, or `Security`; omit empty groups. Describe the effect on users,
+especially changes to scientific results, APIs, RNG behaviour, or checkpoint
+compatibility. Routine internal refactoring and CI maintenance do not normally
+need entries.
+
 Releases are coordinated by maintainers. Versions are derived from Git tags by
 `setuptools-scm`; do not maintain a separate hard-coded version number. Use tags
 such as `v0.1.0` and release notes describing user-visible changes and any
 incompatibilities.
+
+When preparing a release, move the unreleased entries into a section headed
+`## [VERSION] - YYYY-MM-DD`, using the actual release date, and leave a fresh
+`Unreleased` section at the top. For the first beta, use a PEP 440 version such
+as `0.1.0b1` with the Git tag `v0.1.0b1`. Link its heading to the GitHub release,
+and update the `Unreleased` link to compare that tag with `HEAD`. For later
+releases, link each version heading to the comparison with the preceding tag.
+Use the version's changelog section as the GitHub release notes.
 
 Before publishing, verify the intended commit, applicable CI results, and the
 built distribution in a clean environment. Publishing a GitHub release triggers
