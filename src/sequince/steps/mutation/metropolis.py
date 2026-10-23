@@ -808,6 +808,11 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
     scale_weights : tuple of float or None
         Non-negative mixture weights (normalized internally); None is uniform.
         The kernel is fixed for each call and scale draws are state-independent.
+    noise_scale : float or tuple of float
+        Independent Gaussian noise standard deviation in mutation coordinates,
+        either shared or one value per dimension. Must be finite and
+        non-negative. Default is ``1e-5``; zero disables noise and its RNG draws.
+        With a transform, specify the scale in transformed coordinates.
     transform
         Optional coordinate transform applied before mutation.
     transform_refit
@@ -832,6 +837,7 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
         gamma_randomization: GammaRandomization = "none",
         scale_multipliers: tuple[float, ...] = (1.0,),
         scale_weights: tuple[float, ...] | None = None,
+        noise_scale: float | tuple[float, ...] = 1e-5,
         transform: ParticleTransform | None = None,
         transform_refit: TransformRefit = "always",
         store_chains: bool = False,
@@ -843,6 +849,7 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
             gamma_randomization=gamma_randomization,
             scale_multipliers=scale_multipliers,
             scale_weights=scale_weights,
+            noise_scale=noise_scale,
         )
         super().__init__(
             log_prob_fn,

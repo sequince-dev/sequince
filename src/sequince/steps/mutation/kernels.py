@@ -481,6 +481,15 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
         None assigns equal weights. Configuration is immutable and selection
         is state-independent, so the global proposal remains symmetric.
         Use ``dataclasses.replace`` to construct weights for a later stage.
+    noise_scale : float or tuple of float
+        Standard deviation of independent, zero-mean Gaussian noise added to
+        every proposal, including unit-scale moves. A scalar applies to all
+        dimensions; a tuple must contain one value per dimension. Values must
+        be finite and non-negative, in the coordinates used by the kernel
+        (transformed coordinates when a mutation transform is supplied).
+        The default is ``1e-5``. Zero disables noise and its RNG draws.
+        Positive noise in every dimension can escape a deficient affine span;
+        its fixed scale must not depend on the active particle's position.
     """
 
     gamma: float | None = None
@@ -488,8 +497,22 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
     gamma_randomization: GammaRandomization = "none"
     scale_multipliers: tuple[float, ...] = (1.0,)
     scale_weights: tuple[float, ...] | None = None
+    noise_scale: float | tuple[float, ...] = 1e-5
 
     def __post_init__(self) -> None:
+        noise_scale = (
+            float(self.noise_scale)
+            if isinstance(self.noise_scale, (float, int))
+            else tuple(float(value) for value in self.noise_scale)
+        )
+        noise_values = (
+            (noise_scale,) if isinstance(noise_scale, float) else noise_scale
+        )
+        if not noise_values or any(
+            not math.isfinite(value) or value < 0 for value in noise_values
+        ):
+            raise ValueError("noise_scale must be finite and non-negative.")
+        object.__setattr__(self, "noise_scale", noise_scale)
         multipliers = tuple(float(value) for value in self.scale_multipliers)
         weights = (
             (1.0,) * len(multipliers)
@@ -576,6 +599,11 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
             )
 
         n_active, n_dimensions = current.shape
+        if (
+            isinstance(self.noise_scale, tuple)
+            and len(self.noise_scale) != n_dimensions
+        ):
+            raise ValueError("noise_scale must have one value per dimension.")
         donor_j, donor_k = self._select_donors(current, complementary, rng)
         gamma_base = self.gamma
         if gamma_base is None:
@@ -605,8 +633,27 @@ class DifferentialEvolutionKernel(SymmetricComplementaryEnsembleKernel):
         component = xp.where(unit_mask, -1, component)
         multiplier = xp.where(unit_mask, 1.0, multiplier)
         differences = complementary[donor_j] - complementary[donor_k]
+        proposed = (
+            current + xp.reshape(gamma_effective, (n_active, 1)) * differences
+        )
+        noise_values = (
+            (self.noise_scale,)
+            if isinstance(self.noise_scale, float)
+            else self.noise_scale
+        )
+        if any(value > 0 for value in noise_values):
+            noise = asarray(
+                rng.normal(size=current.shape),
+                xp=xp,
+                like=current,
+                dtype=current.dtype,
+            )
+            scale = asarray(
+                self.noise_scale, xp=xp, like=current, dtype=current.dtype
+            )
+            proposed = proposed + noise * scale
         return KernelSample(
-            current + xp.reshape(gamma_effective, (n_active, 1)) * differences,
+            proposed,
             {
                 "scale_component": component,
                 "scale_multiplier": multiplier,

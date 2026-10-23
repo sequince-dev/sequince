@@ -73,12 +73,15 @@ def test_fixed_rng_replays_proposals() -> None:
     np.testing.assert_array_equal(first, replayed)
 
 
+@pytest.mark.parametrize("noise_scale", [0.0, 0.1, (0.1, 0.2)])
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
 def test_shape_dtype_and_backend_are_preserved(
-    backend, backend_factory
+    backend, backend_factory, noise_scale
 ) -> None:
     case = backend_factory(backend)
-    kernel = DifferentialEvolutionKernel(gamma_randomization="bilby")
+    kernel = DifferentialEvolutionKernel(
+        gamma_randomization="bilby", noise_scale=noise_scale
+    )
 
     proposals = kernel.sample(
         case.particles[:2],
@@ -160,7 +163,9 @@ def test_donor_indices_are_backend_integer_index_arrays(
 def test_donors_come_only_from_complementary_population() -> None:
     active = np.full((3, 1), 100.0)
     complementary = np.array([[0.0], [2.0], [5.0]])
-    kernel = DifferentialEvolutionKernel(gamma=1.0, gamma_one_probability=0.0)
+    kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0, gamma=1.0, gamma_one_probability=0.0
+    )
 
     proposals = kernel.sample(
         active, complementary, RandomGenerator(seed=4)
@@ -179,7 +184,9 @@ def test_donors_come_only_from_complementary_population() -> None:
 def test_default_gamma_uses_latent_dimension() -> None:
     active = np.zeros((2, 2))
     complementary = np.array([[0.0, 0.0], [1.0, 2.0]])
-    kernel = DifferentialEvolutionKernel(gamma_one_probability=0.0)
+    kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0, gamma_one_probability=0.0
+    )
     rng = _controlled_rng([1, 1], [0, 0])
 
     proposals = kernel.sample(  # type: ignore[arg-type]
@@ -199,6 +206,7 @@ def test_standard_mode_uses_explicit_gamma_exactly_without_jitter() -> None:
     active = np.array([[10.0, 20.0], [30.0, 40.0]])
     complementary = np.array([[1.0, 2.0], [4.0, 8.0], [9.0, 7.0]])
     kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0,
         gamma=0.7,
         gamma_one_probability=0.0,
         gamma_randomization="none",
@@ -224,6 +232,7 @@ def test_bilby_mode_uses_controlled_gamma_factors_exactly() -> None:
     active = np.array([[10.0], [20.0]])
     complementary = np.array([[1.0], [4.0], [9.0]])
     kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0,
         gamma=0.7,
         gamma_one_probability=0.0,
         gamma_randomization="bilby",
@@ -340,6 +349,7 @@ def test_singleton_matches_legacy_rng_exactly(
     active = np.arange(40.0).reshape(20, 2)
     complement = np.arange(16.0).reshape(8, 2)
     kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0,
         gamma=0.7,
         gamma_one_probability=probability,
         gamma_randomization=randomization,
@@ -393,6 +403,7 @@ def test_invalid_scale_mixtures(multipliers, weights, message) -> None:
 
 def test_mixture_metadata_frequencies_and_independence() -> None:
     kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0,
         gamma=0.4,
         gamma_one_probability=0.2,
         scale_multipliers=(0.1, 0.5, 1.0),
@@ -556,9 +567,10 @@ def test_kernel_snapshot_survives_replacement_during_target_call(
     )
 
 
+@pytest.mark.parametrize("noise_scale", [0.0, (0.2, 0.3)])
 @pytest.mark.parametrize("randomization", ["none", "bilby"])
 def test_multiscale_correlated_gaussian_stationarity(
-    context_factory, randomization
+    context_factory, randomization, noise_scale
 ) -> None:
     covariance = np.array([[1.0, 0.8], [0.8, 2.0]])
     mean = np.array([1.0, -2.0])
@@ -570,6 +582,7 @@ def test_multiscale_correlated_gaussian_stationarity(
         scale_multipliers=(0.1, 0.5, 1.0),
         scale_weights=(1.0, 2.0, 3.0),
         gamma_randomization=randomization,
+        noise_scale=noise_scale,
     )
     mutation = RedBlueMetropolisHastingsMutation(
         lambda x, context: -0.5
@@ -606,7 +619,10 @@ def test_metadata_correction_and_jump_metrics(context_factory) -> None:
             return np.where(metadata["scale_component"] == 0, 0.0, -np.inf)
 
     kernel = CorrectedTestKernel(
-        gamma=1.0, gamma_one_probability=0, scale_multipliers=(0.5, 1.0)
+        noise_scale=0.0,
+        gamma=1.0,
+        gamma_one_probability=0,
+        scale_multipliers=(0.5, 1.0),
     )
     mutation = RedBlueMetropolisHastingsMutation(
         lambda x, context: np.zeros(len(x)),
@@ -632,6 +648,7 @@ def test_metadata_correction_and_jump_metrics(context_factory) -> None:
 
 def test_unit_only_mixture_ignores_all_factors() -> None:
     kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0,
         gamma=0.3,
         gamma_one_probability=1.0,
         gamma_randomization="bilby",
@@ -648,6 +665,7 @@ def test_unit_only_mixture_ignores_all_factors() -> None:
 
 def test_bilby_factors_multiply_selected_scale() -> None:
     kernel = DifferentialEvolutionKernel(
+        noise_scale=0.0,
         gamma=0.4,
         gamma_one_probability=0,
         gamma_randomization="bilby",
@@ -857,3 +875,97 @@ def test_transition_metrics_fixed_jax_loop(context_factory) -> None:
     assert jax.tree_util.tree_structure(final) == jax.tree_util.tree_structure(
         initial
     )
+
+
+@pytest.mark.parametrize("noise_scale", [-1.0, np.inf, np.nan, (), (0.1, -1)])
+def test_invalid_noise_scale(noise_scale: Any) -> None:
+    with pytest.raises(ValueError, match="noise_scale"):
+        DifferentialEvolutionKernel(noise_scale=noise_scale)
+
+
+def test_noise_scale_requires_one_value_per_dimension() -> None:
+    kernel = DifferentialEvolutionKernel(noise_scale=(0.1,))
+    with pytest.raises(ValueError, match="one value per dimension"):
+        kernel.sample(
+            np.zeros((4, 2)), np.zeros((4, 2)), RandomGenerator(seed=1)
+        )
+
+
+@pytest.mark.parametrize("unit_probability", [0.0, 1.0])
+def test_noise_moves_collapsed_population_and_replays(
+    unit_probability: float,
+) -> None:
+    # With identical donors, every displacement comes from additive noise.
+    active = np.zeros((30_000, 2))
+    kernel = DifferentialEvolutionKernel(
+        noise_scale=(0.1, 0.3),
+        gamma_one_probability=unit_probability,
+        gamma_randomization="bilby",
+    )
+    first = kernel.sample(active, active[:4], RandomGenerator(seed=42))
+    replay = kernel.sample(active, active[:4], RandomGenerator(seed=42))
+    np.testing.assert_array_equal(first.particles, replay.particles)
+    np.testing.assert_allclose(first.particles.mean(axis=0), 0, atol=0.005)
+    np.testing.assert_allclose(
+        first.particles.std(axis=0), [0.1, 0.3], rtol=0.02
+    )
+    np.testing.assert_array_equal(
+        kernel.log_transition_ratio(active, first.particles, active[:4]), 0
+    )
+
+
+def test_zero_noise_preserves_rng_consumption() -> None:
+    active = np.arange(12.0).reshape(6, 2)
+    first_rng = RandomGenerator(seed=12)
+    second_rng = RandomGenerator(seed=12)
+    first = DifferentialEvolutionKernel(
+        noise_scale=0.0,
+    ).sample(active, active, first_rng)
+    second = DifferentialEvolutionKernel(noise_scale=(0.0, 0.0)).sample(
+        active, active, second_rng
+    )
+    np.testing.assert_array_equal(first.particles, second.particles)
+    np.testing.assert_array_equal(
+        first_rng.normal(size=10), second_rng.normal(size=10)
+    )
+
+
+def test_factory_exposes_noise_and_rejuvenates_collapsed_particles(
+    context_factory,
+) -> None:
+    from sequince.steps.mutation import get_mutation_step
+
+    mutation = get_mutation_step(
+        "differential-evolution",
+        target=lambda x, context: np.zeros(len(x)),
+        mutation_kwargs={"noise_scale": (0.1, 0.0)},
+    )
+    state, _, _ = mutation(
+        ParticleState(np.zeros((20, 2))),
+        context_factory(),
+        RandomGenerator(seed=8),
+    )
+    assert np.all(state.particles[:, 0] != 0)
+    np.testing.assert_array_equal(state.particles[:, 1], 0)
+
+
+def test_default_noise_rejuvenates_collapsed_population(
+    context_factory,
+) -> None:
+    from sequince.steps.mutation import get_mutation_step
+
+    particles = np.zeros((20, 2))
+    kernel = DifferentialEvolutionKernel()
+    assert kernel.noise_scale == 1e-5
+    proposal = kernel.sample(particles, particles, RandomGenerator(seed=8))
+    assert np.all(proposal.particles != 0)
+
+    mutation = get_mutation_step(
+        "differential-evolution",
+        target=lambda x, context: np.zeros(len(x)),
+        mutation_n_steps=1,
+    )
+    state, _, _ = mutation(
+        ParticleState(particles), context_factory(), RandomGenerator(seed=8)
+    )
+    assert np.all(state.particles != 0)
