@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Self
 
 import numpy as np
+from array_api_compat import device as get_device
 from numpy.random import Generator as NumPyGenerator
 
-from .array_api import asarray, get_device, namespace, to_numpy
+from .array_api import asarray, namespace, to_numpy
 from .state import ParticleState
 from .steps.constraints import _STOP_REASONS, NestedSamplingLevel
 from .steps.context import StepContext
@@ -820,11 +821,12 @@ class SMCResult:
             Method used to construct the returned posterior representation:
 
             - ``"weights"``: return weighted particles, optionally uniformly
-            down-selected without replacement.
-            - ``"rejection"``: independently retain each particle with probability
-            proportional to its weight, returning equal-weight unique samples.
+              down-selected without replacement.
+            - ``"rejection"``: independently retain each particle with
+              probability proportional to its weight, returning equal-weight
+              unique samples.
             - ``"multinomial"``: draw equal-weight samples with replacement
-            according to the particle weights.
+              according to the particle weights.
 
         Returns
         -------

@@ -343,14 +343,9 @@ def _log_det_entries(value, arr, xp):
 class ParticleTransform:
     """Coordinate transform interface for particle mutation.
 
-    Methods
-    -------
-    fit(particles, context=None, *, rng=None)
-        Optionally adapt internal statistics using the provided particle cloud.
-    forward(particles, context=None, *, rng=None)
-        Return transformed particles, log-Jacobian values, and auxiliary data.
-    inverse(values, context=None, *, auxiliary=None, rng=None)
-        Undo the transform applied by :meth:`forward`.
+    Use :meth:`fit` to optionally adapt internal statistics using the particle
+    cloud. :meth:`forward` returns transformed particles, log-Jacobian values,
+    and auxiliary data. :meth:`inverse` undoes the forward transform.
     """
 
     def clone(

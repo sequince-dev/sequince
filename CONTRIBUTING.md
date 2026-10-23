@@ -8,10 +8,12 @@ workflow and conventions we use to keep changes easy to review and maintain.
 
 Treat other contributors with respect and follow the
 [Python Community Code of Conduct](https://www.python.org/psf/codeofconduct/).
-Contributions must comply with the project's [license](LICENSE). Preserve required
+Contributions must comply with the project's
+[license](https://github.com/sequince-dev/sequince/blob/main/LICENSE). Preserve required
 attribution when incorporating third-party material.
 
-AI-assisted contributions are welcome under our [AI policy](AI_POLICY.md).
+AI-assisted contributions are welcome under our
+[AI policy](https://github.com/sequince-dev/sequince/blob/main/AI_POLICY.md).
 Contributors are responsible for understanding, validating, and explaining their
 changes, including their numerical correctness and performance.
 
@@ -156,6 +158,22 @@ def particle_mean(particles: Array) -> Array:
     xp = namespace(particles)
     return xp.mean(particles, axis=0)
 ```
+
+## Building the documentation
+
+The documentation uses Sphinx and lives in `docs/`. From the repository root,
+build the HTML documentation with the dedicated Pixi environment:
+
+```bash
+pixi run -e docs docs
+```
+
+Pixi installs the documentation dependencies defined in `pyproject.toml` when
+preparing this environment. Open `docs/_build/html/index.html` in a browser to
+review the result. Rebuild after editing documentation or API docstrings.
+
+The developer guide embeds this file and `AI_POLICY.md` using MyST. Edit the
+root Markdown files to update their content on GitHub and in the documentation.
 
 ## Checks and tests
 

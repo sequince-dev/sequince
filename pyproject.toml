@@ -164,10 +164,11 @@ typecheck = "mypy"
 [tool.pixi.feature.doc.dependencies]
 sphinx = ">=7.2"
 sphinx-book-theme = ">=1.1"
+sphinx-autoapi = ">=3.8,<4"
+myst-parser = ">=4,<5"
 
 [tool.pixi.feature.doc.tasks]
-# Runtime dependencies are installed here; mocking NumPy breaks orng's types.
-docs = "sphinx-build -b html -D autodoc_mock_imports= docs docs/_build/html"
+docs = "sphinx-build -b html docs docs/_build/html"
 
 [tool.pixi.feature.jax-cpu.activation.env]
 JAX_PLATFORMS = "cpu"

@@ -6,8 +6,9 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from acai import cond
+from array_api_compat import is_jax_namespace
 
-from ..array_api import is_jax_namespace, namespace
+from ..array_api import namespace
 from ..typing import Array
 from .base import SMCStep, StepContext
 

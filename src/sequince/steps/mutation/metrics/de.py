@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from ....array_api import asarray, get_device, namespace
+from array_api_compat import device as get_device
+
+from ....array_api import asarray, namespace
 from ....typing import Array
 from ...context import StepContext
 from .esjd import _squared_jump_distances
