@@ -22,13 +22,19 @@ def make_step(kind, target, **kwargs):
     return AdaptiveTemperedWeighting(target, target_ess_ratio=0.8, **kwargs)
 
 
-@pytest.mark.parametrize("kind", ["incremental", "fixed", "adaptive"])
 @pytest.mark.parametrize(
-    "target_kind", ["posterior", "tempered", "sequential"]
+    ("target_kind", "kind"),
+    [
+        ("posterior", "incremental"),
+        ("posterior", "fixed"),
+        ("posterior", "adaptive"),
+        ("tempered", "incremental"),
+        ("tempered", "fixed"),
+        ("tempered", "adaptive"),
+        ("sequential", "incremental"),
+    ],
 )
 def test_direct_callbacks_skip_density_preparation(kind, target_kind, rng):
-    if target_kind == "sequential" and kind != "incremental":
-        return  # A sequential density has no geometric tempering contract.
     calls = []
 
     def density(x):
@@ -58,11 +64,11 @@ def test_direct_callbacks_skip_density_preparation(kind, target_kind, rng):
     assert calls == [0]
     assert set(state.evaluation.components) == {"log_increment"}
     updated, context, _ = step.apply(state, context, rng)
-    expected, _, _ = make_step(kind, increment).apply(
-        ParticleState(particles), StepContext(t=0), rng
-    )
-    np.testing.assert_allclose(updated.log_weights, expected.log_weights)
-    assert calls == [0, 0]
+    delta = 1.0 if kind == "incremental" else context.metadata["delta_beta"]
+    masses = np.exp(-delta * np.array([0.0, 1.0, 4.0, 9.0])) / 4
+    np.testing.assert_allclose(updated.weights, masses / masses.sum())
+    assert updated.log_evidence == pytest.approx(np.log(masses.sum()))
+    assert calls == [0]
     assert "log_increment" in updated.evaluation
     assert context.evaluation_counts == EvaluationCounts(
         log_increment_evaluations=4

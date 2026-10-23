@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import h5py
 import numpy as np
+import pytest
 
 from sequince import (
     MarkovChainMonteCarlo,
@@ -10,7 +11,12 @@ from sequince import (
     make_mcmc,
 )
 from sequince.checkpoint import HDF5CheckpointWriter, SMCCheckpoint
-from sequince.steps.mutation import MutationStep, get_mutation_step
+from sequince.steps.mutation import (
+    CallableMutationKernel,
+    MetropolisHastingsMutation,
+    MutationStep,
+    get_mutation_step,
+)
 from sequince.transforms import AffineTransform
 
 
@@ -28,41 +34,34 @@ def make_runner(target, *, n_steps=4, checkpoint_writers=None, transform=None):
     )
 
 
-def test_mcmc_returns_chain_and_processed_samples(
-    simple_particles, standard_normal_log_prob
-):
-    state = ParticleState(simple_particles)
-
-    result = make_runner(standard_normal_log_prob, n_steps=4).run(
-        state, rng=123
+@pytest.mark.parametrize("transformed", [False, True])
+def test_mcmc_returns_chain_in_particle_coordinates(transformed: bool) -> None:
+    # Mean=12, scale=2: a unit latent move must be two particle units.
+    particles = np.array([[10.0], [14.0]])
+    mutation = MetropolisHastingsMutation(
+        lambda x: np.zeros(len(x)),
+        CallableMutationKernel(lambda x, rng: x + 1, symmetric=True),
+        n_steps=4,
+        transform=AffineTransform(eps=0.0) if transformed else None,
+    )
+    result = MarkovChainMonteCarlo(mutation).run(
+        ParticleState(particles), rng=123
     )
 
+    stride = 2 if transformed else 1
+    expected = particles[None, ...] + stride * np.arange(1, 5)[:, None, None]
     assert isinstance(result, MCMCResult)
-    assert "mutation_chains" not in result.final_state.metadata
-    assert result.chain.shape == (4, len(simple_particles), 2)
-    assert result.samples(burn_in=1, thin=2).shape == (
-        2 * len(simple_particles),
-        2,
+    np.testing.assert_allclose(result.chain, expected)
+    np.testing.assert_allclose(result.final_state.particles, expected[-1])
+    np.testing.assert_allclose(
+        result.samples(burn_in=1, thin=2), expected[[1, 3]].reshape(-1, 1)
     )
-    np.testing.assert_allclose(result.chain[-1], result.final_state.particles)
-    assert "acceptance" not in result.diagnostics
-    assert 0 <= result.diagnostics["metrics"].acceptance <= 1
+    np.testing.assert_allclose(
+        result.samples(burn_in=1, thin=2, flat=False), expected[[1, 3]]
+    )
+    assert "mutation_chains" not in result.final_state.metadata
+    assert result.diagnostics["metrics"].acceptance == 1.0
     assert result.diagnostics["steps"] == 4
-
-
-def test_mcmc_stores_chain_in_particle_coordinates(
-    simple_particles, standard_normal_log_prob
-):
-    state = ParticleState(simple_particles)
-
-    result = make_runner(
-        standard_normal_log_prob,
-        n_steps=3,
-        transform=AffineTransform(),
-    ).run(state, rng=456)
-
-    np.testing.assert_allclose(result.chain[-1], result.final_state.particles)
-    assert np.max(np.abs(result.chain)) > 0.5
 
 
 def test_mcmc_checkpoint_resume_concatenates_chains(
@@ -87,6 +86,13 @@ def test_mcmc_checkpoint_resume_concatenates_chains(
     runtime = resumed_runner.resume_from(checkpoint)
     resumed = resumed_runner.run(runtime=runtime)
 
+    reference = make_runner(standard_normal_log_prob, n_steps=4).run(
+        state, rng=789
+    )
+    np.testing.assert_array_equal(resumed.chain, reference.chain)
+    np.testing.assert_array_equal(
+        resumed.final_state.particles, reference.final_state.particles
+    )
     assert first.chain.shape == (2, len(simple_particles), 2)
     assert resumed.chain.shape == (4, len(simple_particles), 2)
     np.testing.assert_allclose(resumed.chain[:2], first.chain)

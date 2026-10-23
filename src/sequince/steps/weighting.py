@@ -6,7 +6,6 @@ from collections.abc import Collection, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
-from .._typing import Array
 from ..array_api import asarray, logsumexp, namespace, to_numpy
 from ..state import _validate_log_normalizer, normalize_log_weights
 from ..stats import (
@@ -19,6 +18,7 @@ from ..target import (
     SequentialTarget,
     TemperedTarget,
 )
+from ..typing import Array
 from ..utils.callables import call_with_optional_context
 from ..utils.optimize import bisect_monotone_decreasing
 from .base import SMCStep, StepContext

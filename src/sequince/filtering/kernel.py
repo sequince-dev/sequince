@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from .._typing import Array
+from ..typing import Array
 
 if TYPE_CHECKING:
     from orng import RandomGenerator

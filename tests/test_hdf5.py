@@ -83,7 +83,7 @@ def test_failed_write_removes_incomplete_target(tmp_path) -> None:
         dtype = np.dtype("f8")
 
     with h5py.File(tmp_path / "cleanup.h5", "w") as h5_file:
-        with pytest.raises(Exception, match="target/broken"):
+        with pytest.raises(TypeError, match="target/broken"):
             recursively_save_to_h5_file(
                 h5_file, "target", {"written": 1, "broken": BrokenArray()}
             )

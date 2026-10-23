@@ -13,7 +13,6 @@ from typing import (
 
 from array_api_compat import device as get_device
 
-from ._typing import Array
 from .array_api import asarray, namespace, to_numpy
 from .flows import (
     NormalizingFlow,
@@ -22,6 +21,7 @@ from .flows import (
     flow_state_dict,
     load_flow_state_dict,
 )
+from .typing import Array
 from .utils.callables import call_with_optional_context
 from .utils.random import resolve_rng
 

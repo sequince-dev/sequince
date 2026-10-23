@@ -4,7 +4,6 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
-from ._typing import Array
 from .proposals import ProposalDistribution
 from .state import ParticleState
 from .steps.context import LOG_PROPOSAL_OVERRIDE_KEY, StepContext
@@ -16,15 +15,16 @@ from .target import (
     _evaluate_component,
 )
 from .transforms import ParticleTransform, get_prebuilt_transform
+from .typing import Array
 from .utils.callables import call_with_optional_context
 from .utils.copying import array_safe_copy
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
 
-    from ._typing import MutationStrategy
     from .result import SMCResult
     from .steps.context import StepContext
+    from .typing import MutationStrategy
 
 LogProposalLike = TargetComponentFn | ProposalDistribution
 JointLogDensityFn = Callable[..., tuple[Array | float, Array | float]]

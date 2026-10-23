@@ -60,10 +60,16 @@ def assert_state_equal(actual, expected) -> None:
         expected.log_normalizing_constant
     )
     assert actual.metadata == expected.metadata
-    assert actual.evaluation.target_id == expected.evaluation.target_id
-    np.testing.assert_array_equal(
-        actual.evaluation["log_prior"], expected.evaluation["log_prior"]
-    )
+    assert (actual.evaluation is None) == (expected.evaluation is None)
+    if expected.evaluation is not None:
+        assert actual.evaluation.target_id == expected.evaluation.target_id
+        assert (
+            actual.evaluation.evaluation_key
+            == expected.evaluation.evaluation_key
+        )
+        np.testing.assert_array_equal(
+            actual.evaluation["log_prior"], expected.evaluation["log_prior"]
+        )
     if isinstance(expected, PersistentParticleState):
         np.testing.assert_array_equal(actual.betas, expected.betas)
         np.testing.assert_array_equal(
@@ -240,8 +246,11 @@ def test_smc_result_save_to_file_preserves_existing_content(tmp_path) -> None:
 
 def test_meta_and_nested_smc_results_round_trip(tmp_path) -> None:
     child = SMCResult([make_state()], StepContext(t=0))
+    parent_state = make_state().with_updates(
+        particles=np.array([[11.0], [12.0]]), log_normalizing_constant=2.5
+    )
     parent = SMCResult(
-        [make_state()], StepContext(t=1), outputs=(({"child": child},),)
+        [parent_state], StepContext(t=1), outputs=(({"child": child},),)
     )
     expected = MetaSMCResult([child, parent])
     with h5py.File(tmp_path / "meta.h5", "w") as h5_file:
@@ -249,7 +258,12 @@ def test_meta_and_nested_smc_results_round_trip(tmp_path) -> None:
     with h5py.File(tmp_path / "meta.h5", "r") as h5_file:
         actual = MetaSMCResult.load(h5_file)
     assert len(actual.results) == 2
-    assert isinstance(actual.results[1].outputs[0][0]["child"], SMCResult)
+    assert_state_equal(actual.results[0].final_state, child.final_state)
+    assert_state_equal(actual.results[1].final_state, parent_state)
+    restored_child = actual.results[1].outputs[0][0]["child"]
+    assert isinstance(restored_child, SMCResult)
+    assert_state_equal(restored_child.final_state, child.final_state)
+    assert [result.context.t for result in actual.results] == [0, 1]
 
 
 def test_mcmc_result_round_trip(tmp_path) -> None:

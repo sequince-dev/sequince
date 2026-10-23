@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, overload
 import numpy as np
 from array_api_compat import device as get_device
 
-from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
+from ...typing import Array
 from ...utils.pytrees import pytree_dataclass
 from ..base import StepContext
 

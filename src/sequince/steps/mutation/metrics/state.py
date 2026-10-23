@@ -6,8 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...._typing import Array
 from ....array_api import asarray, namespace
+from ....typing import Array
 from ....utils.pytrees import pytree_dataclass
 
 

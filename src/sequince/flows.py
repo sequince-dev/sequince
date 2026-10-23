@@ -6,8 +6,8 @@ import copy
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ._typing import Array
 from .array_api import asarray
+from .typing import Array
 
 if TYPE_CHECKING:
     from .steps.context import StepContext

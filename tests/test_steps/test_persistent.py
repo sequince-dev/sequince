@@ -22,18 +22,6 @@ from sequince.steps.persistent import (
 )
 
 
-def _reference_denominator(
-    log_increment: np.ndarray,
-    betas: np.ndarray,
-    log_normalizing_constants: np.ndarray,
-) -> np.ndarray:
-    terms = (
-        log_increment[:, None] * betas[None, :]
-        - log_normalizing_constants[None, :]
-    )
-    return logsumexp(terms, axis=1) - np.log(betas.size)
-
-
 def test_single_initial_target() -> None:
     log_increment = np.array([-2.0, 0.5, 3.0])
     beta = 0.4
@@ -71,57 +59,33 @@ def test_zero_support_with_initial_target(beta: float) -> None:
 
 
 @pytest.mark.parametrize(
-    ("betas", "log_normalizing_constants"),
+    ("betas", "normalizers", "denominators"),
     [
-        ([0.0, 0.3, 0.8], [0.0, 0.0, 0.0]),
-        ([0.0, 0.3, 0.8], [0.0, 1.7, -0.4]),
-        ([0.0, 0.0, 0.5], [0.0, 0.2, 0.9]),
+        ([0.0, 0.5, 1.0], [1.0, 1.0, 1.0], [1.0, 7 / 3, 7.0]),
+        ([0.0, 0.5, 1.0], [1.0, 2.0, 4.0], [7 / 12, 1.0, 7 / 3]),
+        ([0.0, 0.0, 0.5], [1.0, 2.0, 4.0], [7 / 12, 2 / 3, 5 / 6]),
     ],
     ids=["multiple-targets", "nonzero-evidence", "repeated-betas"],
 )
-def test_denominator_matches_direct_reference(
+def test_mixture_density_and_importance_weights(
     betas: list[float],
-    log_normalizing_constants: list[float],
+    normalizers: list[float],
+    denominators: list[float],
 ) -> None:
-    log_increment = np.array([-1.5, 0.25, 2.0])
-    betas_array = np.asarray(betas)
-    log_normalizing_constants_array = np.asarray(log_normalizing_constants)
-
+    # Density ratios are 1, 4, 16. Average the three normalized target
+    # densities in ordinary probability space; the candidate ratio is sqrt(g).
+    increments = np.log([1.0, 4.0, 16.0])
+    log_normalizers = np.log(normalizers)
     actual = persistent_log_mixture_denominator(
-        log_increment,
-        betas_array,
-        log_normalizing_constants_array,
+        increments, np.asarray(betas), log_normalizers
     )
-    expected = _reference_denominator(
-        log_increment,
-        betas_array,
-        log_normalizing_constants_array,
+    weights = persistent_log_weights(
+        increments, np.asarray(betas), log_normalizers, 0.5
     )
 
-    np.testing.assert_allclose(actual, expected)
-
-
-def test_log_weights_match_direct_reference() -> None:
-    log_increment = np.array([-1.5, 0.25, 2.0])
-    betas = np.array([0.0, 0.2, 0.9])
-    log_normalizing_constants = np.array([0.0, 0.6, 1.4])
-    beta = 0.7
-    expected_denominator = _reference_denominator(
-        log_increment,
-        betas,
-        log_normalizing_constants,
-    )
-
-    actual = persistent_log_weights(
-        log_increment,
-        betas,
-        log_normalizing_constants,
-        beta,
-    )
-
+    np.testing.assert_allclose(np.exp(actual), denominators)
     np.testing.assert_allclose(
-        actual,
-        beta * log_increment - expected_denominator,
+        np.exp(weights), np.array([1.0, 2.0, 4.0]) / denominators
     )
 
 
@@ -135,14 +99,11 @@ def test_large_magnitude_values_are_stable() -> None:
         betas,
         log_normalizing_constants,
     )
-    expected = _reference_denominator(
-        log_increment,
-        betas,
-        log_normalizing_constants,
+    # The other mixture terms are at least 175 log units below the
+    # dominant term, negligible at float64 precision.
+    np.testing.assert_allclose(
+        actual, np.array([900.0, 0.0, 400.0]) - np.log(3)
     )
-
-    assert np.all(np.isfinite(actual))
-    np.testing.assert_allclose(actual, expected)
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax", "cupy"])
@@ -152,10 +113,15 @@ def test_supported_backends_preserve_namespace_dtype_and_shape(
 ) -> None:
     case = backend_factory(backend)
     xp = case.xp
-    log_increment = case.particles[:, 0]
-    betas = asarray([0.0, 0.0, 0.5], xp=xp, like=log_increment)
+    log_increment = asarray(
+        np.log([1.0, 4.0, 16.0, 64.0]),
+        xp=xp,
+        dtype=case.particles.dtype,
+        like=case.particles,
+    )
+    betas = asarray([0.0, 0.5, 1.0], xp=xp, like=log_increment)
     log_normalizing_constants = asarray(
-        [0.0, 0.2, 0.9], xp=xp, like=log_increment
+        np.log([1.0, 2.0, 4.0]), xp=xp, like=log_increment
     )
 
     denominator = persistent_log_mixture_denominator(
@@ -167,21 +133,24 @@ def test_supported_backends_preserve_namespace_dtype_and_shape(
         log_increment,
         betas,
         log_normalizing_constants,
-        0.75,
+        0.5,
     )
 
-    expected = _reference_denominator(
-        to_numpy(log_increment),
-        to_numpy(betas),
-        to_numpy(log_normalizing_constants),
-    )
+    expected = np.array([7 / 12, 1.0, 7 / 3, 7.0])
     assert denominator.shape == log_increment.shape
     assert log_weights.shape == log_increment.shape
     assert namespace(denominator) is xp
     assert namespace(log_weights) is xp
     assert denominator.dtype == log_increment.dtype
     assert log_weights.dtype == log_increment.dtype
-    np.testing.assert_allclose(to_numpy(denominator), expected, rtol=1e-5)
+    np.testing.assert_allclose(
+        np.exp(to_numpy(denominator)), expected, rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        np.exp(to_numpy(log_weights)),
+        [1.0, 2.0, 4.0, 8.0] / expected,
+        rtol=1e-5,
+    )
 
 
 @pytest.mark.parametrize(

@@ -40,11 +40,6 @@ def test_acceptance_preserves_backend(
     assert float(acceptance) == pytest.approx(expected)
 
 
-def _flat_log_prob(particles, context):
-    del context
-    return np.zeros(particles.shape[0])
-
-
 def _add(value):
     return CallableMutationKernel(
         lambda particles, rng: particles + value,
@@ -52,18 +47,12 @@ def _add(value):
     )
 
 
-class NegateStep(SMCStep):
-    def apply(self, state, context, rng):
-        del rng
-        return state.replace_particles(-state.particles), context, None
-
-
 def test_deterministic_mutation_has_expected_counts(
-    context_factory, rng
+    flat_log_prob, context_factory, rng
 ) -> None:
     state = ParticleState(np.array([[-1.0, 0.0], [1.0, 0.0]]))
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob,
+        flat_log_prob,
         _add(np.array([1.0, 2.0])),
         n_steps=2,
         metrics=[CountMetric()],
@@ -121,10 +110,10 @@ def test_partial_acceptance_is_counted_per_particle(
 
 
 def test_zero_step_mutation_reports_zero_diagnostics(
-    particle_state, context_factory, rng
+    flat_log_prob, particle_state, context_factory, rng
 ) -> None:
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(1.0), metrics=[CountMetric()]
+        flat_log_prob, _add(1.0), metrics=[CountMetric()]
     )
 
     updated, _, output = mutation.apply_with_n_steps(
@@ -139,13 +128,15 @@ def test_zero_step_mutation_reports_zero_diagnostics(
     np.testing.assert_array_equal(updated.particles, particle_state.particles)
 
 
-def test_repeated_rounds_share_metric_state(context_factory, rng) -> None:
+def test_repeated_rounds_share_metric_state(
+    flat_log_prob, negate_step, context_factory, rng
+) -> None:
     state = ParticleState(np.array([[-1.0], [1.0]]))
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(1.0), metrics=[CountMetric()]
+        flat_log_prob, _add(1.0), metrics=[CountMetric()]
     )
     repeated = RepeatedMutationStep(
-        mutation, after_round=SequentialStep([NegateStep()]), n_rounds=2
+        mutation, after_round=SequentialStep([negate_step]), n_rounds=2
     )
 
     updated, context, outputs = repeated.apply_with_n_steps(
@@ -167,12 +158,12 @@ def test_repeated_rounds_share_metric_state(context_factory, rng) -> None:
 
 
 def test_repeated_mutation_returns_one_complete_block_diagnostic(
-    context_factory, rng
+    flat_log_prob, context_factory, rng
 ) -> None:
     state = ParticleState(np.array([[-1.0], [1.0]]))
     repeated = RepeatedMutationStep(
         MetropolisHastingsMutation(
-            _flat_log_prob, _add(1.0), metrics=[CountMetric()]
+            flat_log_prob, _add(1.0), metrics=[CountMetric()]
         ),
         n_rounds=3,
     )
@@ -191,12 +182,12 @@ def test_repeated_mutation_returns_one_complete_block_diagnostic(
 
 
 def test_repeated_mutation_budget_smaller_than_round_count(
-    context_factory, rng
+    flat_log_prob, context_factory, rng
 ) -> None:
     state = ParticleState(np.array([[-1.0], [1.0]]))
     repeated = RepeatedMutationStep(
         MetropolisHastingsMutation(
-            _flat_log_prob, _add(1.0), metrics=[CountMetric()]
+            flat_log_prob, _add(1.0), metrics=[CountMetric()]
         ),
         n_rounds=4,
     )
@@ -219,12 +210,12 @@ def test_repeated_mutation_budget_smaller_than_round_count(
 
 
 def test_nested_repeats_only_finalise_the_outer_block(
-    context_factory, rng
+    flat_log_prob, context_factory, rng
 ) -> None:
     state = ParticleState(np.array([[-1.0], [1.0]]))
     inner = RepeatedMutationStep(
         MetropolisHastingsMutation(
-            _flat_log_prob, _add(1.0), metrics=[CountMetric()]
+            flat_log_prob, _add(1.0), metrics=[CountMetric()]
         ),
         n_rounds=2,
     )
@@ -282,7 +273,9 @@ class CountMetric:
         return state["totals"]
 
 
-def test_metric_lifecycle_and_independence(context_factory, rng):
+def test_metric_lifecycle_and_independence(
+    flat_log_prob, negate_step, context_factory, rng
+):
     from unittest.mock import Mock
 
     first = CountMetric()
@@ -291,11 +284,11 @@ def test_metric_lifecycle_and_independence(context_factory, rng):
         for method in ("initialize", "update", "result"):
             setattr(metric, method, Mock(wraps=getattr(metric, method)))
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(1.0), metrics=[first, second]
+        flat_log_prob, _add(1.0), metrics=[first, second]
     )
     state = ParticleState(np.array([[-1.0], [1.0]]))
     repeat = RepeatedMutationStep(
-        mutation, after_round=SequentialStep([NegateStep()]), n_rounds=3
+        mutation, after_round=SequentialStep([negate_step]), n_rounds=3
     )
     _, _, output = repeat.apply_with_n_steps(
         state, context_factory(), rng, n_steps=5
@@ -341,10 +334,10 @@ def test_no_metrics_and_sampling_invariance(context_factory):
     assert outputs[0][1].metadata == outputs[1][1].metadata
 
 
-def test_duplicate_metric_names_rejected():
+def test_duplicate_metric_names_rejected(flat_log_prob):
     with pytest.raises(ValueError, match="unique.*duplicate"):
         MetropolisHastingsMutation(
-            _flat_log_prob, _add(1), metrics=[CountMetric(), CountMetric()]
+            flat_log_prob, _add(1), metrics=[CountMetric(), CountMetric()]
         )
 
 
@@ -391,14 +384,14 @@ def test_custom_metric_under_jit():
     )
 
 
-def test_zero_block_metric_lifecycle(context_factory, rng):
+def test_zero_block_metric_lifecycle(flat_log_prob, context_factory, rng):
     from unittest.mock import Mock
 
     metric = CountMetric()
     for name in ("initialize", "update", "result"):
         setattr(metric, name, Mock(wraps=getattr(metric, name)))
     step = RepeatedMutationStep(
-        MetropolisHastingsMutation(_flat_log_prob, _add(1), metrics=[metric]),
+        MetropolisHastingsMutation(flat_log_prob, _add(1), metrics=[metric]),
         n_rounds=3,
     )
     state = ParticleState(np.array([[-1.0], [1.0]]))
@@ -412,14 +405,16 @@ def test_zero_block_metric_lifecycle(context_factory, rng):
     assert output.metrics.acceptance == 0
 
 
-def test_blocked_mutation_metrics_share_state(context_factory, rng):
+def test_blocked_mutation_metrics_share_state(
+    flat_log_prob, context_factory, rng
+):
     from sequince.steps.mutation import (
         BlockedMetropolisHastingsMutation,
         MetropolisBlock,
     )
 
     step = BlockedMetropolisHastingsMutation(
-        _flat_log_prob,
+        flat_log_prob,
         [
             MetropolisBlock("first", _add(1), 2),
             MetropolisBlock("second", _add(2), 1),
@@ -622,15 +617,17 @@ def test_custom_dataclass_and_array_state_in_jax_loop():
 @pytest.mark.parametrize(
     "run_kwargs", [{"thin_by": 2}, {"thin": 2}, {"store": False}]
 )
-def test_emcee_rejects_hidden_transitions(run_kwargs):
+def test_emcee_rejects_hidden_transitions(flat_log_prob, run_kwargs):
     from sequince.steps.mutation import EmceeMutation
 
     with pytest.raises(ValueError, match="unthinned transitions"):
-        EmceeMutation(_flat_log_prob, run_kwargs=run_kwargs)
+        EmceeMutation(flat_log_prob, run_kwargs=run_kwargs)
 
 
 @pytest.mark.parametrize("resampled", [False, True])
-def test_conditional_mutation_in_shared_block(resampled, context_factory, rng):
+def test_conditional_mutation_in_shared_block(
+    flat_log_prob, resampled, context_factory, rng
+):
     from unittest.mock import Mock
 
     from sequince.steps.mutation import MutateIfResampled
@@ -639,7 +636,7 @@ def test_conditional_mutation_in_shared_block(resampled, context_factory, rng):
     metric.initialize = Mock(wraps=metric.initialize)
     metric.result = Mock(wraps=metric.result)
     mutation = MetropolisHastingsMutation(
-        _flat_log_prob, _add(1), metrics=[metric]
+        flat_log_prob, _add(1), metrics=[metric]
     )
     step = MutateIfResampled(RepeatedMutationStep(mutation, n_rounds=3))
     state = ParticleState(np.array([[-1.0], [1.0]]))

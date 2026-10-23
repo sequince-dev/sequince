@@ -9,10 +9,10 @@ import array_api_extra as xpx
 import optree
 from array_api_compat import device as get_device
 
-from ..._typing import Array
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
 from ...transforms import ParticleTransform, select_transform_auxiliary
+from ...typing import Array
 from ...utils.pytrees import OPTREE_NAMESPACE
 from ..base import validate_n_steps
 from ..context import StepContext

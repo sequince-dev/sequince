@@ -108,7 +108,7 @@ when their types are not clear from initialization.
 - Use modern Python syntax supported by Python 3.11, such as `list[str]`,
   `dict[str, float]`, and `ParticleState | None`. Prefer collection interfaces
   such as `Mapping` or `Sequence` when callers need not supply a concrete container.
-- Use the existing `Array` and `ArrayLike` aliases from `sequince._typing` for
+- Use the existing `Array` and `ArrayLike` aliases from `sequince.typing` for
   backend-neutral numerical interfaces. Reserve backend-specific types such as
   `numpy.ndarray` for code that requires that backend. Use `ArrayLike` only when
   the function actually accepts and converts those inputs.
@@ -138,7 +138,7 @@ meaning. Use `array` for backend-native arrays and `array_like` only when the
 function also accepts and converts inputs such as lists.
 
 ```python
-from sequince._typing import Array
+from sequince.typing import Array
 from sequince.array_api import namespace
 
 
