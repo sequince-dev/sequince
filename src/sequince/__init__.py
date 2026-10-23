@@ -65,7 +65,6 @@ __all__ = [
     "MCMCResult",
     "MarkovChainMonteCarlo",
     "SequentialMonteCarlo",
-    "MetaSequentialMonteCarlo",
     "SMCResult",
     "SMCConfig",
     "SequentialTarget",
