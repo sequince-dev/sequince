@@ -25,8 +25,9 @@ dynamic = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sequince-dev/sequince"
+Homepage = "https://sequince.readthedocs.io/en/latest/"
 Repository = "https://github.com/sequince-dev/sequince"
+Documentation = "https://sequince.readthedocs.io/en/latest/"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
