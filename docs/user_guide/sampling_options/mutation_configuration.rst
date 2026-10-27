@@ -45,7 +45,8 @@ Each step takes a target callable or :class:`~sequince.target.Target` object.
 
 MH steps take a proposal through the ``kernel`` argument. See
 :mod:`sequince.steps.mutation.kernels` for Gaussian random walks, masked
-updates, mixtures, and differential-evolution kernels. Red-blue MH requires a
+updates, global proposals, mixtures, and differential-evolution kernels.
+Red-blue MH requires a
 :class:`~sequince.steps.mutation.kernels.ComplementaryEnsembleKernel`.
 
 Common configuration

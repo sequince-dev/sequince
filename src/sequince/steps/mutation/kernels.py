@@ -17,6 +17,8 @@ from ..base import StepContext
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
+
+    from ...proposals import ProposalDistribution
 else:  # pragma: no cover - runtime fallback
     from orng import RandomGenerator  # type: ignore
 
@@ -319,6 +321,81 @@ def evaluate_log_transition_ratio(
     raise TypeError(
         "Mutation kernel must implement log_transition_ratio() or log_density()."
     )
+
+
+@dataclass(frozen=True)
+class IndependentProposalKernel:
+    """Independence MH proposals in the coordinates supplied to the kernel.
+
+    Parameters
+    ----------
+    proposal : ProposalDistribution
+        Distribution defining samples and densities in mutation coordinates.
+        A physical-space prior is suitable only without a coordinate transform.
+        Sample batches must have exactly the input particle shape; densities
+        must have shape (n_particles,). Sampled densities are retained locally.
+    """
+
+    proposal: ProposalDistribution
+
+    def sample(self, particles: Array, rng: RandomGenerator) -> KernelSample:
+        """Draw a batch and retain its log densities for the MH correction."""
+        xp = namespace(particles)
+        values, density = self.proposal.sample_and_log_prob(
+            particles.shape[0], rng=rng, xp=xp
+        )
+        values = asarray(values, xp=xp, like=particles, dtype=particles.dtype)
+        density = asarray(
+            density, xp=xp, like=particles, dtype=particles.dtype
+        )
+        if values.shape != particles.shape:
+            raise ValueError("Proposal samples must match the particle shape.")
+        if density.shape != (particles.shape[0],):
+            raise ValueError(
+                "Proposal densities must have shape (n_particles,)."
+            )
+        return KernelSample(values, {"log_proposal": density})
+
+    def log_transition_ratio(
+        self, from_particles: Array, to_particles: Array
+    ) -> Array:
+        """Return ``log q(current) - log q(proposed)`` per particle."""
+        if from_particles.shape != to_particles.shape:
+            raise ValueError("Proposal samples must match the particle shape.")
+        return self.log_transition_ratio_from_sample(
+            from_particles,
+            KernelSample(
+                to_particles,
+                {"log_proposal": self.proposal.log_prob(to_particles)},
+            ),
+        )
+
+    def log_transition_ratio_from_sample(
+        self, from_particles: Array, sample: KernelSample
+    ) -> Array:
+        """Evaluate the correction using the cached proposed log densities."""
+        if from_particles.shape != sample.particles.shape:
+            raise ValueError("Proposal samples must match the particle shape.")
+        xp = namespace(from_particles)
+        current = asarray(
+            self.proposal.log_prob(from_particles),
+            xp=xp,
+            like=from_particles,
+            dtype=from_particles.dtype,
+        )
+        proposed = asarray(
+            sample.auxiliary["log_proposal"],
+            xp=xp,
+            like=from_particles,
+            dtype=from_particles.dtype,
+        )
+        if current.shape != (from_particles.shape[0],) or (
+            proposed.shape != current.shape
+        ):
+            raise ValueError(
+                "Proposal densities must have shape (n_particles,)."
+            )
+        return current - proposed
 
 
 @dataclass(frozen=True)
@@ -882,6 +959,7 @@ class MixtureMutationKernel:
 
 MUTATION_KERNELS: dict[str, type] = {
     "gaussian-random-walk": GaussianRandomWalk,
+    "independent-proposal": IndependentProposalKernel,
     "mixture": MixtureMutationKernel,
 }
 

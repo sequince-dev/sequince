@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Global proposals with `IndependentProposalKernel`
+  ([#139](https://github.com/sequince-dev/sequince/pull/139)).
+
 ## [0.1.0b1] - 2026-10-23
 
 First public beta release.
