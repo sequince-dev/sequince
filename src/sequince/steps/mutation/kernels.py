@@ -334,6 +334,11 @@ class IndependentProposalKernel:
         A physical-space prior is suitable only without a coordinate transform.
         Sample batches must have exactly the input particle shape; densities
         must have shape (n_particles,). Sampled densities are retained locally.
+
+    Notes
+    -----
+    This is the independence Metropolis sampler described in
+    `Tierney (1994), Section 2.3.3 <https://doi.org/10.1214/aos/1176325750>`_.
     """
 
     proposal: ProposalDistribution
