@@ -140,6 +140,118 @@ Use these steps to compose mutation updates:
 The adaptation wrappers support eager execution only. Place conditional steps
 outside them, for example ``MutateIfResampled(mutation_step)``.
 
+Mixing DE with global proposals
+-------------------------------
+
+Start with a physical-space prior proposal implementing
+:class:`~sequince.proposals.ProposalDistribution`: ``sample_and_log_prob`` draws
+one sample per requested particle using the supplied ``rng`` and ``xp``, and
+``log_prob`` evaluates one density per particle. Both methods must describe the
+same distribution. Given such an object named ``prior_proposal`` and a target
+named ``target``, a fixed-weight mixture is:
+
+.. code-block:: python
+
+    from sequince.steps import (
+        DifferentialEvolutionKernel,
+        IndependentProposalKernel,
+        MixtureComplementaryEnsembleKernel,
+        MixtureComponentMetrics,
+        RedBlueMetropolisHastingsMutation,
+    )
+
+    kernel = MixtureComplementaryEnsembleKernel(
+        kernels=(
+            DifferentialEvolutionKernel(),
+            IndependentProposalKernel(prior_proposal),
+        ),
+        weights=(0.8, 0.2),
+    )
+    mutation = RedBlueMetropolisHastingsMutation(
+        target,
+        kernel,
+        n_steps=10,
+        transform=None,
+        metrics=[MixtureComponentMetrics(2)],
+    )
+
+Each active particle independently selects DE or the prior on each half-sweep.
+Only selected particles are proposed by each child; DE sees the frozen
+complement. Acceptance uses that child's transition correction. For the
+independence proposal this is ``log q(current) - log q(proposed)``; no marginal
+mixture density is evaluated. Weights are immutable, normalized, non-negative,
+and finite, with positive total. Zero weights support pure-component limits.
+This dispatch supports eager execution only, including eager JAX arrays; it does
+not support JIT compilation.
+
+To adapt the top-level probabilities in SMC, wrap the complete repeated block:
+
+.. code-block:: python
+
+    from sequince.steps import (
+        AdaptMixtureWeights,
+        ESJDMixtureWeightPolicy,
+        RepeatedMutationStep,
+    )
+
+    adaptive_mutation = AdaptMixtureWeights(
+        RepeatedMutationStep(mutation, n_rounds=2, n_steps=20),
+        ESJDMixtureWeightPolicy(
+            learning_rate=0.5,
+            exploration_probability=0.1,
+            min_attempts=20,
+        ),
+    )
+
+The adapter installs component metrics automatically when absent. For each
+component, ``mixture_components`` reports ``n_attempted``, ``n_accepted``,
+``acceptance``, ``squared_jump_distance``, and ``esjd``. Rejections contribute zero
+movement, so ESJD divides accepted squared-jump sums by *all* attempts. Scores
+measure movement in mutation coordinates and are not adjusted for runtime or
+coordinate scale.
+
+Weights stay frozen throughout an outer iteration, including all repeated
+rounds. The policy damps ESJD-based probabilities and assigns a positive uniform
+exploration fraction; each initialized weight is at least
+``exploration_probability / n_components``. Insufficient attempts in any
+component, or zero movement everywhere, retain the current weights. Pending
+weights take effect on entering the next outer iteration. DE's internal scale
+weights remain fixed. Calls at the same context iteration consult the policy
+only once; wrap all rounds whose statistics should contribute in one block.
+Use ``AdaptMutationSteps(adaptive_mutation, ...)`` for budget adaptation, and
+place conditional execution outside the adapters.
+
+``mixture_weight_adaptation`` records current and pending weights. Checkpoints
+retain these decisions, iteration bookkeeping, and nested child and policy
+state. Restore into the same component order, kernel and proposal configuration,
+and policy configuration. This is outer-iteration adaptation for SMC;
+standalone MCMC requires a separate adaptation policy.
+
+The proposal must describe the coordinates actually supplied to the kernel.
+Use ``transform=None`` for physical-space prior mixing; when configuring a
+prebuilt sampler by name, also set ``particle_transform=None``. Transformed
+mixtures require a proposal whose sampling and density are defined in that
+transformed space, including the appropriate change of variables. A
+physical-space prior cannot be passed unchanged to a latent-space kernel.
+
+The complementary-kernel factory accepts ``kernel="mixture"`` with ``kernels``
+and ``weights`` in ``kernel_kwargs``. Children may be objects, names such as
+``"differential-evolution"``, or mappings containing ``kernel`` and
+``kernel_kwargs``. Use ``"independent-proposal"`` with a ``proposal`` object for
+the global child. Ordinary ``MixtureMutationKernel`` retains its existing
+whole-batch selection behavior, and MiniPCN behavior is unchanged.
+
+For custom diagnostics, mixture auxiliary data has particle-aligned
+``mixture_component`` IDs, selected-child ``correction``, and a fixed tuple of
+``children``. Each child contains a ``selected`` mask and padded ``diagnostics``;
+read diagnostics only under that mask. DE's scale components, multipliers and
+donor indices are preserved in its diagnostic slot. DE and independence schemas
+are automatic. Other children returning auxiliary data must supply
+``auxiliary_templates`` with one pytree per child; leaves specify dtype and
+trailing shape without a particle axis; floating leaves use the particle dtype.
+Children returning no diagnostics use
+``None``. This keeps both half-updates compatible even for unselected children.
+
 Prebuilt samplers
 -----------------
 
