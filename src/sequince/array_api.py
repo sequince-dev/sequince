@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as _np
@@ -23,7 +24,7 @@ from array_api_compat import (
 from ._scipy_compat import enable_scipy_array_api as _enable_scipy_array_api
 from .typing import Array
 
-IS_NAMESPACE_FUNCTIONS = {
+IS_NAMESPACE_FUNCTIONS: dict[str, Callable[[Any], bool]] = {
     "numpy": is_numpy_namespace,
     "torch": is_torch_namespace,
     "jax": is_jax_namespace,
