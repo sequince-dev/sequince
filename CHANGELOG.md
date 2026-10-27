@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Documentation sidebar links to sequince-density and sequince-examples under
+  Related Packages.
+
 ## [0.1.0b1] - 2026-10-23
 
 First public beta release.
