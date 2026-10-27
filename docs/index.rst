@@ -67,6 +67,14 @@ Next steps
    developer_guide/index
    citation
 
+.. toctree::
+   :maxdepth: 2
+   :caption: Related Packages
+   :hidden:
+
+   sequince-density <https://sequince.readthedocs.io/projects/sequince-density/en/latest/>
+   sequince-examples <https://sequince.readthedocs.io/projects/sequince-examples/en/latest/>
+
 Indices and tables
 ------------------
 
