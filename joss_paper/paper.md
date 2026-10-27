@@ -13,7 +13,7 @@ authors:
   orcid: 0000-0002-2728-9612
   affiliation: 3
 affiliations:
-- name: Max Planck Institute for Gravitational Physics (Albert Einstein Institute), Potsdam, Germany
+- name: Max Planck Institute for Gravitational Physics (Albert Einstein Institute), Am Mühlenberg 1, 14476 Potsdam, Germany
   index: 1
 - name: Institute of Cosmology and Gravitation, University of Portsmouth, United Kingdom
   index: 2
@@ -31,8 +31,9 @@ approximating sequences of probability distributions using a population of weigh
 Such sequences arise naturally in applications including Bayesian inference,
 and particle filtering, for example through likelihood tempering or observations arriving over time.
 
-`sequince` is a Python toolkit for constructing SMC methods from reusable and extensible
-components. It provides abstractions for defining sequences of target
+`sequince` [@sequince] is a Python toolkit for constructing SMC methods from reusable and extensible
+components. This paper describes version 0.1.0 of the toolkit.
+The toolkit provides abstractions for defining sequences of target
 distributions and for composing the operations used to evolve a particle population between them.
 These include weighting, resampling, mutation, transformation, and control steps.
 It is designed for researchers developing new SMC methods or adapting existing methods to scientific applications, including astrophysical inference, with checkpointing to support long-running analyses. Its core components follow the Python Array API standard, supporting NumPy, JAX, PyTorch, and CuPy arrays and enabling compatible workflows to run on CPUs or GPUs.
@@ -55,7 +56,7 @@ Broader Bayesian software ecosystems also expose SMC functionality. `PyMC` inclu
 
 # Software design
 
-`sequince` separates target distributions, particle populations, and the operations used to evolve them. The following outlines the main design choices; the documentation and runnable examples provide detailed descriptions of the interfaces and their use.
+`sequince` separates target distributions, particle populations, and the operations used to evolve them. The following outlines the main design choices; the [documentation](https://sequince.readthedocs.io/en/latest/) and [runnable examples](https://sequince.readthedocs.io/projects/sequince-examples/en/latest/) provide detailed descriptions of the interfaces and their use.
 
 The distributions approximated during an SMC run are represented by target objects. A target evaluates named components of a probability distribution for a population of particles, while sequential targets describe how that distribution changes between stages. Separating the target from the operations that evolve the particles allows weighting and mutation components to be reused across different inference procedures. For example, tempered SMC and nested-sampling SMC use different target sequences while sharing resampling and compatible mutation components.
 
@@ -99,7 +100,8 @@ preconditioning, proposal construction, and other density-assisted SMC methods,
 including approaches related to `pocomc` and `aspire` \[@karamanis2025persistent;
 @williams2026accelerated\]. The wider sequince ecosystem also includes
 `sequince-examples`, which provides runnable examples demonstrating common
-workflows and more specialised uses of the package [@sequince_examples].
+workflows and more specialised uses of the package [@sequince_examples], with
+[online documentation](https://sequince.readthedocs.io/projects/sequince-examples/en/latest/).
 
 # AI usage disclosure
 
@@ -107,7 +109,7 @@ Generative AI tools, including OpenAI Codex and GitHub Copilot, were used to ass
 
 # Acknowledgements
 
-M.J.W. acknowledges support from ST/X002225/1, ST/Y004876/1, and the University
+M.J.W. acknowledges support from Max-Planck-Gesellschaft, ST/X002225/1, ST/Y004876/1, and the University
 of Portsmouth. C.E.A.C-B. is supported by UKSA Space Agency grant UKRI971.
 
 Numerical computations were carried out on the SCIAMA high-performance
