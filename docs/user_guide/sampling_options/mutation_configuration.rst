@@ -140,6 +140,47 @@ Use these steps to compose mutation updates:
 The adaptation wrappers support eager execution only. Place conditional steps
 outside them, for example ``MutateIfResampled(mutation_step)``.
 
+Global independence proposals
+-----------------------------
+
+:class:`~sequince.steps.mutation.kernels.IndependentProposalKernel` draws
+proposals independently of each particle's current position. It accepts a
+:class:`~sequince.proposals.ProposalDistribution`: ``sample_and_log_prob`` draws
+the requested batch using the supplied ``rng`` and ``xp``, and ``log_prob``
+evaluates one log density per particle. Both methods must describe the same
+distribution. Given a proposal named ``prior_proposal`` and a target named
+``target``:
+
+.. code-block:: python
+
+    from sequince.steps import (
+        IndependentProposalKernel,
+        MetropolisHastingsMutation,
+    )
+
+    mutation = MetropolisHastingsMutation(
+        target,
+        IndependentProposalKernel(prior_proposal),
+        n_steps=10,
+        transform=None,
+    )
+
+Acceptance includes ``log q(current) - log q(proposed)``. The kernel caches the
+sampled log densities, so it only evaluates current-particle densities when
+computing that correction. Samples must match the input particle shape, and
+log densities must have shape ``(n_particles,)``. The proposal should cover the
+target's support, and its distribution must remain fixed during mutation.
+
+The proposal must describe the coordinates supplied to the kernel. Use
+``transform=None`` for physical-space prior proposals; when configuring a
+prebuilt sampler, also set ``particle_transform=None``. Transformed proposals
+must sample and evaluate densities in the transformed coordinates, including
+the appropriate change of variables. A physical-space prior cannot be passed
+unchanged to a latent-space kernel.
+
+The mutation-kernel factory accepts ``"independent-proposal"`` with a
+``proposal`` object in ``kernel_kwargs``.
+
 Prebuilt samplers
 -----------------
 

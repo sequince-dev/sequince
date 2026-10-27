@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Independence Metropolis-Hastings proposals using `IndependentProposalKernel`
+  and `ProposalDistribution`, with cached proposed log densities. Proposals must
+  describe mutation coordinates; physical-space priors require physical-space
+  mutation.
+
 ## [0.1.0b1] - 2026-10-23
 
 First public beta release.
