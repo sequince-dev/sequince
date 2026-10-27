@@ -6,7 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, overload
 
+import array_api_extra as xpx
 import numpy as np
+import optree
 from array_api_compat import device as get_device
 
 from ...array_api import asarray, namespace, to_numpy
@@ -17,6 +19,8 @@ from ..base import StepContext
 
 if TYPE_CHECKING:
     from orng import RandomGenerator
+
+    from ...proposals import ProposalDistribution
 else:  # pragma: no cover - runtime fallback
     from orng import RandomGenerator  # type: ignore
 
@@ -319,6 +323,81 @@ def evaluate_log_transition_ratio(
     raise TypeError(
         "Mutation kernel must implement log_transition_ratio() or log_density()."
     )
+
+
+@dataclass(frozen=True)
+class IndependentProposalKernel:
+    """Independence MH proposals in the coordinates supplied to the kernel.
+
+    Parameters
+    ----------
+    proposal : ProposalDistribution
+        Distribution defining samples and densities in mutation coordinates.
+        A physical-space prior is suitable only without a coordinate transform.
+        Sample batches must have exactly the input particle shape; densities
+        must have shape (n_particles,). Sampled densities are retained locally.
+    """
+
+    proposal: ProposalDistribution
+
+    def sample(self, particles: Array, rng: RandomGenerator) -> KernelSample:
+        """Draw a batch and retain its log densities for the MH correction."""
+        xp = namespace(particles)
+        values, density = self.proposal.sample_and_log_prob(
+            particles.shape[0], rng=rng, xp=xp
+        )
+        values = asarray(values, xp=xp, like=particles, dtype=particles.dtype)
+        density = asarray(
+            density, xp=xp, like=particles, dtype=particles.dtype
+        )
+        if values.shape != particles.shape:
+            raise ValueError("Proposal samples must match the particle shape.")
+        if density.shape != (particles.shape[0],):
+            raise ValueError(
+                "Proposal densities must have shape (n_particles,)."
+            )
+        return KernelSample(values, {"log_proposal": density})
+
+    def log_transition_ratio(
+        self, from_particles: Array, to_particles: Array
+    ) -> Array:
+        """Return ``log q(current) - log q(proposed)`` per particle."""
+        if from_particles.shape != to_particles.shape:
+            raise ValueError("Proposal samples must match the particle shape.")
+        return self.log_transition_ratio_from_sample(
+            from_particles,
+            KernelSample(
+                to_particles,
+                {"log_proposal": self.proposal.log_prob(to_particles)},
+            ),
+        )
+
+    def log_transition_ratio_from_sample(
+        self, from_particles: Array, sample: KernelSample
+    ) -> Array:
+        """Evaluate the correction using the cached proposed log densities."""
+        if from_particles.shape != sample.particles.shape:
+            raise ValueError("Proposal samples must match the particle shape.")
+        xp = namespace(from_particles)
+        current = asarray(
+            self.proposal.log_prob(from_particles),
+            xp=xp,
+            like=from_particles,
+            dtype=from_particles.dtype,
+        )
+        proposed = asarray(
+            sample.auxiliary["log_proposal"],
+            xp=xp,
+            like=from_particles,
+            dtype=from_particles.dtype,
+        )
+        if current.shape != (from_particles.shape[0],) or (
+            proposed.shape != current.shape
+        ):
+            raise ValueError(
+                "Proposal densities must have shape (n_particles,)."
+            )
+        return current - proposed
 
 
 @dataclass(frozen=True)
@@ -880,15 +959,238 @@ class MixtureMutationKernel:
         )
 
 
+@dataclass(frozen=True)
+class MixtureComplementaryEnsembleKernel(ComplementaryEnsembleKernel):
+    """Select a fixed-weight component independently per active particle.
+
+    Parameters
+    ----------
+    kernels : sequence of mutation or complementary-ensemble kernels
+        Children receive only selected particles, and the frozen complement
+        when required. Corrections use the selected child, not a marginal
+        mixture density. Component choices are independent of coordinates.
+    weights : sequence of float or None
+        Finite non-negative weights with positive sum; None means uniform.
+        Configuration is normalized to immutable tuples.
+    auxiliary_templates : sequence of pytree or None
+        Optional child diagnostic schemas. Each leaf is an array describing
+        the dtype and trailing shape (without a particle axis). DE and
+        independence schemas are provided automatically; other children default
+        to None, and require an explicit template if they return diagnostics.
+
+    Notes
+    -----
+    Eager execution only: dispatch uses host indices and variable batch sizes.
+    Auxiliary contains particle-aligned ``mixture_component``, ``correction``,
+    and a fixed tuple ``children``. Each child has a ``selected`` mask and
+    ``diagnostics`` padded with zeros outside that mask. DE scale metadata is
+    retained there; padded values must only be interpreted under the mask.
+    Floating diagnostic leaves use the input particle dtype.
+    Both red-blue halves therefore have identical pytree structures, even
+    when a component is never selected. Child schemas must remain fixed.
+    """
+
+    kernels: Sequence[MutationKernel | ComplementaryEnsembleKernel]
+    weights: Sequence[float] | None = None
+    auxiliary_templates: Sequence[Any] | None = None
+
+    def __post_init__(self) -> None:
+        kernels = tuple(self.kernels)
+        if not kernels:
+            raise ValueError("A mixture requires at least one kernel.")
+        for kernel in kernels:
+            if not callable(getattr(kernel, "sample", None)) or not any(
+                callable(getattr(kernel, name, None))
+                for name in (
+                    "log_transition_ratio",
+                    "log_transition_ratio_from_sample",
+                    "log_density",
+                )
+            ):
+                raise TypeError(
+                    "Mixture children need sampling and correction."
+                )
+        weights = np.asarray(
+            self.weights
+            if self.weights is not None
+            else np.ones(len(kernels)),
+            dtype=float,
+        )
+        if weights.shape != (len(kernels),) or (
+            not np.all(np.isfinite(weights))
+            or np.any(weights < 0)
+            or not np.any(weights > 0)
+        ):
+            raise ValueError(
+                "Weights must match kernels and be finite, "
+                "non-negative, with positive total."
+            )
+        weights = weights / weights.max()
+        object.__setattr__(self, "kernels", kernels)
+        object.__setattr__(
+            self, "weights", tuple(float(w) for w in weights / weights.sum())
+        )
+        templates = self.auxiliary_templates
+        if templates is None:
+            templates = []
+            for kernel in kernels:
+                if isinstance(kernel, DifferentialEvolutionKernel):
+                    templates.append(
+                        {
+                            "scale_component": np.asarray(0),
+                            "scale_multiplier": np.asarray(0.0),
+                            "donor_j": np.asarray(0),
+                            "donor_k": np.asarray(0),
+                        }
+                    )
+                elif isinstance(kernel, IndependentProposalKernel):
+                    templates.append({"log_proposal": np.asarray(0.0)})
+                else:
+                    templates.append(None)
+        if len(templates) != len(kernels):
+            raise ValueError("Diagnostic templates must match kernels.")
+        object.__setattr__(self, "auxiliary_templates", tuple(templates))
+
+    def sample(
+        self,
+        particles: Array,
+        complementary_particles: Array,
+        rng: RandomGenerator,
+    ) -> KernelSample:
+        """Draw selected child proposals against the frozen complement."""
+        xp = namespace(particles, complementary_particles)
+        n = particles.shape[0]
+        component = asarray(
+            rng.choice(len(self.kernels), size=(n,), p=self.weights),
+            xp=xp,
+            like=particles,
+        )
+        proposals = particles
+        correction = xp.zeros(
+            (n,), dtype=particles.dtype, device=get_device(particles)
+        )
+        children = []
+        assert self.auxiliary_templates is not None
+        for i, (kernel, template) in enumerate(
+            zip(self.kernels, self.auxiliary_templates, strict=True)
+        ):
+            selected = component == i
+            indices = asarray(
+                np.flatnonzero(to_numpy(selected)),
+                xp=xp,
+                like=component,
+                dtype=component.dtype,
+            )
+
+            def empty(leaf: Array) -> Array:
+                value = asarray(leaf, xp=xp, like=particles)
+                dtype = (
+                    particles.dtype
+                    if xp.isdtype(value.dtype, "real floating")
+                    else value.dtype
+                )
+                return xp.zeros(
+                    (n, *value.shape),
+                    dtype=dtype,
+                    device=get_device(particles),
+                )
+
+            diagnostics = optree.tree_map(empty, template)
+            if indices.shape[0]:
+                active = particles[indices]
+                complement = (
+                    complementary_particles
+                    if isinstance(kernel, ComplementaryEnsembleKernel)
+                    else None
+                )
+                child = _as_kernel_sample(
+                    kernel.sample(active, complementary_particles, rng)
+                    if isinstance(kernel, ComplementaryEnsembleKernel)
+                    else kernel.sample(active, rng)
+                )
+                values = asarray(
+                    child.particles,
+                    xp=xp,
+                    like=particles,
+                    dtype=particles.dtype,
+                )
+                ratio = asarray(
+                    evaluate_log_transition_ratio(
+                        kernel, active, child, complement
+                    ),
+                    xp=xp,
+                    like=particles,
+                    dtype=particles.dtype,
+                )
+                if values.shape != active.shape or ratio.shape != (
+                    indices.shape[0],
+                ):
+                    raise ValueError(
+                        "Child proposals or corrections have "
+                        "invalid particle shapes."
+                    )
+
+                def scatter(destination: Array, source: Array) -> Array:
+                    source = asarray(
+                        source,
+                        xp=xp,
+                        like=destination,
+                        dtype=destination.dtype,
+                    )
+                    if source.shape != (
+                        indices.shape[0],
+                        *destination.shape[1:],
+                    ):
+                        raise ValueError(
+                            "Child diagnostics must match templates."
+                        )
+                    return xpx.at(destination, indices).set(source, copy=True)
+
+                if optree.tree_structure(diagnostics) != optree.tree_structure(
+                    child.auxiliary
+                ):
+                    raise ValueError(
+                        "Child diagnostics require a matching "
+                        "auxiliary template."
+                    )
+                diagnostics = optree.tree_map(
+                    scatter, diagnostics, child.auxiliary
+                )
+                proposals = xpx.at(proposals, indices).set(values, copy=True)
+                correction = xpx.at(correction, indices).set(ratio, copy=True)
+            children.append({"selected": selected, "diagnostics": diagnostics})
+        return KernelSample(
+            proposals,
+            {
+                "mixture_component": component,
+                "correction": correction,
+                "children": tuple(children),
+            },
+        )
+
+    def log_transition_ratio_from_sample(
+        self,
+        from_particles: Array,
+        sample: KernelSample,
+        complementary_particles: Array,
+    ) -> Array:
+        """Return the selected children's cached transition corrections."""
+        if sample.particles.shape != from_particles.shape:
+            raise ValueError("Proposal samples must match the particle shape.")
+        return sample.auxiliary["correction"]
+
+
 MUTATION_KERNELS: dict[str, type] = {
     "gaussian-random-walk": GaussianRandomWalk,
     "mixture": MixtureMutationKernel,
+    "independent-proposal": IndependentProposalKernel,
 }
 
 COMPLEMENTARY_ENSEMBLE_KERNELS: dict[
     str, type[ComplementaryEnsembleKernel]
 ] = {
     "differential-evolution": DifferentialEvolutionKernel,
+    "mixture": MixtureComplementaryEnsembleKernel,
 }
 
 
@@ -927,7 +1229,47 @@ def get_complementary_ensemble_kernel(
             f"Unknown complementary-ensemble kernel '{name}'. "
             f"Valid options are: {valid}."
         ) from exc
+    if kernel_cls is MixtureComplementaryEnsembleKernel:
+        try:
+            kernel_specs = kwargs.pop("kernels")
+        except KeyError as exc:
+            raise ValueError(
+                "The mixture ensemble kernel requires a 'kernels' option."
+            ) from exc
+        kwargs["kernels"] = [
+            _resolve_ensemble_kernel_spec(spec) for spec in kernel_specs
+        ]
     return kernel_cls(**kwargs)
+
+
+def _resolve_ensemble_kernel_spec(
+    spec: Any,
+) -> MutationKernel | ComplementaryEnsembleKernel:
+    """Resolve a mixture child from either kernel registry."""
+    if isinstance(spec, str):
+        if spec in COMPLEMENTARY_ENSEMBLE_KERNELS:
+            return get_complementary_ensemble_kernel(spec)
+        return get_mutation_kernel(spec)
+    if not isinstance(spec, Mapping):
+        return spec
+    config = dict(spec)
+    try:
+        name = config.pop("kernel")
+    except KeyError as exc:
+        raise ValueError(
+            "Mixture component mappings require a 'kernel' option."
+        ) from exc
+    kwargs = dict(config.pop("kernel_kwargs", {}) or {})
+    if config:
+        raise ValueError(
+            f"Unknown mixture component options: {', '.join(sorted(config))}."
+        )
+    factory = (
+        get_complementary_ensemble_kernel
+        if name in COMPLEMENTARY_ENSEMBLE_KERNELS
+        else get_mutation_kernel
+    )
+    return factory(name, **kwargs)
 
 
 def _resolve_mutation_kernel_spec(spec: Any) -> MutationKernel:

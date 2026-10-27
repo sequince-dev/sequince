@@ -37,8 +37,10 @@ from .kernels import (
     ComplementaryEnsembleKernel,
     DifferentialEvolutionKernel,
     GaussianRandomWalk,
+    IndependentProposalKernel,
     KernelSample,
     MaskedGaussianRandomWalk,
+    MixtureComplementaryEnsembleKernel,
     MixtureMutationKernel,
     MutationKernel,
     SymmetricComplementaryEnsembleKernel,
@@ -49,6 +51,7 @@ from .kernels import (
 )
 from .metrics import (
     ESJDMetric,
+    MixtureComponentMetrics,
     MutationMetric,
     MutationMetrics,
     MutationMetricsOutput,
@@ -67,6 +70,7 @@ from .repeated import RepeatedMutationStep, RepeatedMutationStepOutput
 
 __all__ = [
     "ESJDMetric",
+    "MixtureComponentMetrics",
     "RelativeJumpDistanceMetric",
     "RelativeJumpDistancePolicy",
     "AdaptDEScaleWeights",
@@ -92,6 +96,7 @@ __all__ = [
     "ErynMutation",
     "FixedLengthMutation",
     "GaussianRandomWalk",
+    "IndependentProposalKernel",
     "GenerativeProposal",
     "MUTATION_KERNELS",
     "MetropolisHastingsMutation",
@@ -101,6 +106,7 @@ __all__ = [
     "KernelSample",
     "MetropolisBlock",
     "MixtureMutationKernel",
+    "MixtureComplementaryEnsembleKernel",
     "MutationKernel",
     "RepeatedMutationStep",
     "RepeatedMutationStepOutput",
