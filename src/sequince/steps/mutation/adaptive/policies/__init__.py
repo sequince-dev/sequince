@@ -2,6 +2,7 @@
 
 from .base import MutationStepPolicy
 from .de import DEScaleWeightPolicy, ESJDScaleWeightPolicy
+from .mixture import ESJDMixtureWeightPolicy, MixtureWeightPolicy
 from .rho import AcceptanceRateRhoPolicy, MiniPCNRhoPolicy
 from .rjd import RelativeJumpDistancePolicy
 
@@ -11,5 +12,7 @@ __all__ = [
     "RelativeJumpDistancePolicy",
     "MutationStepPolicy",
     "DEScaleWeightPolicy",
+    "MixtureWeightPolicy",
     "ESJDScaleWeightPolicy",
+    "ESJDMixtureWeightPolicy",
 ]
