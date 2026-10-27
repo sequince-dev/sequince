@@ -140,8 +140,8 @@ Use these steps to compose mutation updates:
 The adaptation wrappers support eager execution only. Place conditional steps
 outside them, for example ``MutateIfResampled(mutation_step)``.
 
-Global independence proposals
------------------------------
+Global proposals
+----------------
 
 :class:`~sequince.steps.mutation.kernels.IndependentProposalKernel` draws
 proposals independently of each particle's current position. It accepts a
