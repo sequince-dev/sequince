@@ -8,10 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Independence Metropolis-Hastings proposals using `IndependentProposalKernel`
-  and `ProposalDistribution`, with cached proposed log densities. Proposals must
-  describe mutation coordinates; physical-space priors require physical-space
-  mutation.
+- Global proposals with `IndependentProposalKernel`
+  ([#139](https://github.com/sequince-dev/sequince/pull/139)).
 
 ## [0.1.0b1] - 2026-10-23
 
