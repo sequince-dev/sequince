@@ -32,7 +32,7 @@ Such sequences arise naturally in applications including Bayesian inference,
 and particle filtering, for example through likelihood tempering or observations arriving over time.
 
 `sequince` [@sequince] is a Python toolkit for constructing SMC methods from reusable and extensible
-components. This paper describes version 0.1.0 of the toolkit.
+components. This paper describes `sequince` v0.1.0.
 The toolkit provides abstractions for defining sequences of target
 distributions and for composing the operations used to evolve a particle population between them.
 These include weighting, resampling, mutation, transformation, and control steps.
