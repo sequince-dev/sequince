@@ -65,7 +65,7 @@ Choosing a mutation backend
 ``make_mcmc`` accepts the same named mutation backends used by the standard SMC
 helper: ``"differential-evolution"`` (default), ``"minipcn"``, ``"emcee"``,
 ``"blackjax"``, and ``"metropolis-hastings"``. Backend-specific settings are passed through
-``mutation_kwargs``:
+``mutation_kwargs``. Install ``sequince[minipcn]`` before selecting MiniPCN:
 
 .. code-block:: python
 

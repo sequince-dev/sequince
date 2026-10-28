@@ -14,7 +14,6 @@ dependencies = [
     "scipy>=1.16",
     "matplotlib>=3.5",
     "numpy>=1.25.2",
-    "minipcn>=0.3.0a1",
     "array-api-compat>=1.13",
     "array-api-extra>=0.10",
     "optree>=0.19",
@@ -39,6 +38,9 @@ include = ["sequince*"]
 [tool.setuptools_scm]
 
 [project.optional-dependencies]
+minipcn = [
+    "minipcn>=0.3.0a1",
+]
 jax = [
     "jax>0.5.3",
     "jaxlib"
@@ -62,6 +64,7 @@ hdf5 = [
 
 [dependency-groups]
 test-core = [
+    "sequince[minipcn]",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "corner",

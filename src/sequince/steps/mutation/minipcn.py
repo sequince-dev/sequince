@@ -309,7 +309,15 @@ class MiniPCNMutation(MutationStep):
         rng: Any = None,
     ) -> tuple[Any, Array, ParticleTransform | None, Any, StepContext]:
         """Prepare the latent particles and MiniPCN sampler."""
-        from minipcn import Sampler
+        try:
+            from minipcn import Sampler
+        except ModuleNotFoundError as exc:
+            if exc.name != "minipcn":
+                raise
+            raise ImportError(
+                "MiniPCN mutation requires the 'minipcn' extra; install it "
+                "with `pip install 'sequince[minipcn]'`."
+            ) from exc
 
         xp = namespace(state.particles)
         block = self._proposal_block(context)

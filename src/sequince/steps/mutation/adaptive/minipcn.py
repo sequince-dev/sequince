@@ -91,7 +91,15 @@ class AdaptiveMiniPCNMutation(AdaptiveMutationStep):
             getattr(resolved_policy, "initialise", None)
         ) or not callable(getattr(resolved_policy, "update", None)):
             raise TypeError("policy must implement initialise() and update().")
-        from minipcn import Sampler
+        try:
+            from minipcn import Sampler
+        except ModuleNotFoundError as exc:
+            if exc.name != "minipcn":
+                raise
+            raise ImportError(
+                "MiniPCN mutation requires the 'minipcn' extra; install it "
+                "with `pip install 'sequince[minipcn]'`."
+            ) from exc
 
         if not hasattr(Sampler, "init_step_state"):
             raise ImportError(

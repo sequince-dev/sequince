@@ -150,7 +150,8 @@ options in ``mutation_kwargs``. Use ``mutation="none"`` or ``None`` to disable m
 
 Differential evolution requires at least four particles. Its default
 ``noise_scale=1e-5`` adds independent Gaussian noise in mutation coordinates.
-Use ``mutation="minipcn"`` to select MiniPCN explicitly. The persistent SMC,
+Install ``sequince[minipcn]`` and use ``mutation="minipcn"`` to select MiniPCN
+explicitly. The persistent SMC,
 nested-sampling SMC, standalone MCMC, and additional-posterior-sample helpers
 also default to differential evolution. Functional nested-sampling execution
 requires an explicit ``mutation="minipcn"`` or ``mutation="blackjax"``.
