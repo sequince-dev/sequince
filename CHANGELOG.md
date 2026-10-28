@@ -11,6 +11,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Documentation sidebar links to sequince-density and sequince-examples under
   Related Packages.
 
+### Changed
+
+- Add Gaussian noise to differential evolution proposals (`noise_scale=1e-5` in
+  mutation coordinates) to escape collapsed ensembles.
+
 ## [0.1.0b1] - 2026-10-23
 
 First public beta release.
