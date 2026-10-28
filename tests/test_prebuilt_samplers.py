@@ -8,11 +8,13 @@ from orng import RandomGenerator
 
 from sequince import ParticleState, PersistentParticleState, TemperedPosterior
 from sequince.prebuilt_samplers import (
+    make_nested_sampling_smc,
     make_persistent_bayesian_smc,
     make_standard_bayesian_smc,
 )
 from sequince.steps import (
     AdaptiveTemperedWeighting,
+    DifferentialEvolutionMutation,
     FixedTemperedWeighting,
     LoggingStep,
     MiniPCNMutation,
@@ -51,7 +53,7 @@ def test_make_standard_bayesian_smc_builds_default_steps() -> None:
     assert len(steps) == 4
     assert isinstance(steps[0], AdaptiveTemperedWeighting)
     assert isinstance(steps[1], SystematicResampling)
-    assert isinstance(steps[2], MiniPCNMutation)
+    assert isinstance(steps[2], DifferentialEvolutionMutation)
     assert isinstance(steps[3], LoggingStep)
 
 
@@ -193,9 +195,9 @@ def test_make_standard_bayesian_smc_forwards_resample_at_end() -> None:
 @pytest.mark.parametrize(
     ("weighting_criterion", "always_mutate", "expected_type"),
     [
-        ("ess", None, MiniPCNMutation),
+        ("ess", None, DifferentialEvolutionMutation),
         ("cess", None, MutateIfResampled),
-        ("cess", True, MiniPCNMutation),
+        ("cess", True, DifferentialEvolutionMutation),
     ],
 )
 def test_make_standard_bayesian_smc_configures_conditional_mutation(
@@ -214,7 +216,7 @@ def test_make_standard_bayesian_smc_configures_conditional_mutation(
     mutation = smc._steps[2]  # noqa: SLF001
     assert isinstance(mutation, expected_type)
     if isinstance(mutation, MutateIfResampled):
-        assert isinstance(mutation.mutation, MiniPCNMutation)
+        assert isinstance(mutation.mutation, DifferentialEvolutionMutation)
 
 
 def test_make_standard_bayesian_smc_wraps_custom_mutation() -> None:
@@ -318,7 +320,7 @@ def test_make_persistent_bayesian_smc_builds_fixed_size_pipeline() -> None:
     assert isinstance(steps[0], PersistParticles)
     assert isinstance(steps[1], PersistentAdaptiveTemperedWeighting)
     assert isinstance(steps[2], SystematicResampling)
-    assert isinstance(steps[3], MiniPCNMutation)
+    assert isinstance(steps[3], DifferentialEvolutionMutation)
     assert steps[1]._target_ess == target_ess  # noqa: SLF001
     assert steps[1]._target_total_ess == target_total_ess  # noqa: SLF001
     assert steps[2]._n_samples == n_particles  # noqa: SLF001
@@ -626,3 +628,25 @@ def test_make_persistent_bayesian_smc_rejects_custom_resampling_step() -> None:
             n_particles=4,
             resampling=resampling,
         )
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        make_standard_bayesian_smc,
+        make_persistent_bayesian_smc,
+        make_nested_sampling_smc,
+    ],
+)
+@pytest.mark.parametrize("mutation", [None, "minipcn"])
+def test_prebuilt_mutation_default_and_explicit_minipcn(
+    factory, mutation: str | None
+) -> None:
+    kwargs = {} if mutation is None else {"mutation": mutation}
+    sampler, _, _ = factory(
+        _quadratic_log_prior, _zero_log_likelihood, **kwargs
+    )
+    expected = (
+        DifferentialEvolutionMutation if mutation is None else MiniPCNMutation
+    )
+    assert any(isinstance(step, expected) for step in sampler.config.steps)

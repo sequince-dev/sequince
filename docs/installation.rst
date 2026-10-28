@@ -7,9 +7,9 @@ Installation
 
     python -m pip install sequince
 
-The core installation includes NumPy, SciPy, MiniPCN, and the Array API
-compatibility packages. It supports NumPy-based sampling with the default
-MiniPCN mutation backend.
+The core installation includes NumPy, SciPy, and the Array API compatibility
+packages. It supports NumPy-based sampling with the default
+differential-evolution mutation method.
 
 Optional integrations
 ---------------------
@@ -25,6 +25,8 @@ Install extras for the integrations you need, for example:
 
    * - Extra
      - Provides
+   * - ``minipcn``
+     - MiniPCN mutation and adaptive MiniPCN wrappers
    * - ``jax``
      - JAX arrays and functional execution
    * - ``blackjax``
@@ -38,8 +40,9 @@ Install extras for the integrations you need, for example:
    * - ``corner``
      - Corner plots
 
-For example, install ``sequince[emcee]`` to select emcee mutation instead of
-the default MiniPCN backend. See
+For example, install ``sequince[minipcn]`` to use MiniPCN mutation, or
+``sequince[emcee]`` to select emcee mutation instead of
+the default differential-evolution method. See
 :doc:`user_guide/sampling_options/mutation_configuration` for mutation-specific
 requirements.
 

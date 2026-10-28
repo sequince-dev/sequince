@@ -410,7 +410,7 @@ def draw_additional_samples(
     result: SMCResult,
     rng: "RandomGenerator",
     n_particles: int,
-    mutation: MutationStrategy | None = "minipcn",
+    mutation: MutationStrategy | None = "differential-evolution",
     mutation_n_steps: int = 10,
     mutation_kwargs: dict[str, Any] | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
@@ -440,7 +440,8 @@ def draw_additional_samples(
     n_particles:
         Desired total number of particles after drawing additional samples.
     mutation:
-        Mutation strategy to apply to the new particles.
+        Mutation strategy to apply to the new particles. Defaults to
+        ``"differential-evolution"``.
     mutation_n_steps:
         Number of mutation steps to apply if mutation is used.
     mutation_kwargs:

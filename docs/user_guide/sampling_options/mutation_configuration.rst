@@ -144,9 +144,17 @@ Prebuilt samplers
 -----------------
 
 :func:`~sequince.prebuilt_samplers.make_standard_bayesian_smc` accepts a method
-name from the table in ``mutation`` (default: ``"minipcn"``), a transition count in
-``mutation_n_steps`` (default: five), and constructor options in
-``mutation_kwargs``. Use ``mutation="none"`` or ``None`` to disable mutation.
+name from the table in ``mutation`` (default: ``"differential-evolution"``), a
+transition count in ``mutation_n_steps`` (default: five), and constructor
+options in ``mutation_kwargs``. Use ``mutation="none"`` or ``None`` to disable mutation.
+
+Differential evolution requires at least four particles. Its default
+``noise_scale=1e-5`` adds independent Gaussian noise in mutation coordinates.
+Install ``sequince[minipcn]`` and use ``mutation="minipcn"`` to select MiniPCN
+explicitly. The persistent SMC,
+nested-sampling SMC, standalone MCMC, and additional-posterior-sample helpers
+also default to differential evolution. Functional nested-sampling execution
+requires an explicit ``mutation="minipcn"`` or ``mutation="blackjax"``.
 
 The helper defaults to ``particle_transform="affine"``; configure it through
 ``particle_transform_kwargs`` or pass a transform object. With default ESS

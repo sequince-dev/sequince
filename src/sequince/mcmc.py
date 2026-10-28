@@ -218,14 +218,14 @@ class MarkovChainMonteCarlo:
 def make_mcmc(
     log_prob_fn: Callable[..., Array | float],
     *,
-    mutation: str | MutationStep = "minipcn",
+    mutation: str | MutationStep = "differential-evolution",
     n_steps: int = 100,
     mutation_kwargs: dict[str, Any] | None = None,
     particle_transform: ParticleTransform | None = None,
     callbacks: Sequence[Callable[..., None]] | None = None,
     checkpoint_writers: Sequence[CheckpointWriter] | None = None,
 ) -> MarkovChainMonteCarlo:
-    """Construct standalone MCMC using an existing Sequince mutation backend."""
+    """Construct standalone MCMC, defaulting to differential evolution."""
     kwargs = dict(mutation_kwargs or {})
     kwargs["store_chains"] = True
     mutation_step = get_mutation_step(

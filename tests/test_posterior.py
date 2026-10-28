@@ -838,3 +838,35 @@ def test_jitted_posterior_zero_density_endpoints():
         (1.0, [-np.inf, -2.0, -2.0]),
     ]:
         np.testing.assert_allclose(evaluate(jnp.asarray(beta)), expected)
+
+
+def test_additional_samples_default_matches_differential_evolution(
+    context_factory, standard_normal_log_prob
+) -> None:
+    from orng import RandomGenerator
+
+    particles = np.random.default_rng(12).normal(size=(16, 2))
+    posterior = TemperedPosterior(
+        log_prior=standard_normal_log_prob,
+        log_likelihood=lambda values: np.zeros(values.shape[0]),
+    )
+
+    def draw(mutation: str | None = None) -> np.ndarray:
+        kwargs = {} if mutation is None else {"mutation": mutation}
+        result = SMCResult(
+            [ParticleState(particles.copy())],
+            context_factory(metadata={"beta": 1.0}),
+        )
+        state, _ = draw_additional_samples(
+            result=result,
+            rng=RandomGenerator(seed=13),
+            n_particles=32,
+            mutation_n_steps=3,
+            posterior=posterior,
+            **kwargs,
+        )
+        return state.particles
+
+    np.testing.assert_array_equal(
+        draw(), draw(mutation="differential-evolution")
+    )

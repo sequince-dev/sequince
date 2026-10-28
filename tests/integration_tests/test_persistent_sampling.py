@@ -34,7 +34,6 @@ def test_make_persistent_bayesian_smc_reaches_gaussian_posterior(
         target_ess=target_ess,
         resample_at_end=resample_at_end,
         mutation_n_steps=3,
-        mutation_kwargs={"step_fn": "tpcn"},
     )
     initial_particles = np.random.default_rng(1234).normal(
         loc=0.0,
@@ -103,7 +102,6 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
         target_total_ess=target_total_ess,
         resample_at_end=False,
         mutation_n_steps=2,
-        mutation_kwargs={"step_fn": "tpcn"},
     )
     persist = smc._steps[0]  # noqa: SLF001
     assert isinstance(persist, PersistParticles)
@@ -200,7 +198,6 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             target_total_ess=target_total_ess,
             resample_at_end=resample_at_end,
             mutation_n_steps=2,
-            mutation_kwargs={"step_fn": "tpcn"},
             checkpoint_writers=checkpoint_writers,
             callbacks=callbacks,
         )

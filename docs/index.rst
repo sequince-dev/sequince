@@ -15,7 +15,7 @@ Install from PyPI::
     pip install sequince
 
 ``sequince`` targets Python 3.11+. Its core dependencies are installed
-automatically. The example below uses the included MiniPCN mutation backend,
+automatically. The example below uses differential-evolution mutation,
 see :doc:`installation` for all optional integrations supported.
 
 .. _quick-start:

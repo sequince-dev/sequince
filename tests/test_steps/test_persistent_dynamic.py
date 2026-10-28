@@ -298,7 +298,6 @@ def test_dynamic_gaussian_moments_evidence_and_resume(
             dynamic=True,
             target_total_ess=8 * n,
             mutation_n_steps=3,
-            mutation_kwargs={"step_fn": "tpcn"},
             logging_frequency=0,
             checkpoint_writers=writers,
             resample_at_end=False,
