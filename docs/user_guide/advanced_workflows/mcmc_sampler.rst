@@ -10,7 +10,8 @@ Creating a sampler
 ------------------
 
 Use :func:`~sequince.mcmc.make_mcmc` with a vectorised log-density. Each row of
-the particle array is an independent chain:
+the particle array is a chain. The default differential-evolution method
+updates interacting chains and requires at least four particles:
 
 .. code-block:: python
 
@@ -30,7 +31,6 @@ the particle array is an independent chain:
 
     mcmc = make_mcmc(
         log_prob,
-        mutation="minipcn",
         n_steps=1_000,
     )
     result = mcmc.run(initial_state, rng=rng)
@@ -63,8 +63,8 @@ Choosing a mutation backend
 ---------------------------
 
 ``make_mcmc`` accepts the same named mutation backends used by the standard SMC
-helper: ``"minipcn"``, ``"emcee"``, ``"blackjax"``, and
-``"metropolis-hastings"``. Backend-specific settings are passed through
+helper: ``"differential-evolution"`` (default), ``"minipcn"``, ``"emcee"``,
+``"blackjax"``, and ``"metropolis-hastings"``. Backend-specific settings are passed through
 ``mutation_kwargs``:
 
 .. code-block:: python

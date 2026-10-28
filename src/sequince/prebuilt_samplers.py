@@ -74,7 +74,7 @@ def make_standard_bayesian_smc(
     always_resample: bool | None = None,
     resample_at_end: bool = True,
     resampling_kwargs: Dict[str, Any] | None = None,
-    mutation: MutationStrategy | SMCStep = "minipcn",
+    mutation: MutationStrategy | SMCStep = "differential-evolution",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
     always_mutate: bool | None = None,
@@ -141,8 +141,8 @@ def make_standard_bayesian_smc(
         Extra keyword arguments forwarded to the resampling step constructor.
     mutation : str or SMCStep, optional
         Mutation strategy to use. Accepts ``"blackjax"``, ``"emcee"``, ``"eryn"``,
-        ``"metropolis-hastings"``, ``"minipcn"`` (default), ``"none"``, or a
-        pre-built ``SMCStep`` instance.
+        ``"differential-evolution"`` (default), ``"metropolis-hastings"``,
+        ``"minipcn"``, ``"none"``, or a pre-built ``SMCStep`` instance.
     mutation_n_steps : int, optional
         Number of mutation steps to run per iteration.
     mutation_kwargs : dict[str, Any] or None, optional
@@ -328,7 +328,7 @@ def make_persistent_bayesian_smc(
     resampling: ResamplingStrategy | ResamplingStep = "systematic",
     resample_at_end: bool = True,
     resampling_kwargs: Dict[str, Any] | None = None,
-    mutation: MutationStrategy | SMCStep = "minipcn",
+    mutation: MutationStrategy | SMCStep = "differential-evolution",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
@@ -342,6 +342,9 @@ def make_persistent_bayesian_smc(
     checkpoint_writers: Sequence[CheckpointWriter] | None = None,
 ) -> tuple[SequentialMonteCarlo, TemperedPosterior, MetaData]:
     """Return an SMC runner configured for persistent sampling.
+
+    Mutation defaults to differential evolution; other mutation options follow
+    :func:`make_standard_bayesian_smc`.
 
     ``n_particles`` is the active population size drawn from the complete
     persistent archive on every iteration. ``target_ess`` defaults to twice
@@ -561,7 +564,7 @@ def make_nested_sampling_smc(
     resampling_ess_threshold: float | None = None,
     always_resample: bool = True,
     resampling_kwargs: Dict[str, Any] | None = None,
-    mutation: MutationStrategy | SMCStep | None = "minipcn",
+    mutation: MutationStrategy | SMCStep | None = "differential-evolution",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
@@ -632,7 +635,9 @@ def make_nested_sampling_smc(
 
     Functional execution requires JAX arrays, unconditional resampling with
     unchanged population size, logging_frequency=0, and traceable mutation
-    (BlackJAX or MiniPCN). Use callbacks for host-side logging. Initialize with
+    (BlackJAX or MiniPCN). Select one explicitly with ``mutation``; the default
+    differential-evolution mutation is not supported for functional nested
+    sampling. Use callbacks for host-side logging. Initialize with
     run_functional or initialize_functional before compiling iterations.
     Compiled schedules must use backend operations and return a scalar array;
     positive infinity finalizes the live tail. Python StopIteration is supported

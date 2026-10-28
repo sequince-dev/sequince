@@ -13,6 +13,7 @@ from sequince import (
 from sequince.checkpoint import HDF5CheckpointWriter, SMCCheckpoint
 from sequince.steps.mutation import (
     CallableMutationKernel,
+    DifferentialEvolutionMutation,
     MetropolisHastingsMutation,
     MutationStep,
     get_mutation_step,
@@ -131,3 +132,20 @@ def test_direct_mutation_step_is_configured_to_store_chains(
 
     assert mutation.store_chains
     assert result.chain.shape == (2, len(simple_particles), 2)
+
+
+def test_default_mcmc_matches_explicit_differential_evolution(
+    simple_particles, standard_normal_log_prob
+) -> None:
+    state = ParticleState(simple_particles)
+    default = make_mcmc(standard_normal_log_prob, n_steps=3)
+    explicit = make_mcmc(
+        standard_normal_log_prob,
+        mutation="differential-evolution",
+        n_steps=3,
+    )
+    assert isinstance(default.mutation, DifferentialEvolutionMutation)
+    actual = default.run(state, rng=321)
+    expected = explicit.run(state, rng=321)
+    assert actual.chain.shape == (3, len(simple_particles), 2)
+    np.testing.assert_array_equal(actual.chain, expected.chain)

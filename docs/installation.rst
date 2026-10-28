@@ -9,7 +9,7 @@ Installation
 
 The core installation includes NumPy, SciPy, MiniPCN, and the Array API
 compatibility packages. It supports NumPy-based sampling with the default
-MiniPCN mutation backend.
+differential-evolution mutation method.
 
 Optional integrations
 ---------------------
@@ -39,7 +39,7 @@ Install extras for the integrations you need, for example:
      - Corner plots
 
 For example, install ``sequince[emcee]`` to select emcee mutation instead of
-the default MiniPCN backend. See
+the default differential-evolution method. See
 :doc:`user_guide/sampling_options/mutation_configuration` for mutation-specific
 requirements.
 

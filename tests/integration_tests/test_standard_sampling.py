@@ -21,7 +21,6 @@ def test_standard_sampler_reaches_gaussian_posterior(
         gaussian_log_prior,
         gaussian_log_likelihood,
         mutation_n_steps=3,
-        mutation_kwargs={"step_fn": "tpcn"},
         logging_frequency=0,
     )
     initial_particles = np.random.default_rng(1234).normal(
