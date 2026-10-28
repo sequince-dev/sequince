@@ -109,7 +109,7 @@ Generative AI tools, including OpenAI Codex and GitHub Copilot, were used to ass
 
 # Acknowledgements
 
-M.J.W. acknowledges support from Max-Planck-Gesellschaft, the UKSA's LISA Ground Segment (UKRI968) and Science and Technology Facilities Council (STFC) grant UKRI2490
+M.J.W. acknowledges partial support from the UKSA's LISA Ground Segment (UKRI968) and Science and Technology Facilities Council (STFC) grant UKRI2490
 C.E.A.C-B. is supported by UKSA Space Agency grant UKRI971.
 
 Numerical computations were carried out on the SCIAMA high-performance
