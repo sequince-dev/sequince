@@ -19,7 +19,7 @@ affiliations:
   index: 2
 - name: Institute for Gravitational Wave Astronomy, University of Birmingham, United Kingdom
   index: 3
-date: 15 October 2026
+date: '\today'
 bibliography: paper.bib
 ---
 
@@ -79,7 +79,7 @@ methodological research and problem-specific inference workflows. Current
 applications include customised sampling strategies for astrophysical inference
 problems relevant to ongoing LIGO-Virgo-KAGRA analyses and future observations
 with the Laser Interferometer Space Antenna (LISA) [@williams2026inprep], as well as integration with
-broader Bayesian inference ecosystems such as `bilby` \[@ashton2019bilby,@bilby\] via `sequince-bilby` [@sequince_bilby]. The
+broader Bayesian inference ecosystems such as `bilby` [@ashton2019bilby; @bilby] via `sequince-bilby` [@sequince_bilby]. The
 same methodology is also relevant to future ground-based observatories such as
 the Einstein Telescope (ET) and Cosmic Explorer (CE).
 
@@ -97,8 +97,8 @@ dependencies in the core library. For example, `sequince-density` [@sequince_den
 density-estimation components based on Gaussian mixture models and normalizing
 flows. These can be combined with the core SMC machinery for learned
 preconditioning, proposal construction, and other density-assisted SMC methods,
-including approaches related to `pocomc` and `aspire` \[@karamanis2025persistent;
-@williams2026accelerated\]. The wider sequince ecosystem also includes
+including approaches related to `pocomc` and `aspire` [@karamanis2025persistent;
+@williams2026accelerated]. The wider sequince ecosystem also includes
 `sequince-examples`, which provides runnable examples demonstrating common
 workflows and more specialised uses of the package [@sequince_examples], with
 [online documentation](https://sequince.readthedocs.io/projects/sequince-examples/en/latest/).
@@ -109,8 +109,8 @@ Generative AI tools, including OpenAI Codex and GitHub Copilot, were used to ass
 
 # Acknowledgements
 
-M.J.W. acknowledges support from Max-Planck-Gesellschaft, ST/X002225/1, ST/Y004876/1, and the University
-of Portsmouth. C.E.A.C-B. is supported by UKSA Space Agency grant UKRI971.
+M.J.W. acknowledges support from Max-Planck-Gesellschaft, the UKSA's LISA Ground Segment (UKRI968) and Science and Technology Facilities Council (STFC) grant UKRI2490
+C.E.A.C-B. is supported by UKSA Space Agency grant UKRI971.
 
 Numerical computations were carried out on the SCIAMA high-performance
 computing cluster, which is supported by the Institute of Cosmology and
