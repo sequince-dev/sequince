@@ -77,6 +77,7 @@ def make_standard_bayesian_smc(
     mutation: MutationStrategy | SMCStep = "differential-evolution",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
+    adaptive_mutation: Mapping[str, object] | None = None,
     always_mutate: bool | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
     particle_transform_kwargs: Dict[str, Any] | None = None,
@@ -152,6 +153,9 @@ def make_standard_bayesian_smc(
         weighted move configuration, or the ``"bilby-de"`` preset.
         For ``"blackjax"``, use ``algorithm`` and ``algorithm_kwargs`` to
         configure the JAX mutation kernel.
+    adaptive_mutation : Mapping[str, object] or None, optional
+        Acceptance-based budget configuration; see the user guide. Defaults
+        to disabled. Uses ``mutation_n_steps`` as the initial total budget.
     always_mutate : bool or None, optional
         Force mutation at every iteration regardless of resampling. If set to
         ``None``, defaults to ``True`` if ``always_resample=True`` and ``False``
@@ -276,6 +280,7 @@ def make_standard_bayesian_smc(
         target=posterior,
         transform=particle_transform,
         mutation_n_steps=mutation_n_steps,
+        adaptive_mutation=adaptive_mutation,
         mutation_kwargs=mutation_kwargs,
     )
 
@@ -331,6 +336,7 @@ def make_persistent_bayesian_smc(
     mutation: MutationStrategy | SMCStep = "differential-evolution",
     mutation_n_steps: int = 5,
     mutation_kwargs: Dict[str, Any] | None = None,
+    adaptive_mutation: Mapping[str, object] | None = None,
     particle_transform: ParticleTransform | str | None = "affine",
     particle_transform_kwargs: Dict[str, Any] | None = None,
     auto_normalize: bool = True,
@@ -379,6 +385,10 @@ def make_persistent_bayesian_smc(
     Progress is logged every
     ``logging_frequency`` iterations and once more for the terminal
     state. Set ``logging_frequency=0`` to disable it.
+
+    ``adaptive_mutation`` optionally configures acceptance-based budgets for
+    named miniPCN or differential-evolution mutation, starting at
+    ``mutation_n_steps``. See the user guide for options and lagged behavior.
 
     For more details see https://arxiv.org/abs/2407.20722.
     """
@@ -476,6 +486,7 @@ def make_persistent_bayesian_smc(
         target=posterior,
         transform=particle_transform,
         mutation_n_steps=mutation_n_steps,
+        adaptive_mutation=adaptive_mutation,
         mutation_kwargs=mutation_kwargs,
     )
 

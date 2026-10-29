@@ -161,9 +161,11 @@ def test_runner_accumulates_posterior_batches_until_target_total_ess(
 
 
 @pytest.mark.parametrize("resample_at_end", [False, True])
+@pytest.mark.parametrize("adaptive_mutation", [None, {"max_steps": 8}])
 def test_persistent_checkpoint_resume_matches_uninterrupted_run(
     tmp_path,
     resample_at_end: bool,
+    adaptive_mutation,
 ) -> None:
     n_particles = 32
     target_ess = 2 * n_particles
@@ -198,6 +200,7 @@ def test_persistent_checkpoint_resume_matches_uninterrupted_run(
             target_total_ess=target_total_ess,
             resample_at_end=resample_at_end,
             mutation_n_steps=2,
+            adaptive_mutation=adaptive_mutation,
             checkpoint_writers=checkpoint_writers,
             callbacks=callbacks,
         )

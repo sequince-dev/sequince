@@ -650,3 +650,64 @@ def test_prebuilt_mutation_default_and_explicit_minipcn(
         DifferentialEvolutionMutation if mutation is None else MiniPCNMutation
     )
     assert any(isinstance(step, expected) for step in sampler.config.steps)
+
+
+@pytest.mark.parametrize(
+    "factory", [make_standard_bayesian_smc, make_persistent_bayesian_smc]
+)
+@pytest.mark.parametrize("name", ["minipcn", "differential-evolution"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_prebuilt_acceptance_adaptation(factory, name, enabled) -> None:
+    from sequince.steps.mutation.adaptive.steps import AdaptMutationSteps
+
+    smc, _, _ = factory(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        mutation=name,
+        mutation_n_steps=2,
+        adaptive_mutation={"enabled": enabled, "max_steps": 4},
+        logging_frequency=0,
+    )
+    mutation = smc._steps[-1]  # noqa: SLF001
+    assert isinstance(mutation, AdaptMutationSteps) == enabled
+
+
+@pytest.mark.parametrize("mutation", ["minipcn", "differential-evolution"])
+def test_standard_adaptive_checkpoint_resume(tmp_path, mutation) -> None:
+    from sequince.checkpoint import PickleCheckpointWriter, SMCCheckpoint
+
+    def make_sampler(writers=()):
+        return make_standard_bayesian_smc(
+            _quadratic_log_prior,
+            _zero_log_likelihood,
+            max_delta=0.25,
+            mutation=mutation,
+            mutation_n_steps=2,
+            weighting_criterion="cess",
+            always_mutate=False,
+            resampling_ess_threshold=1.1,
+            adaptive_mutation={"min_steps": 1, "max_steps": 8},
+            checkpoint_writers=writers,
+            logging_frequency=0,
+        )
+
+    initial = ParticleState(np.linspace(-2, 2, 16)[:, None])
+    reference_sampler, _, metadata = make_sampler()
+    reference = reference_sampler.run(
+        initial.copy(), rng=123, metadata=metadata
+    )
+    path = tmp_path / "adaptive.pkl"
+    sampler, _, metadata = make_sampler(
+        [PickleCheckpointWriter(path, every=1)]
+    )
+    sampler.run(initial.copy(), num_steps=2, rng=123, metadata=metadata)
+    restored, _, _ = make_sampler()
+    result = restored.run(
+        runtime=restored.resume_from(SMCCheckpoint.load_pickle(path))
+    )
+    np.testing.assert_array_equal(
+        result.final_state.particles, reference.final_state.particles
+    )
+    np.testing.assert_array_equal(
+        result.final_state.log_weights, reference.final_state.log_weights
+    )
