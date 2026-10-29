@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from ..base import FixedLengthMutation, SMCStep, validate_n_steps
 from ..context import StepContext
@@ -76,3 +77,18 @@ class MutateIfResampled(SMCStep):
             state, context, rng, n_steps=n_steps
         )
         return updated, context, ConditionalStepOutput(True, output)
+
+    def state_dict(self) -> dict[str, Any]:
+        """Preserve the child mutation's adaptive and proposal state."""
+        return {"mutation": self.mutation.state_dict()}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore nested state, accepting older empty wrapper checkpoints."""
+        if "mutation" not in state:
+            return
+        nested = state["mutation"]
+        if not isinstance(nested, Mapping):
+            raise TypeError(
+                "MutateIfResampled state 'mutation' must be a mapping."
+            )
+        self.mutation.load_state_dict(nested)
