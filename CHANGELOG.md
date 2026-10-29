@@ -22,16 +22,11 @@ First stable release. Changes below are relative to 0.1.0b1.
 ### Changed
 
 - Add Gaussian noise to differential evolution proposals (`noise_scale=1e-5` in
-  mutation coordinates) to escape collapsed ensembles. Scalar and per-coordinate
-  scales are supported. This changes seeded trajectories and RNG consumption;
-  set `noise_scale=0` to retain noise-free proposals and their previous RNG
-  consumption. ([#135](https://github.com/sequince-dev/sequince/pull/135))
-- Default prebuilt standard, persistent, and nested SMC samplers, standalone
-  MCMC, and additional posterior draws to differential evolution instead of
-  MiniPCN. Explicitly select MiniPCN to retain the previous mutation method.
+  mutation coordinates) to escape collapsed ensembles.
+  ([#135](https://github.com/sequince-dev/sequince/pull/135))
+- Make MiniPCN optional.
   ([#142](https://github.com/sequince-dev/sequince/pull/142))
-- Make MiniPCN optional; install `sequince[minipcn]` to use MiniPCN mutation or
-  adaptive MiniPCN wrappers.
+- Default all sampling helpers to differential evolution.
   ([#142](https://github.com/sequince-dev/sequince/pull/142))
 
 ## [0.1.0b1] - 2026-10-23
