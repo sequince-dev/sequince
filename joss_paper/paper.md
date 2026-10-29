@@ -21,6 +21,8 @@ affiliations:
   index: 3
 date: '\today'
 bibliography: paper.bib
+abstract: |
+  Sequential Monte Carlo (SMC) methods approximate sequences of probability distributions using populations of weighted samples and are widely applicable, including in Bayesian inference and particle filtering. We present sequince, a modular Python toolkit for constructing SMC algorithms from reusable and extensible components. The toolkit provides modular steps for weighting, resampling, mutation, transformation, and control operations that are composed to implement different algorithms. It also includes prebuilt samplers for tempered SMC, persistent sampling and nested sampling via SMC. Its core components follow the Python Array API standard, supporting NumPy, JAX, PyTorch, and CuPy, enabling analyses on CPUs or GPUs. Random-number control and checkpointing support reproducible scientific workflows. This paper describes sequince v0.1.0 and its design as reusable infrastructure for methodological research and application of SMC methods.
 ---
 
 # Summary
