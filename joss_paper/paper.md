@@ -30,14 +30,14 @@ abstract: |
 Sequential Monte Carlo (SMC) methods are a flexible family of algorithms for
 approximating sequences of probability distributions using a population of weighted samples, known as particles
 [@delmoral2006smc; @chopin2020introduction].
-Such sequences arise naturally in applications including Bayesian inference,
+Such sequences arise naturally in applications including Bayesian inference
 and particle filtering, for example through likelihood tempering or observations arriving over time.
 
 `sequince` [@sequince] is a Python toolkit for constructing SMC methods from reusable and extensible
 components. This paper describes `sequince` v0.1.0.
 The toolkit provides abstractions for defining sequences of target
 distributions and for composing the operations used to evolve a particle population between them.
-These include weighting, resampling, mutation, transformation, and control steps.
+These include weighting, resampling, mutation, and control steps.
 It is designed for researchers developing new SMC methods or adapting existing methods to scientific applications, including astrophysical inference, with checkpointing to support long-running analyses. Its core components follow the Python Array API standard, supporting NumPy, JAX, PyTorch, and CuPy arrays and enabling compatible workflows to run on CPUs or GPUs.
 
 # Statement of need
@@ -54,7 +54,7 @@ The Python ecosystem already contains several useful SMC-related tools. The `par
 
 Broader Bayesian software ecosystems also expose SMC functionality. `PyMC` includes a sequential Monte Carlo sampler within a general probabilistic programming framework [@abrilpla2023pymc], while `BlackJAX` provides composable inference components in the JAX ecosystem and includes SMC methods alongside other Monte Carlo algorithms [@cabezas2024blackjax]. Recent domain-specific frameworks such as SHARPy target gravitational-wave inference with JAX-accelerated SMC and gradient-based mutation kernels [@demasi2026sharpy].
 
-`sequince` combines support for multiple SMC variants, including tempering, persistent sampling [@karamanis2025persistent], nested sampling via SMC (NS-SMC) [@salomone2025unbiased], and waste-free SMC [@dau2022wastefree], with a modular architecture for constructing bespoke algorithms. Shared interfaces allow users to reconfigure target sequences, transformations, mutation kernels, and control flow, supporting both the comparison of existing methods and the development of new variants. Support for multiple array backends and integrations with different sampling ecosystems further enable these components to be reused across scientific applications and numerical libraries. This combination makes `sequince` useful as research infrastructure for methodological work and as a foundation for application-specific downstream packages.
+`sequince` combines support for multiple SMC variants, including tempering, persistent sampling [@karamanis2025persistent], nested sampling via SMC (NS-SMC) [@salomone2025unbiased], and waste-free SMC [@dau2022wastefree], with a modular architecture for constructing bespoke algorithms. Shared interfaces allow users to reconfigure target sequences, transformations, mutation kernels, and control flow, supporting both the comparison of existing methods and the development of new variants. Support for multiple array backends and integrations with different sampling ecosystems further enable these components to be reused across scientific applications and numerical libraries. The need to combine configurable target sequences, independently reusable steps, and multiple array backends within one framework motivated this design. This combination makes `sequince` useful as research infrastructure for methodological work and as a foundation for application-specific downstream packages.
 
 # Software design
 
@@ -70,7 +70,7 @@ A `SequentialMonteCarlo` runner repeatedly applies the configured steps. The run
 
 Each step can return structured outputs containing quantities such as effective sample sizes, tempering parameters, acceptance statistics, and other diagnostics. These outputs and the recorded particle states are collected in an `SMCResult` for subsequent analysis. New components can therefore introduce diagnostics without requiring changes to the runner or coupling their implementation to plotting and logging code. Callbacks provide logging, plotting, and other monitoring functionality during execution.
 
-The core abstractions follow the Python Array API standard where possible [@python_array_api], allowing backend-native arrays to pass through the SMC procedure. Random number generation is similarly abstracted through `orng` [@orng]. This design supports reuse across numerical libraries while allowing specialised components to depend on a particular ecosystem. Alongside conventional eager execution, `sequince` provides a functional execution path that passes random state explicitly between steps. Compatible iterations can be compiled using facilities such as `jax.jit`, while the runner manages observations, callbacks, and result recording. Mutation integrations include ecosystem-specific packages such as `BlackJAX` [@cabezas2024blackjax].
+The core abstractions follow the Python Array API standard where possible [@python_array_api], allowing backend-native arrays to pass through the SMC procedure. Random number generation is similarly abstracted through `orng` [@orng]. This design supports reuse across numerical libraries while allowing specialised components to depend on a particular ecosystem. Alongside conventional eager execution, `sequince` provides a functional execution path that passes random state explicitly between steps. Compatible iterations can be compiled using facilities such as `jax.jit`, provided their operations are traceable and their state structures, shapes, and dtypes remain stable, while the runner manages observations, callbacks, and result recording. Mutation integrations include ecosystem-specific packages such as `BlackJAX` [@cabezas2024blackjax].
 
 Checkpointing is separate from result recording. Checkpoints capture the particle state, runtime progress, random-number state, and mutable step state needed to continue sampling with a reconstructed sampler configuration. Results provide the analysis record of a completed or partially completed run. Both support HDF5 storage, making numerical data and supported metadata available for inspection independently of the running process.
 
@@ -107,12 +107,12 @@ workflows and more specialised uses of the package [@sequince_examples], with
 
 # AI usage disclosure
 
-Generative AI tools, including OpenAI Codex and GitHub Copilot, were used to assist with code implementation and refactoring. ChatGPT was also used to assist with the organisation and editing of the manuscript. The authors made the core scientific and software design decisions and reviewed, edited, and validated all AI-assisted contributions. The authors retain full responsibility for the software and manuscript.
+Generative AI tools, including OpenAI Codex, were used to assist with code implementation and refactoring. ChatGPT was also used to assist with the organisation and editing of the manuscript. Models varied over the course of development and included GPT-5.3, GPT-5.4, GPT-5.6, GPT-6.0, and GPT-6.1; a complete historical record of model versions was not retained. The authors made the core scientific and software design decisions and reviewed, edited, and validated all AI-assisted contributions. The authors retain full responsibility for the software and manuscript.
 
 # Acknowledgements
 
-M.J.W. acknowledges partial support from the UKSA's LISA Ground Segment (UKRI968) and Science and Technology Facilities Council (STFC) grant UKRI2490
-C.E.A.C-B. is supported by UKSA Space Agency grant UKRI971.
+M.J.W. acknowledges partial support from the UKSA's LISA Ground Segment (UKRI968) and Science and Technology Facilities Council (STFC) grant UKRI2490.
+C.E.A.C-B. is supported by UKSA grant UKRI971.
 
 Numerical computations were carried out on the SCIAMA high-performance
 computing cluster, which is supported by the Institute of Cosmology and
