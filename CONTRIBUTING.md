@@ -296,7 +296,7 @@ should also follow this format and describe the final change.
 ## Pull requests and review
 
 For each pull request with user-visible changes, update
-[CHANGELOG.md](CHANGELOG.md) under `Unreleased` in the same pull request. Follow
+[CHANGELOG.md][changelog] under `Unreleased` in the same pull request. Follow
 the entry categories and guidance in the releases section below.
 
 Push your branch and open a pull request targeting `sequince-dev/sequince:main`:
@@ -323,7 +323,7 @@ needed.
 
 ## Releases
 
-Maintain [CHANGELOG.md](CHANGELOG.md) using
+Maintain [CHANGELOG.md][changelog] using
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Add user-visible changes
 under `Unreleased`, grouped as `Added`, `Changed`, `Deprecated`, `Removed`,
 `Fixed`, or `Security`; omit empty groups. Describe the effect on users,
@@ -349,3 +349,5 @@ built distribution in a clean environment. Publishing a GitHub release triggers
 the PyPI workflow in `.github/workflows/publish.yml`. Check that the workflow
 completes successfully. Published distributions cannot be overwritten, so verify
 the tag and artifacts before publishing.
+
+[changelog]: https://github.com/sequince-dev/sequince/blob/main/CHANGELOG.md

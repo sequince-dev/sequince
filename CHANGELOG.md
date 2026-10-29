@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Software archive DOIs and algorithm references for SMC variants and flow
+  preconditioning.
 - Documentation sidebar links to sequince-density and sequince-examples under
   Related Packages.
 
