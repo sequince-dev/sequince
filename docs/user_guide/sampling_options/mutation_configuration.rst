@@ -166,3 +166,42 @@ You can also pass a configured step as ``mutation``. Set its target, transform,
 and options directly: the helper does not apply ``mutation_n_steps`` or
 ``mutation_kwargs`` to it. See :doc:`../running_inference/smc_configuration` for custom pipelines
 and the API links above for method-specific options and outputs.
+
+
+Acceptance-based mutation budgets
+---------------------------------
+
+Both ``make_standard_bayesian_smc`` and ``make_persistent_bayesian_smc``, and
+``get_mutation_step``, accept ``adaptive_mutation`` for named ``"minipcn"`` or
+``"differential-evolution"`` mutation::
+
+    mutation_n_steps=100,
+    adaptive_mutation={
+        "enabled": True,
+        "min_steps": 50,
+        "max_steps": 1000,
+        "target_accepted_moves": 5.0,
+    }
+
+Omitting the mapping or setting ``enabled=False`` preserves fixed budgets.
+Within a supplied mapping, defaults are ``enabled=True``, ``min_steps=0``,
+``max_steps=1000``, and ``target_accepted_moves=5.0``. Bounds must be nonnegative
+integers with minimum no greater than maximum; the initial ``mutation_n_steps``
+must lie within them when enabled. The target must be finite and positive.
+Unknown options and unsupported mutation combinations are rejected. Supplied
+option types and bounds are validated even when disabled.
+
+The factory wraps the mutation directly in ``AdaptMutationSteps`` with
+``AcceptanceRatePolicy``. Each total budget is frozen before its mutation block.
+Completed acceptance counts select the next iteration's budget as the ceiling of
+``target_accepted_moves / max(acceptance_rate, 1e-6)``, clipped to the bounds.
+A block without attempts retains its budget (or tries one step, within bounds).
+Conditional mutation that is skipped supplies no new acceptance measurement.
+This lagged adaptation does not alter proposal parameters or stop a block early.
+Targeting accepted moves does not guarantee independent samples.
+
+Existing mutation outputs retain completed metrics, including executed step
+counts. Checkpoints preserve the current and next budgets and nested mutation
+state; resume with the same mutation configuration and bounds. Enabling this
+option changes mutation work and RNG consumption, but uses the existing RNG
+interfaces and leaves target, weighting, and evidence formulas unchanged.

@@ -227,3 +227,75 @@ def test_factory_does_not_expose_proposal_rejuvenation(
             "proposal",
             standard_normal_posterior,
         )
+
+
+@pytest.mark.parametrize("name", ["minipcn", "differential-evolution"])
+def test_factory_adapts_completed_budget(
+    name, standard_normal_posterior, particle_state, context_factory, rng
+) -> None:
+    from sequince.steps.mutation.adaptive.steps import AdaptMutationSteps
+
+    step = get_mutation_step(
+        name,
+        standard_normal_posterior,
+        mutation_n_steps=2,
+        adaptive_mutation={
+            "min_steps": 1,
+            "max_steps": 4,
+            "target_accepted_moves": 100.0,
+        },
+    )
+    assert isinstance(step, AdaptMutationSteps)
+    state, _, output = step(particle_state, context_factory(t=0), rng)
+    assert output["metrics"].n_steps == 2
+    assert step.next_n_steps == 4
+    _, _, output = step(state, context_factory(t=1), rng)
+    assert output["metrics"].n_steps == 4
+
+
+@pytest.mark.parametrize(
+    "config,error,message",
+    [
+        (True, TypeError, "mapping"),
+        ({"rho": 0.5}, ValueError, "Unknown"),
+        ({"enabled": 1}, TypeError, "boolean"),
+        ({"min_steps": True}, TypeError, "integer"),
+        ({"max_steps": 2.5}, TypeError, "integer"),
+        ({"min_steps": -1}, ValueError, ">= 0"),
+        ({"min_steps": 5, "max_steps": 2}, ValueError, ">= min_steps"),
+        ({"target_accepted_moves": "5"}, TypeError, "real number"),
+        ({"target_accepted_moves": False}, TypeError, "real number"),
+        ({"target_accepted_moves": float("nan")}, ValueError, "finite"),
+        ({"target_accepted_moves": 0}, ValueError, "positive"),
+        ({"min_steps": 20}, ValueError, "mutation_n_steps"),
+        ({"enabled": False, "max_steps": -1}, ValueError, ">= 0"),
+    ],
+)
+def test_factory_invalid_adaptation(
+    config, error, message, standard_normal_posterior
+) -> None:
+    with pytest.raises(error, match=message):
+        get_mutation_step(
+            "minipcn", standard_normal_posterior, adaptive_mutation=config
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "none", "emcee", "red-blue", IdentityMutation()]
+)
+def test_factory_unsupported_adaptation(mutation, standard_normal_posterior):
+    with pytest.raises(ValueError, match="requires named"):
+        get_mutation_step(
+            mutation,
+            standard_normal_posterior,
+            adaptive_mutation={"enabled": True},
+        )
+
+
+@pytest.mark.parametrize("name", ["minipcn", "differential-evolution", "none"])
+def test_factory_disabled_adaptation(name, standard_normal_posterior) -> None:
+    plain = get_mutation_step(name, standard_normal_posterior)
+    disabled = get_mutation_step(
+        name, standard_normal_posterior, adaptive_mutation={"enabled": False}
+    )
+    assert type(disabled) is type(plain)
