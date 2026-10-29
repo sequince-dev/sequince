@@ -6,19 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-29
+
+First stable release. Changes below are relative to 0.1.0b1.
+
 ### Added
 
+- JOSS paper draft for arXiv describing Sequince v0.1.0 and its design.
+  ([#46](https://github.com/sequince-dev/sequince/pull/46))
 - Software archive DOIs and algorithm references for SMC variants and flow
-  preconditioning.
+  preconditioning. ([#143](https://github.com/sequince-dev/sequince/pull/143))
 - Documentation sidebar links to sequince-density and sequince-examples under
-  Related Packages.
+  Related Packages. ([#140](https://github.com/sequince-dev/sequince/pull/140))
 
 ### Changed
 
 - Add Gaussian noise to differential evolution proposals (`noise_scale=1e-5` in
   mutation coordinates) to escape collapsed ensembles.
+  ([#135](https://github.com/sequince-dev/sequince/pull/135))
 - Make MiniPCN optional.
+  ([#142](https://github.com/sequince-dev/sequince/pull/142))
 - Default all sampling helpers to differential evolution.
+  ([#142](https://github.com/sequince-dev/sequince/pull/142))
 
 ## [0.1.0b1] - 2026-10-23
 
@@ -34,5 +43,6 @@ First public beta release.
 - Posterior sampling, evidence estimates, and diagnostics.
 - Checkpoint saving and resuming.
 
-[Unreleased]: https://github.com/sequince-dev/sequince/compare/v0.1.0b1...HEAD
+[Unreleased]: https://github.com/sequince-dev/sequince/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/sequince-dev/sequince/compare/v0.1.0b1...v0.1.0
 [0.1.0b1]: https://github.com/sequince-dev/sequince/releases/tag/v0.1.0b1
