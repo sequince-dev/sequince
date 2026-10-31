@@ -57,6 +57,29 @@ def test_make_standard_bayesian_smc_builds_default_steps() -> None:
     assert isinstance(steps[3], LoggingStep)
 
 
+def test_standard_smc_accepts_independent_beta_tolerance(
+    rng: RandomGenerator,
+) -> None:
+    smc, _, metadata = make_standard_bayesian_smc(
+        lambda x: np.zeros(x.shape[0]),
+        lambda x: x[:, 0] * np.log(4.0),
+        target_ess_ratio=49 / 74,
+        min_delta=0.1,
+        weighting_kwargs={"beta_tolerance": 1e-12, "max_bisection_iter": 60},
+        mutation="none",
+    )
+    state = ParticleState(
+        np.array([[0.0], [1.0]]), log_weights=np.log([0.25, 0.75])
+    )
+    result = smc.run(state, num_steps=1, rng=rng, metadata=metadata)
+    assert float(result.context.metadata["beta"]) == pytest.approx(
+        0.5, abs=1e-11
+    )
+    assert result.final_state.log_evidence == pytest.approx(
+        np.log(7 / 4), abs=1e-11
+    )
+
+
 def test_make_standard_bayesian_smc_reaches_max_beta(rng) -> None:
     max_beta = 0.5
     smc, _, metadata = make_standard_bayesian_smc(

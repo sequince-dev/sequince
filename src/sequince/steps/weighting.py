@@ -783,6 +783,10 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
     max_bisection_iter:
         The maximum number of bisection iterations to perform when finding
         the beta increment.
+    beta_tolerance : float or None, optional
+        Stop bisection when the beta bracket is no wider than this finite,
+        positive value. Defaults to ``min_delta`` when None, preserving the
+        existing search behavior. Does not change the minimum beta increment.
     criterion:
         Criterion used when selecting the beta increment. ``"ess"``
         targets the ESS ratio after weighting. ``"cess"`` targets the
@@ -805,6 +809,7 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         max_delta: float | None = None,
         normalize_after: bool = True,
         max_bisection_iter: int = 30,
+        beta_tolerance: float | None = None,
         criterion: Literal["ess", "cess"] = "ess",
         refresh_components: Collection[str] = (),
     ):
@@ -816,6 +821,10 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             raise ValueError("max_beta must be positive.")
         if min_delta < 0.0:
             raise ValueError("min_delta must be non-negative.")
+        if beta_tolerance is not None and (
+            not math.isfinite(beta_tolerance) or beta_tolerance <= 0.0
+        ):
+            raise ValueError("beta_tolerance must be finite and positive.")
         if max_delta is not None and max_delta <= 0.0:
             raise ValueError("max_delta must be positive.")
         if max_delta is not None and max_delta < min_delta:
@@ -834,6 +843,9 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
         self._target_ess_ratio = target_ess_ratio
         self._max_beta = max_beta
         self._min_delta = min_delta
+        self._beta_tolerance = (
+            min_delta if beta_tolerance is None else beta_tolerance
+        )
         self._max_delta = max_delta
         self._max_bisection_iter = max_bisection_iter
         self._criterion = criterion
@@ -1126,7 +1138,9 @@ class AdaptiveTemperedWeighting(BaseTemperedStep):
             low,
             high,
             target_ess_ratio,
-            tolerance=min_delta,
+            tolerance=asarray(
+                self._beta_tolerance, xp=xp, like=base_log_weights
+            ),
             max_iterations=self._max_bisection_iter,
         )
 

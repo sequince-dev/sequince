@@ -564,7 +564,8 @@ def test_adaptive_tempering_solves_known_two_particle_target(
         lambda x: np.array([0.0, np.log(4.0)]),
         criterion=criterion,
         target_ess_ratio=target_ratio,
-        min_delta=1e-10,
+        min_delta=0.1,
+        beta_tolerance=1e-10,
         max_bisection_iter=60,
     )
 
@@ -576,6 +577,41 @@ def test_adaptive_tempering_solves_known_two_particle_target(
     assert float(output["ess_ratio"]) == pytest.approx(49 / 74)
     assert float(output["cess_ratio"]) == pytest.approx(49 / 52)
     assert not context.stop_requested
+
+
+@pytest.mark.parametrize("tolerance", [0.0, -1.0, np.nan, np.inf, -np.inf])
+def test_adaptive_tempering_rejects_invalid_beta_tolerance(
+    tolerance: float,
+) -> None:
+    with pytest.raises(
+        ValueError, match="beta_tolerance.*finite and positive"
+    ):
+        AdaptiveTemperedWeighting(lambda x: x[:, 0], beta_tolerance=tolerance)
+
+
+@pytest.mark.parametrize("min_delta", [0.1, 0.7])
+def test_beta_tolerance_preserves_minimum_increment_and_default(
+    min_delta: float, rng: RandomGenerator
+) -> None:
+    state = ParticleState(
+        np.array([[0.0], [1.0]]), log_weights=np.log([0.25, 0.75])
+    )
+
+    def run(tolerance: float | None) -> float:
+        step = AdaptiveTemperedWeighting(
+            lambda x: np.array([0.0, np.log(4.0)]),
+            target_ess_ratio=49 / 74,
+            min_delta=min_delta,
+            beta_tolerance=tolerance,
+            max_bisection_iter=60,
+        )
+        _, _, output = step(state, StepContext(t=0), rng)
+        return float(output["delta_beta"])
+
+    assert run(None) == run(min_delta)
+    assert run(1e-12) == pytest.approx(max(0.5, min_delta), abs=1e-11)
+    if min_delta == 0.1:
+        assert abs(run(None) - 0.5) == pytest.approx(0.03125)
 
 
 def test_adaptive_endpoint_skips_bisection(monkeypatch) -> None:
