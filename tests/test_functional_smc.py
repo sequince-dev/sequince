@@ -788,6 +788,7 @@ def test_adaptive_tempering_functional_step_can_be_jitted(
         target_ess_ratio=0.8,
         max_beta=0.6,
         min_delta=1e-6,
+        beta_tolerance=1e-8,
         criterion=criterion,
     )
     state = ParticleState(jnp.zeros((4, 1)))

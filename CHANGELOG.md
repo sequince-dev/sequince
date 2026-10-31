@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Allow adaptive SMC to set `beta_tolerance` independently of the minimum
+  beta increment, including through `make_standard_bayesian_smc`'s
+  `weighting_kwargs`. The default continues to use `min_delta` as the tolerance.
+
 ## [0.1.0] - 2026-10-29
 
 First stable release. Changes below are relative to 0.1.0b1.

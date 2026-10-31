@@ -122,6 +122,9 @@ def make_standard_bayesian_smc(
         Criterion for adaptive tempering; one of ``"ess"`` (default) or ``"cess"``.
     weighting_kwargs : dict[str, Any] or None, optional
         Extra keyword arguments forwarded to the weighting step constructor.
+        For adaptive tempering, ``beta_tolerance`` sets the beta-search
+        precision independently of ``min_delta``; ``max_bisection_iter``
+        limits the number of search iterations.
     resampling : {"systematic", "stratified", "multinomial"}, optional
         Resampling strategy to use; one of ``"systematic"``, ``"stratified"``,
         or ``"multinomial"``.
