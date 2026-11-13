@@ -695,6 +695,36 @@ def test_prebuilt_acceptance_adaptation(factory, name, enabled) -> None:
     assert isinstance(mutation, AdaptMutationSteps) == enabled
 
 
+@pytest.mark.parametrize(
+    "factory", [make_standard_bayesian_smc, make_persistent_bayesian_smc]
+)
+def test_prebuilt_combines_de_adaptations(factory) -> None:
+    from sequince.steps.mutation import (
+        AdaptDEScaleWeights,
+        AdaptMutationSteps,
+        DifferentialEvolutionMutation,
+    )
+
+    smc, _, _ = factory(
+        _quadratic_log_prior,
+        _zero_log_likelihood,
+        mutation="differential-evolution",
+        mutation_kwargs={
+            "scale_multipliers": (0.25, 1.0, 4.0),
+            "adapt_scale_weights": True,
+            "scale_weight_policy": "esjd",
+            "scale_weight_policy_kwargs": {"learning_rate": 0.2},
+        },
+        adaptive_mutation={"target_accepted_moves": 5.0},
+        logging_frequency=0,
+    )
+    outer = smc.config.steps[-1]
+    assert isinstance(outer, AdaptMutationSteps)
+    assert isinstance(outer.mutation, AdaptDEScaleWeights)
+    assert isinstance(outer.mutation.mutation, DifferentialEvolutionMutation)
+    assert outer.mutation.policy.learning_rate == 0.2
+
+
 @pytest.mark.parametrize("mutation", ["minipcn", "differential-evolution"])
 def test_standard_adaptive_checkpoint_resume(tmp_path, mutation) -> None:
     from sequince.checkpoint import PickleCheckpointWriter, SMCCheckpoint

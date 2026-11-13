@@ -8,8 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Optional acceptance-based mutation budgets via `adaptive_mutation` for
-  MiniPCN and differential evolution mutations in standard and persistent SMC.
+- Support differential-evolution scale-weight adaptation through the mutation
+  step factory. ([#147](https://github.com/sequince-dev/sequince/pull/147))
+- Support acceptance-based mutation budgets through the mutation step factory.
   ([#144](https://github.com/sequince-dev/sequince/pull/144))
 - Allow adaptive SMC to set `beta_tolerance` independently of the minimum
   beta increment, including through `make_standard_bayesian_smc`'s
