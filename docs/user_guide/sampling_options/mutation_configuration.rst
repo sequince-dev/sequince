@@ -273,3 +273,95 @@ Gaussian proposal scale adaptation
 
 Use :class:`~sequince.steps.mutation.adaptive.proposal.AdaptiveGaussianProposal`
 to update a scale in context metadata for a kernel factory to read.
+
+Functional mutation budget state
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``AdaptMutationSteps`` exposes budget operations independently of mutation
+execution. Call ``initialize_functional_metadata(state, metadata)`` on the host
+before compiling, then ``prepare_budget_functional(context)`` before a complete
+mutation block. It returns a new context and the frozen scalar array budget.
+After the block, call ``update_budget_functional(metrics, context)`` with its
+completed ``MutationMetricsOutput``. Keep the block's iteration in the context
+until this update finishes. The first completed block in an iteration proposes
+the pending budget; subsequent calls in that iteration retain both decisions.
+The pending budget becomes current when preparation sees the next iteration.
+Iterations must increase (repeated iterations are allowed), be nonnegative,
+and fit in int32. A skipped block needs no update.
+
+The immutable, registered pytree ``MutationBudgetState`` lives at
+``context.metadata[adapter.metadata_key]``. Its ``current_iteration``,
+``current_n_steps``, ``next_n_steps``, and ``last_updated_iteration`` are scalar
+int32 arrays. Both budgets initially contain ``initial_steps``; iteration fields
+start at -1. No leaves or metadata keys are added during compiled transitions.
+The default key is ``"mutation_budget"``. Assign a distinct explicit
+``metadata_key`` to each adapter sharing a context, and reuse those keys when
+reconstructing a pipeline. Do not use object identities or creation-order keys.
+Initialization preserves an existing carry, including frozen and pending
+checkpoint decisions. Resume with the same backend, bounds, and policy
+configuration. Functional state is saved through context metadata; the eager
+``state_dict`` and eager budget properties continue to describe eager execution
+only. Independent functional runs may share the same adapter object.
+
+Both APIs use the same complete ``MutationBudgetState`` and lifecycle
+transitions. Eager execution stores host integer fields on the adapter;
+functional execution stores scalar int32 array fields in context metadata.
+Both budget slots initially equal ``initial_steps`` and unset iterations use -1.
+The eager ``current_n_steps`` and ``next_n_steps`` properties therefore return
+the initial budget before preparation, rather than ``None``. Preparation without
+a completed-metrics update retains the frozen budget for the next iteration.
+Host validation and eager-only policy calls stay at the eager boundary;
+functional operations use backend conditionals without Python truth tests on
+array predicates.
+
+Eager ``state_dict()`` now stores the four budget fields under ``"budget"``,
+alongside nested mutation and policy state. This intentionally replaces the
+previous optional-field payload and ``policy_initialised`` flag; older
+``AdaptMutationSteps`` checkpoint payloads are not supported. Reconstruct
+checkpoints produced by this version with matching bounds and policy settings.
+The top-level SMC checkpoint format is unchanged.
+
+``FixedMutationStepPolicy`` and ``AcceptanceRatePolicy`` implement
+``FunctionalMutationStepPolicy``. Custom policies opt in by implementing
+``validate_functional_configuration()``, ``initialise_functional`` and
+``update_functional`` in addition to the eager interface. Functional decisions
+must be pure scalar integer arrays with the input budget's dtype and device.
+The adapter clips decisions to its own bounds. Policies cannot modify themselves,
+the context, or metric inputs; these methods return only a decision, so custom
+mutable policy state has no functional update channel in this interface.
+Backend conditionals execute updates at most once per iteration; JAX may trace
+both branches, so Python side effects are never valid policy operations.
+Existing eager-only policies remain supported by eager execution and raise a
+clear error if functional budget initialization is requested.
+
+Constructor validation remains on the host. ``AcceptanceRatePolicy`` requires
+``max_steps <= 2**24`` for both eager and functional decisions, ensuring bounds
+are exactly representable even in float32. Functional initialization also checks
+policy support and the adapter's ``max_steps <= 2**24`` limit before compilation.
+Functional budgets and iteration counters use int32.
+Acceptance counts must be finite, nonnegative scalar arrays, with accepted
+counts no greater than attempts. Fractional accepted counts are supported.
+Compiled operations check static count shapes but do not raise value-dependent
+validation errors; callers must supply valid counts and prepared contexts.
+
+Eager acceptance updates validate counts, convert them to NumPy float64 arrays,
+and call the same count-based calculation as functional updates, without
+rebuilding the metrics object. Both APIs round the quotient before
+taking its ceiling. This intentionally replaces the previous eager exact-ratio
+calculation: for example, target 1.1 with acceptance 1/10 now proposes 11 instead
+of 12. Backend precision can still affect decisions near integer thresholds;
+very small values may underflow in float32. Positive targets propose at least one
+step before bounds, and zero-attempt blocks retain the current budget or recover
+to one, subject to bounds. Large finite targets are capped before array creation,
+and proposals are bounded before integer conversion. This preserves the minimum
+acceptance safeguard and prevents overflow in budget decisions.
+
+These operations do not enable functional adaptive mutation execution yet.
+``AdaptMutationSteps.apply_functional`` explicitly rejects execution until a
+child mutation interface can consume dynamic array budgets. Dynamic-budget DE
+loops, padded chain outputs, DE scale-weight adaptation, and MiniPCN integration
+remain separate work. The shared acceptance arithmetic can change eager mutation
+budgets near rounding thresholds, and therefore subsequent RNG consumption and
+sample paths. Saved pending budgets remain authoritative on resume; subsequent
+policy updates use the new arithmetic. The target, weighting, and evidence
+formulas are unchanged.

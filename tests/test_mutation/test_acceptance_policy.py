@@ -142,3 +142,27 @@ def test_policy_bounds_initial_and_unmeasured_budget(
 def test_invalid_move_bounds(minimum, maximum, error):
     with pytest.raises(error):
         AcceptanceRatePolicy(3, min_steps=minimum, max_steps=maximum)
+
+
+@pytest.mark.parametrize("shape", [(), (1,), (1, 1)])
+def test_eager_normalizes_single_count_without_mutating_metrics(
+    shape: tuple[int, ...], context_factory
+) -> None:
+    attempted = np.full(shape, 10.0)
+    accepted = np.full(shape, 2.5)
+    metrics = MutationMetricsOutput(
+        4, attempted, accepted, values={"other": 7}
+    )
+    policy = AcceptanceRatePolicy(2, min_steps=0, max_steps=20)
+
+    assert (
+        policy.update(
+            current_steps=4, metrics=metrics, context=context_factory()
+        )
+        == 8
+    )
+    assert metrics.n_attempted is attempted
+    assert metrics.n_accepted is accepted
+    np.testing.assert_array_equal(attempted, np.full(shape, 10.0))
+    np.testing.assert_array_equal(accepted, np.full(shape, 2.5))
+    assert metrics.values == {"other": 7}

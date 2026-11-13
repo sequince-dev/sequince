@@ -10,7 +10,9 @@ from .adaptive import (
     AdaptMutationSteps,
     DEScaleWeightPolicy,
     ESJDScaleWeightPolicy,
+    FunctionalMutationStepPolicy,
     MiniPCNRhoPolicy,
+    MutationBudgetState,
     MutationStepPolicy,
     RelativeJumpDistancePolicy,
 )
@@ -110,6 +112,8 @@ __all__ = [
     "MutationMetric",
     "MutationMetrics",
     "MutationStep",
+    "FunctionalMutationStepPolicy",
+    "MutationBudgetState",
     "MutationStepPolicy",
     "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",
