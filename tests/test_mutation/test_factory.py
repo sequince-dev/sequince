@@ -7,6 +7,8 @@ import pytest
 from sequince.steps import DifferentialEvolutionMutation as PublicDEMutation
 from sequince.steps.base import SMCStep, StepContext
 from sequince.steps.mutation import (
+    AdaptDEScaleWeights,
+    AdaptMutationSteps,
     BlackJAXMutation,
     DifferentialEvolutionKernel,
     DifferentialEvolutionMutation,
@@ -17,6 +19,7 @@ from sequince.steps.mutation import (
     RedBlueMetropolisHastingsMutation,
     get_mutation_step,
 )
+from sequince.steps.mutation.adaptive.policies.de import ESJDScaleWeightPolicy
 from sequince.steps.mutation.metropolis import (
     DifferentialEvolutionMutation as DirectDEMutation,
 )
@@ -152,6 +155,202 @@ def test_get_mutation_step_constructs_differential_evolution(
     updated, _, output = mutation(particle_state, context_factory(), rng)
     assert updated.particles.shape == particle_state.particles.shape
     assert output["steps"] == 2
+
+
+@pytest.mark.parametrize("adaptive_steps", [False, True])
+def test_factory_adapts_de_scale_weights(
+    adaptive_steps: bool,
+    standard_normal_posterior,
+    particle_state,
+    context_factory,
+    rng,
+) -> None:
+    kwargs = {
+        "scale_multipliers": (0.25, 1.0, 4.0),
+        "scale_weights": (0.2, 0.5, 0.3),
+        "adapt_scale_weights": True,
+    }
+    step = get_mutation_step(
+        "differential-evolution",
+        standard_normal_posterior,
+        mutation_n_steps=2,
+        mutation_kwargs=kwargs,
+        adaptive_mutation=(
+            {"target_accepted_moves": 100.0, "max_steps": 4}
+            if adaptive_steps
+            else None
+        ),
+    )
+    if adaptive_steps:
+        assert isinstance(step, AdaptMutationSteps)
+        adapter = step.mutation
+    else:
+        adapter = step
+    assert isinstance(adapter, AdaptDEScaleWeights)
+    assert adapter.policy == ESJDScaleWeightPolicy()
+    de = adapter.mutation
+    assert isinstance(de, DifferentialEvolutionMutation)
+    assert de.kernel.scale_multipliers == kwargs["scale_multipliers"]
+    assert de.kernel.scale_weights == pytest.approx(kwargs["scale_weights"])
+    assert kwargs["adapt_scale_weights"] is True
+
+    state, _, output = step(particle_state, context_factory(t=0), rng)
+    assert output["metrics"].n_steps == 2
+    assert adapter.current_weights == pytest.approx(
+        tuple(0.9 * weight + 0.1 / 3 for weight in (0.2, 0.5, 0.3))
+    )
+    assert adapter.next_weights is not None
+    pending_weights = adapter.next_weights
+    if adaptive_steps:
+        assert step.next_n_steps == 4
+    _, _, output = step(state, context_factory(t=1), rng)
+    assert output["metrics"].n_steps == (4 if adaptive_steps else 2)
+    assert adapter.current_weights == pytest.approx(pending_weights)
+    assert "de_scales" in output["metrics"].values
+
+
+@pytest.mark.parametrize("adaptive_steps", [False, True])
+@pytest.mark.parametrize("named", [False, True])
+def test_factory_de_scale_weight_policy(
+    adaptive_steps: bool, named: bool, standard_normal_posterior
+) -> None:
+    policy = ESJDScaleWeightPolicy(
+        learning_rate=0.2, exploration_probability=0.05, min_attempts=10
+    )
+    kwargs = {"adapt_scale_weights": True, "scale_weight_policy": policy}
+    if named:
+        kwargs = {
+            "adapt_scale_weights": True,
+            "scale_weight_policy": "esjd",
+            "scale_weight_policy_kwargs": {
+                "learning_rate": 0.2,
+                "exploration_probability": 0.05,
+                "min_attempts": 10,
+            },
+        }
+    step = get_mutation_step(
+        "differential-evolution",
+        standard_normal_posterior,
+        mutation_kwargs=kwargs,
+        adaptive_mutation={} if adaptive_steps else None,
+    )
+    if adaptive_steps:
+        assert isinstance(step, AdaptMutationSteps)
+        step = step.mutation
+    assert isinstance(step, AdaptDEScaleWeights)
+    assert step.policy == policy
+    if not named:
+        assert step.policy is policy
+        assert kwargs["scale_weight_policy"] is policy
+    else:
+        assert kwargs["scale_weight_policy"] == "esjd"
+
+
+@pytest.mark.parametrize(
+    ("config", "error", "message"),
+    [
+        (
+            {"scale_weight_policy": "unknown"},
+            ValueError,
+            "Valid options.*esjd",
+        ),
+        (
+            {"scale_weight_policy_kwargs": {"min_attempts": 10}},
+            ValueError,
+            "only be used with a named",
+        ),
+        (
+            {
+                "scale_weight_policy": ESJDScaleWeightPolicy(),
+                "scale_weight_policy_kwargs": {"min_attempts": 10},
+            },
+            ValueError,
+            "only be used with a named",
+        ),
+        (
+            {
+                "scale_weight_policy": "esjd",
+                "scale_weight_policy_kwargs": {"unknown": 1},
+            },
+            TypeError,
+            "unexpected keyword",
+        ),
+        (
+            {
+                "scale_weight_policy": "esjd",
+                "scale_weight_policy_kwargs": {"learning_rate": 0},
+            },
+            ValueError,
+            "learning_rate",
+        ),
+    ],
+)
+def test_factory_invalid_named_scale_weight_policy(
+    config, error, message, standard_normal_posterior
+) -> None:
+    with pytest.raises(error, match=message):
+        get_mutation_step(
+            "differential-evolution",
+            standard_normal_posterior,
+            mutation_kwargs={"adapt_scale_weights": True, **config},
+        )
+
+
+@pytest.mark.parametrize("enabled", [None, False])
+def test_factory_de_scale_weight_policy_requires_adaptation(
+    enabled: bool | None, standard_normal_posterior
+) -> None:
+    kwargs = {"scale_weight_policy": ESJDScaleWeightPolicy()}
+    if enabled is not None:
+        kwargs["adapt_scale_weights"] = enabled
+    with pytest.raises(ValueError, match="requires adapt_scale_weights=True"):
+        get_mutation_step(
+            "differential-evolution",
+            standard_normal_posterior,
+            mutation_kwargs=kwargs,
+        )
+
+
+def test_factory_de_rejects_invalid_scale_weight_policy(
+    standard_normal_posterior,
+) -> None:
+    with pytest.raises(TypeError, match="implement initialise.*update"):
+        get_mutation_step(
+            "differential-evolution",
+            standard_normal_posterior,
+            mutation_kwargs={
+                "adapt_scale_weights": True,
+                "scale_weight_policy": object(),
+            },
+        )
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"adapt_scale_weights": False}])
+def test_factory_de_scale_weights_default(
+    kwargs, standard_normal_posterior
+) -> None:
+    step = get_mutation_step(
+        "differential-evolution",
+        standard_normal_posterior,
+        mutation_kwargs=kwargs,
+    )
+    assert isinstance(step, DifferentialEvolutionMutation)
+    assert step.kernel.scale_multipliers == (1.0,)
+    assert step.kernel.scale_weights == (1.0,)
+
+
+@pytest.mark.parametrize("flag", [None, 0, 1, "true", {}])
+def test_factory_de_scale_weights_requires_boolean(
+    flag, standard_normal_posterior
+) -> None:
+    with pytest.raises(
+        TypeError, match="adapt_scale_weights must be a boolean"
+    ):
+        get_mutation_step(
+            "differential-evolution",
+            standard_normal_posterior,
+            mutation_kwargs={"adapt_scale_weights": flag},
+        )
 
 
 def test_get_mutation_step_constructs_named_red_blue_kernel(
