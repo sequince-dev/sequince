@@ -8,9 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Optional acceptance-based mutation budgets via `adaptive_mutation` for
+  MiniPCN and differential evolution mutations in standard and persistent SMC.
+  ([#144](https://github.com/sequince-dev/sequince/pull/144))
 - Allow adaptive SMC to set `beta_tolerance` independently of the minimum
   beta increment, including through `make_standard_bayesian_smc`'s
   `weighting_kwargs`. The default continues to use `min_delta` as the tolerance.
+  ([#146](https://github.com/sequince-dev/sequince/pull/146))
 
 ## [0.1.0] - 2026-10-29
 

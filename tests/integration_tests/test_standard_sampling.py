@@ -12,7 +12,9 @@ from sequince import ParticleState, make_standard_bayesian_smc
 from sequince.steps.base import SMCStep
 
 
+@pytest.mark.parametrize("adaptive_mutation", [None, {"max_steps": 8}])
 def test_standard_sampler_reaches_gaussian_posterior(
+    adaptive_mutation,
     gaussian_log_prior: Callable[..., np.ndarray],
     gaussian_log_likelihood: Callable[..., np.ndarray],
 ) -> None:
@@ -21,6 +23,7 @@ def test_standard_sampler_reaches_gaussian_posterior(
         gaussian_log_prior,
         gaussian_log_likelihood,
         mutation_n_steps=3,
+        adaptive_mutation=adaptive_mutation,
         logging_frequency=0,
     )
     initial_particles = np.random.default_rng(1234).normal(

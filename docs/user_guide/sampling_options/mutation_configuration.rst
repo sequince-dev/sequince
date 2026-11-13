@@ -166,3 +166,33 @@ You can also pass a configured step as ``mutation``. Set its target, transform,
 and options directly: the helper does not apply ``mutation_n_steps`` or
 ``mutation_kwargs`` to it. See :doc:`../running_inference/smc_configuration` for custom pipelines
 and the API links above for method-specific options and outputs.
+
+
+Acceptance-based mutation budgets
+---------------------------------
+
+For standard and persistent SMC, set ``adaptive_mutation`` to adjust the number
+of transitions from the previous iteration's acceptance rate. Named
+``"minipcn"`` and ``"differential-evolution"`` mutations support this option:
+
+.. code-block:: python
+
+    mutation_n_steps=100,
+    adaptive_mutation={
+        "min_steps": 50,
+        "max_steps": 1000,
+        "target_accepted_moves": 5.0,
+    }
+
+``mutation_n_steps`` sets the initial budget and must lie within the bounds.
+The mapping defaults to ``min_steps=0``, ``max_steps=1000``, and
+``target_accepted_moves=5.0``. Omit it or set ``enabled=False`` to keep a fixed
+budget.
+
+Each mutation block uses a fixed budget; its acceptance rate determines the
+next block's budget, clipped to the bounds. Accepted moves need not be
+independent samples. Resume checkpoints with the same mutation configuration
+and bounds. See :func:`~sequince.steps.mutation.factory.get_mutation_step` for
+option details, or use
+:class:`~sequince.steps.mutation.adaptive.steps.AdaptMutationSteps` in a custom
+pipeline.
