@@ -3,12 +3,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping
 from numbers import Integral, Real
-from typing import Any
+from typing import Any, cast
 
 from ...target import Target
 from ...transforms import ParticleTransform
-from ..base import SMCStep
+from ..base import FixedLengthMutation, SMCStep
+from .adaptive.de import AdaptDEScaleWeights
 from .adaptive.policies.acceptance import AcceptanceRatePolicy
+from .adaptive.policies.de import DEScaleWeightPolicy, ESJDScaleWeightPolicy
 from .adaptive.steps import AdaptMutationSteps
 from .blackjax import BlackJAXMutation
 from .emcee import EmceeMutation
@@ -72,6 +74,32 @@ def _acceptance_policy(
     )
 
 
+def _scale_weight_policy(
+    policy: str | DEScaleWeightPolicy | None,
+    policy_kwargs: Mapping[str, Any],
+) -> DEScaleWeightPolicy | None:
+    """Resolve a named scale-weight policy or preserve a supplied instance."""
+    if isinstance(policy, str):
+        policies: dict[str, Callable[..., DEScaleWeightPolicy]] = {
+            "esjd": ESJDScaleWeightPolicy,
+        }
+        try:
+            constructor = policies[policy]
+        except KeyError as exc:
+            valid = ", ".join(sorted(policies))
+            raise ValueError(
+                f"Unknown scale-weight policy '{policy}'. "
+                f"Valid options are: {valid}."
+            ) from exc
+        return constructor(**policy_kwargs)
+    if policy_kwargs:
+        raise ValueError(
+            "scale_weight_policy_kwargs can only be used with a named "
+            "scale_weight_policy."
+        )
+    return policy
+
+
 def get_mutation_step(
     mutation: str | SMCStep | None,
     target: "Target | Callable[..., Any]",
@@ -93,7 +121,8 @@ def get_mutation_step(
     mutation_n_steps : int, optional
         Fixed total budget, or initial budget when adaptation is enabled.
     mutation_kwargs : dict or None, optional
-        Additional mutation constructor options.
+        Additional mutation constructor options. Includes configuration of
+        adaptive parameter policies for mutation kernels that support them.
     adaptive_mutation : Mapping[str, object] or None, optional
         Named miniPCN and differential-evolution mutations support ``enabled``
         (default True), ``min_steps`` (0), ``max_steps`` (1000), and
@@ -193,10 +222,32 @@ def get_mutation_step(
             **kwargs,
         )
     elif mutation == "differential-evolution":
-        mutation_step = DifferentialEvolutionMutation(
+        adapt_scale_weights = kwargs.pop("adapt_scale_weights", False)
+        if not isinstance(adapt_scale_weights, bool):
+            raise TypeError("adapt_scale_weights must be a boolean.")
+        scale_weight_policy = kwargs.pop("scale_weight_policy", None)
+        policy_kwargs = dict(
+            kwargs.pop("scale_weight_policy_kwargs", {}) or {}
+        )
+        if (
+            scale_weight_policy is not None or policy_kwargs
+        ) and not adapt_scale_weights:
+            raise ValueError(
+                "scale_weight_policy configuration requires "
+                "adapt_scale_weights=True."
+            )
+        scale_weight_policy = _scale_weight_policy(
+            scale_weight_policy, policy_kwargs
+        )
+        de = DifferentialEvolutionMutation(
             target,
             n_steps=mutation_n_steps,
             **kwargs,
+        )
+        mutation_step = (
+            AdaptDEScaleWeights(de, policy=scale_weight_policy)
+            if adapt_scale_weights
+            else de
         )
     elif mutation == "none" or mutation is None:
         mutation_step = None
@@ -208,11 +259,9 @@ def get_mutation_step(
             "'none', or an SMCStep instance."
         )
     if policy is not None:
-        assert isinstance(
-            mutation_step, (MiniPCNMutation, DifferentialEvolutionMutation)
-        )
         return AdaptMutationSteps(
-            mutation_step,
+            # AdaptMutationSteps validates the fixed-length interface.
+            cast(FixedLengthMutation, mutation_step),
             policy,
             initial_steps=mutation_n_steps,
             min_steps=policy.min_steps,
