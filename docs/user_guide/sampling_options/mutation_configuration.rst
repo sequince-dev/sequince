@@ -117,8 +117,8 @@ are also selected. Particle-aligned auxiliary data works with batch-preserving
 mutation and BlackJAX; emcee and Eryn reject it because their callbacks do not
 expose the original walker indices.
 
-Blocked updates, repetition, and adaptation
--------------------------------------------
+Blocked updates and repetition
+------------------------------
 
 Use these steps to compose mutation updates:
 
@@ -127,18 +127,6 @@ Use these steps to compose mutation updates:
   Block indices refer to transformed coordinates.
 * :class:`~sequince.steps.mutation.repeated.RepeatedMutationStep`: split a total
   transition count across fixed rounds, with an optional step after each round.
-* :class:`~sequince.steps.mutation.adaptive.steps.AdaptMutationSteps`: choose
-  the next iteration's transition count from completed diagnostics.
-* :class:`~sequince.steps.mutation.adaptive.minipcn.AdaptiveMiniPCNMutation`:
-  tune MiniPCN rho between iterations. Requires equal, finite weights and a
-  child with ``adaptive=False``.
-* :class:`~sequince.steps.mutation.adaptive.de.AdaptDEScaleWeights`: tune DE
-  mixture weights between iterations.
-* :class:`~sequince.steps.mutation.adaptive.proposal.AdaptiveGaussianProposal`:
-  update a scale in context metadata for a kernel factory to read.
-
-The adaptation wrappers support eager execution only. Place conditional steps
-outside them, for example ``MutateIfResampled(mutation_step)``.
 
 Prebuilt samplers
 -----------------
@@ -168,8 +156,16 @@ and options directly: the helper does not apply ``mutation_n_steps`` or
 and the API links above for method-specific options and outputs.
 
 
+Adaptive mutation kernels
+-------------------------
+
+Adaptation can adjust the mutation budget or proposal parameters between
+iterations using completed diagnostics. The adaptation wrappers support eager
+execution only. Place conditional steps outside them, for example
+``MutateIfResampled(mutation_step)``.
+
 Acceptance-based mutation budgets
----------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For standard and persistent SMC, set ``adaptive_mutation`` to adjust the number
 of transitions from the previous iteration's acceptance rate. Named
@@ -196,3 +192,84 @@ and bounds. See :func:`~sequince.steps.mutation.factory.get_mutation_step` for
 option details, or use
 :class:`~sequince.steps.mutation.adaptive.steps.AdaptMutationSteps` in a custom
 pipeline.
+
+Differential-evolution scale weights
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For the named ``"differential-evolution"`` mutation, set
+``mutation_kwargs={"adapt_scale_weights": True}`` to adapt mixture weights
+with :class:`~sequince.steps.mutation.adaptive.de.AdaptDEScaleWeights` and its
+default :class:`~sequince.steps.mutation.adaptive.policies.de.ESJDScaleWeightPolicy`.
+The factory consumes this flag; ``scale_multipliers`` and initial
+``scale_weights`` remain constructor options. Existing defaults are unchanged,
+and scale-weight adaptation defaults to ``False``.
+
+Pass a policy instance as ``scale_weight_policy`` in ``mutation_kwargs`` to
+customize adaptation, for example:
+
+.. code-block:: python
+
+    from sequince.steps.mutation import ESJDScaleWeightPolicy
+
+    mutation_kwargs = {
+        "adapt_scale_weights": True,
+        "scale_weight_policy": ESJDScaleWeightPolicy(
+            learning_rate=0.2,
+            exploration_probability=0.05,
+            min_attempts=10,
+        ),
+    }
+
+Alternatively, specify the policy by name and pass its constructor options
+separately:
+
+.. code-block:: python
+
+    mutation_kwargs = {
+        "adapt_scale_weights": True,
+        "scale_weight_policy": "esjd",
+        "scale_weight_policy_kwargs": {"learning_rate": 0.2, "min_attempts": 10},
+    }
+
+``"esjd"`` is currently the supported policy name.
+``scale_weight_policy_kwargs`` requires a named policy; configure policy
+instances directly. Custom policies implement the
+:class:`~sequince.steps.mutation.adaptive.policies.de.DEScaleWeightPolicy`
+interface. Omit ``scale_weight_policy`` or set it to ``None`` to use the default
+ESJD policy. Supplying a policy requires ``adapt_scale_weights=True``.
+
+Scale-weight adaptation requires eager execution. Enable it independently or
+combine it with adaptive mutation, for example through
+:func:`~sequince.prebuilt_samplers.make_persistent_bayesian_smc`:
+
+.. code-block:: python
+
+    smc, posterior, metadata = make_persistent_bayesian_smc(
+        log_prior=log_prior,
+        log_likelihood=log_likelihood,
+        mutation="differential-evolution",
+        mutation_kwargs={
+            "scale_multipliers": (0.25, 1.0, 4.0),
+            "adapt_scale_weights": True,
+        },
+        adaptive_mutation={"target_accepted_moves": 5.0},
+    )
+
+These multipliers are illustrative. When both options are enabled, the factory
+constructs ``AdaptMutationSteps(AdaptDEScaleWeights(de), ...)``: the outer
+wrapper sets the sweep count and the inner wrapper adapts mixture weights.
+Both decisions use completed blocks and remain fixed within each block.
+
+MiniPCN proposal adaptation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In a custom pipeline, use
+:class:`~sequince.steps.mutation.adaptive.minipcn.AdaptiveMiniPCNMutation`
+to tune MiniPCN rho between iterations. It requires equal, finite weights and
+a child mutation with ``adaptive=False``.
+
+Gaussian proposal scale adaptation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use :class:`~sequince.steps.mutation.adaptive.proposal.AdaptiveGaussianProposal`
+to update a scale in context metadata for a kernel factory to read.
