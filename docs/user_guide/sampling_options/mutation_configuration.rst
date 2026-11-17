@@ -142,7 +142,7 @@ Install ``sequince[minipcn]`` and use ``mutation="minipcn"`` to select MiniPCN
 explicitly. The persistent SMC,
 nested-sampling SMC, standalone MCMC, and additional-posterior-sample helpers
 also default to differential evolution. Functional nested-sampling execution
-requires an explicit ``mutation="minipcn"`` or ``mutation="blackjax"``.
+supports DE, MiniPCN and BlackJAX with JAX-compatible targets and transforms.
 
 The helper defaults to ``particle_transform="affine"``; configure it through
 ``particle_transform_kwargs`` or pass a transform object. With default ESS
@@ -356,12 +356,70 @@ to one, subject to bounds. Large finite targets are capped before array creation
 and proposals are bounded before integer conversion. This preserves the minimum
 acceptance safeguard and prevents overflow in budget decisions.
 
-These operations do not enable functional adaptive mutation execution yet.
-``AdaptMutationSteps.apply_functional`` explicitly rejects execution until a
-child mutation interface can consume dynamic array budgets. Dynamic-budget DE
-loops, padded chain outputs, DE scale-weight adaptation, and MiniPCN integration
-remain separate work. The shared acceptance arithmetic can change eager mutation
-budgets near rounding thresholds, and therefore subsequent RNG consumption and
-sample paths. Saved pending budgets remain authoritative on resume; subsequent
+Dynamic-budget differential evolution
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``AdaptMutationSteps.apply_functional(state, context, random_state)`` now
+executes DE and ``RepeatedMutationStep`` blocks containing DE. It returns
+``(state, context, random_state, output)`` and finalizes metrics once at the
+complete block boundary. The existing budget carry freezes the count before
+any proposal; repeated calls within one outer iteration reuse that count and
+only the first completed block supplies the pending decision.
+
+The child capability is ``DynamicBudgetMutation``. Its
+``apply_dynamic_budget(state, context, random_state, *, n_steps, max_steps,
+mutation_state=None)`` returns ``(state, context, random_state, output,
+mutation_state)``. ``random_state`` is the backend-native state returned by
+``orng.RandomGenerator.state()``; for JAX this is a PRNG key array. Functional
+calls accept and return that state, and reconstruct ORNG wrappers internally
+for random draws. Eager methods accept the ORNG generator object directly.
+``n_steps`` is a scalar integer array and ``max_steps`` a
+static host integer. Callers must ensure ``0 <= n_steps <= max_steps``;
+compiled runtime bounds are not checked. The continuing metric state follows
+the existing initialize/prepare/update lifecycle and is not finalized by this
+child interface. Kernel parameters and static capacity must remain fixed for a
+compiled function.
+
+Before compiling, call ``validate_functional_configuration(config, state)``,
+``initialize_functional_metadata(state, metadata)`` and
+``initialize_functional_state_and_context(state, context)`` on the wrapper.
+These hooks forward through repeated blocks and adapters. Initialization may
+fit a transform and populate target caches, recording their evaluation costs.
+This one-time work is separate from executing a zero-budget block, which does
+not fit transforms, draw mutation randomness or evaluate targets. The input
+state and context must already have their full pytree structure, including
+cache, transform and acceptance metadata leaves. Use array scalar context
+counters for a ``lax.scan`` carry from its first iteration.
+
+DE executes exactly ``n_steps`` complete red-blue sweeps with fixed transforms
+within each segment. Dynamic outputs have ``acceptance_by_step`` shape
+``(max_steps,)``, ``acceptance_by_half`` shape ``(max_steps, 2)``, and scalar
+integer ``steps``. When enabled, ``chain`` has shape
+``(max_steps, n_particles, n_dimensions)`` in original coordinates; otherwise it
+is ``None`` and no chain buffer is allocated. Only the leading ``steps`` rows
+are valid. On the host, slice ``history[:int(output["steps"])]``. Inside JIT,
+use a mask such as ``arange(max_steps) < output["steps"]``. All unused rows,
+including chains, are zero. They do not consume randomness or target work,
+update metrics, or affect aggregate acceptance and policy decisions. Eager
+outputs retain their existing variable-length tuples and chain shapes.
+
+Repeated blocks split the total by quotient/remainder, assigning one extra
+step to the first remainder rounds. Round capacities use the same static split
+of ``max_steps`` and sum to exactly ``max_steps``; each round has its own
+``steps`` count. Metric state is shared
+across all rounds, with references refreshed on entry to the next segment and
+frozen metric scaling retained. ``after_round`` runs after every round,
+including zero-step rounds and the final round. It must explicitly implement
+``apply_functional`` and preserve the initialized carry structure; unsupported
+children and post-round configurations are rejected during host validation.
+Existing static functional execution for other mutation children is retained.
+
+DE requires at least four particles. Custom metrics, transforms and post-round
+steps must be pure, JAX-compatible operations with fixed-shape/dtype pytrees.
+Callable transform-refit policies are unsupported. Functional DE scale-weight
+adaptation and MiniPCN integration remain future work.
+
+Acceptance calculation changes can affect budgets near rounding thresholds,
+and therefore subsequent RNG consumption and sample paths. Saved pending budgets remain authoritative on resume; subsequent
 policy updates use the new arithmetic. The target, weighting, and evidence
 formulas are unchanged.

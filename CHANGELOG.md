@@ -8,10 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Add explicit functional mutation budget state and pure fixed/acceptance
-  policy decisions, with JIT-compatible preparation and completed-block updates.
-  Adaptive mutation execution remains eager-only pending a dynamic child
-  mutation interface.
+- Support JAX JIT execution of differential-evolution mutation with adaptive
+  step budgets, including repeated mutation blocks.
 
 - Support differential-evolution scale-weight adaptation through the mutation
   step factory. ([#147](https://github.com/sequince-dev/sequince/pull/147))
