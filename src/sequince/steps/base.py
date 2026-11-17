@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from orng import RandomGenerator
 
 from ..array_api import namespace
+from ..typing import Array
 from ..utils.random import resolve_rng
 from .context import StepContext
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 
     from ..smc import SMCConfig
     from ..state import ParticleState
+    from .mutation.metrics import MutationMetrics, MutationStepState
 
 
 def validate_n_steps(n_steps: int) -> int:
@@ -43,6 +45,50 @@ class FixedLengthMutation(Protocol):
         *,
         n_steps: int,
     ) -> tuple["ParticleState", StepContext, Any]: ...
+
+
+@runtime_checkable
+class DynamicBudgetMutation(Protocol):
+    """Functional mutation with a runtime budget and static history capacity.
+
+    The scalar integer array budget must lie in [0, max_steps]. Initialize the
+    functional state/context and metadata before tracing. The returned metric
+    state continues an enclosing block; only its owner finalizes metrics.
+    ``random_state`` is the backend-native state returned by
+    ``orng.RandomGenerator.state()``; for JAX it is a PRNG key array. Functional
+    calls accept and return that state, while eager methods accept the ORNG
+    generator object.
+    """
+
+    @property
+    def metrics(self) -> MutationMetrics: ...
+
+    def initialize_functional_metadata(
+        self, state: ParticleState, metadata: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
+
+    def initialize_functional_state_and_context(
+        self, state: ParticleState, context: StepContext
+    ) -> tuple[ParticleState, StepContext]: ...
+
+    def validate_functional_configuration(
+        self, config: SMCConfig, state: ParticleState
+    ) -> None: ...
+
+    def validate_dynamic_budget_configuration(
+        self, state: ParticleState, *, max_steps: int
+    ) -> None: ...
+
+    def apply_dynamic_budget(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+        *,
+        n_steps: Array,
+        max_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[ParticleState, StepContext, Any, Any, MutationStepState]: ...
 
 
 class SMCStep:
@@ -81,7 +127,10 @@ class SMCStep:
         additional outputs.
 
         This method is intended for use in functional SMC iterations where the
-        random state is explicitly threaded through the computation.
+        random state is explicitly threaded through the computation. Pass the
+        backend-native state returned by ``orng.RandomGenerator.state()``;
+        for JAX this is a PRNG key array. An ORNG wrapper is reconstructed
+        internally, and its advanced state is returned to the caller.
         """
         rng = RandomGenerator.from_xp(
             namespace(random_state),

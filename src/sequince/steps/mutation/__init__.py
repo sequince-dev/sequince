@@ -1,6 +1,6 @@
 """Mutation steps, kernels, and configuration helpers."""
 
-from ..base import FixedLengthMutation
+from ..base import DynamicBudgetMutation, FixedLengthMutation
 from .adaptive import (
     AcceptanceRateRhoPolicy,
     AdaptDEScaleWeights,
@@ -93,6 +93,7 @@ __all__ = [
     "EmceeMutation",
     "ErynMutation",
     "FixedLengthMutation",
+    "DynamicBudgetMutation",
     "GaussianRandomWalk",
     "GenerativeProposal",
     "MUTATION_KERNELS",
