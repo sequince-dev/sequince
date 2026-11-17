@@ -5,15 +5,20 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, fields, replace
 from numbers import Integral
-from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from acai import cond
 
 from ....array_api import asarray, namespace
 from ....typing import Array
-from ...base import FixedLengthMutation, validate_n_steps
+from ...base import (
+    DynamicBudgetMutation,
+    FixedLengthMutation,
+    validate_n_steps,
+)
 from ...context import StepContext
 from ..metrics import MutationMetricsOutput
+from ..metrics.base import with_metrics
 from .base import AdaptiveMutationStep
 from .policies import MutationStepPolicy
 from .policies.base import FunctionalMutationStepPolicy
@@ -21,6 +26,7 @@ from .policies.fixed import FixedMutationStepPolicy
 from .state import MutationBudgetState
 
 if TYPE_CHECKING:
+    from ....smc import SMCConfig
     from ....state import ParticleState
 
 
@@ -97,6 +103,10 @@ class AdaptMutationSteps(AdaptiveMutationStep):
 
         Requires ``max_steps <= 2**24``. Resume with the same metadata key and
         static configuration; eager state is independent."""
+        if isinstance(self.mutation, DynamicBudgetMutation):
+            metadata = self.mutation.initialize_functional_metadata(
+                state, metadata
+            )
         policy = self._functional_policy()
         policy.validate_functional_configuration()
         if self._max_steps > 2**24:
@@ -204,14 +214,53 @@ class AdaptMutationSteps(AdaptiveMutationStep):
         )
         return context.with_metadata(**{self.metadata_key: updated})
 
+    def _dynamic_child(self) -> DynamicBudgetMutation:
+        if not isinstance(self.mutation, DynamicBudgetMutation):
+            raise NotImplementedError(
+                "Child supports eager execution only; functional execution requires DynamicBudgetMutation."
+            )
+        return self.mutation
+
+    def validate_functional_configuration(
+        self, config: SMCConfig, state: ParticleState
+    ) -> None:
+        self._functional_policy().validate_functional_configuration()
+        self._dynamic_child().validate_dynamic_budget_configuration(
+            state, max_steps=self._max_steps
+        )
+        self._dynamic_child().validate_functional_configuration(config, state)
+
+    def initialize_functional_state_and_context(
+        self, state: ParticleState, context: StepContext
+    ) -> tuple[ParticleState, StepContext]:
+        self._dynamic_child().validate_dynamic_budget_configuration(
+            state, max_steps=self._max_steps
+        )
+        return self._dynamic_child().initialize_functional_state_and_context(
+            state, context
+        )
+
     def apply_functional(
         self, state: ParticleState, context: StepContext, random_state: Any
-    ) -> NoReturn:
-        raise NotImplementedError(
-            "AdaptMutationSteps supports eager execution only. Functional "
-            "budget operations are available, but the child dynamic-budget "
-            "mutation interface is not implemented."
+    ) -> tuple[ParticleState, StepContext, Any, Any]:
+        """Execute the frozen budget and adapt from this completed block only."""
+        child = self._dynamic_child()
+        context, n_steps = self.prepare_budget_functional(context)
+        state, context, random_state, output, metric_state = (
+            child.apply_dynamic_budget(
+                state,
+                context,
+                random_state,
+                n_steps=n_steps,
+                max_steps=self._max_steps,
+            )
         )
+        metrics = child.metrics.result(metric_state, context)
+        output = with_metrics(output, metrics)
+        context = self.update_budget_functional(
+            self._completed_metrics(output), context
+        )
+        return state, context, random_state, output
 
     @property
     def current_n_steps(self) -> int:

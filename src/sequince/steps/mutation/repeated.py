@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from ...utils.pytrees import pytree_dataclass
-from ..base import SMCStep, validate_n_steps
+from ..base import DynamicBudgetMutation, SMCStep, validate_n_steps
 from ..context import StepContext
 from .base import MutationStep
 from .metrics import (
@@ -17,7 +17,9 @@ from .metrics import (
 )
 
 if TYPE_CHECKING:
+    from ...smc import SMCConfig
     from ...state import ParticleState
+    from ...typing import Array
 
 
 @pytree_dataclass(
@@ -156,7 +158,145 @@ class RepeatedMutationStep(SMCStep):
             mutation_state,
         )
 
-    def initialize_functional_state_and_context(self, state, context):
+    def validate_dynamic_budget_configuration(
+        self, state: ParticleState, *, max_steps: int
+    ) -> None:
+        """Reject unsupported children and post-round steps before tracing."""
+        validate_n_steps(max_steps)
+        if not isinstance(self.mutation, DynamicBudgetMutation):
+            raise NotImplementedError(
+                "Repeated mutation child must support DynamicBudgetMutation."
+            )
+        self.mutation.validate_dynamic_budget_configuration(
+            state, max_steps=(max_steps + self.n_rounds - 1) // self.n_rounds
+        )
+        if (
+            self.after_round is not None
+            and type(self.after_round).apply_functional
+            is SMCStep.apply_functional
+        ):
+            raise NotImplementedError(
+                "after_round must explicitly implement apply_functional()."
+            )
+
+    def validate_functional_configuration(
+        self, config: SMCConfig, state: ParticleState
+    ) -> None:
+        if isinstance(self.mutation, DynamicBudgetMutation):
+            self.validate_dynamic_budget_configuration(
+                state, max_steps=self.n_steps
+            )
+        self.mutation.validate_functional_configuration(config, state)
+        if self.after_round is not None:
+            self.after_round.validate_functional_configuration(config, state)
+
+    def initialize_functional_metadata(
+        self, state: ParticleState, metadata: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        metadata = self.mutation.initialize_functional_metadata(
+            state, metadata
+        )
+        if self.after_round is not None:
+            metadata = self.after_round.initialize_functional_metadata(
+                state, metadata
+            )
+        return metadata
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, Any]:
+        if not isinstance(self.mutation, DynamicBudgetMutation):
+            # Preserve the existing static functional path for other backends.
+            return super().apply_functional(state, context, random_state)
+        from ...array_api import namespace
+
+        state, context, random_state, output, metrics = (
+            self.apply_dynamic_budget(
+                state,
+                context,
+                random_state,
+                n_steps=namespace(state.particles).asarray(
+                    self.n_steps, dtype="int32"
+                ),
+                max_steps=self.n_steps,
+            )
+        )
+        return (
+            state,
+            context,
+            random_state,
+            replace(output, metrics=self.metrics.result(metrics, context)),
+        )
+
+    def apply_dynamic_budget(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+        *,
+        n_steps: Array,
+        max_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState,
+        StepContext,
+        Any,
+        RepeatedMutationStepOutput,
+        MutationStepState,
+    ]:
+        """Split a runtime total by quotient/remainder and share metric state.
+
+        Round capacities use the same split of max_steps, so their sum is
+        exactly max_steps. Each round exposes its own executed count.
+        Post-round steps run even for zero-budget rounds.
+        """
+        self.validate_dynamic_budget_configuration(state, max_steps=max_steps)
+        if not isinstance(self.mutation, DynamicBudgetMutation):
+            raise NotImplementedError(
+                "Child must support DynamicBudgetMutation."
+            )
+        quotient, remainder = n_steps // self.n_rounds, n_steps % self.n_rounds
+        max_quotient, max_remainder = divmod(max_steps, self.n_rounds)
+        outputs, after_outputs = [], []
+        for index in range(self.n_rounds):
+            state, context, random_state, output, mutation_state = (
+                self.mutation.apply_dynamic_budget(
+                    state,
+                    context,
+                    random_state,
+                    n_steps=quotient
+                    + (index < remainder).astype(n_steps.dtype),
+                    max_steps=max_quotient + (index < max_remainder),
+                    mutation_state=mutation_state,
+                )
+            )
+            outputs.append(output)
+            after_output = None
+            if self.after_round is not None:
+                state, context, random_state, after_output = (
+                    self.after_round.apply_functional(
+                        state, context, random_state
+                    )
+                )
+            after_outputs.append(after_output)
+        assert mutation_state is not None  # At least one round always runs.
+        return (
+            state,
+            context,
+            random_state,
+            RepeatedMutationStepOutput(
+                tuple(outputs), tuple(after_outputs), None
+            ),
+            mutation_state,
+        )
+
+    def initialize_functional_state_and_context(
+        self, state: ParticleState, context: StepContext
+    ) -> tuple[ParticleState, StepContext]:
+        if isinstance(self.mutation, DynamicBudgetMutation):
+            self.validate_dynamic_budget_configuration(
+                state, max_steps=self.n_steps
+            )
         state, context = self.mutation.initialize_functional_state_and_context(
             state, context
         )
