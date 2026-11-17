@@ -553,6 +553,119 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             proposal.auxiliary,
         )
 
+    def _sweep(
+        self,
+        current: Array,
+        current_log_prob: Array,
+        current_evaluation: TargetEvaluation | None,
+        mutation_state: MutationStepState,
+        *,
+        kernel: ComplementaryEnsembleKernel,
+        transform: ParticleTransform | None,
+        transform_auxiliary: Any,
+        context: StepContext,
+        rng: RandomGenerator,
+    ) -> tuple[
+        Array,
+        Array,
+        TargetEvaluation | None,
+        MutationStepState,
+        EvaluationCounts,
+        Array,
+        Array,
+    ]:
+        """Execute one complete sweep, shared by eager and dynamic execution."""
+        xp = namespace(current)
+        n_particles = current.shape[0]
+        previous = current
+        accepted_population = xp.zeros_like(current_log_prob, dtype=xp.bool)
+        group_a, group_b = self._split_indices(
+            n_particles,
+            rng,
+        )
+        complementary_a = current[group_b]
+        (
+            current,
+            current_log_prob,
+            current_evaluation,
+            counts_a,
+            accepted_a,
+            accepted_mask_a,
+            auxiliary_a,
+        ) = self._apply_half(
+            current,
+            current_log_prob,
+            current_evaluation,
+            group_a,
+            complementary_a,
+            kernel,
+            transform,
+            transform_auxiliary,
+            context,
+            rng,
+        )
+        counts = counts_a
+        accepted_population = xpx.at(accepted_population, group_a).set(
+            accepted_mask_a, copy=True, xp=xp
+        )
+        complementary_b = current[group_a]
+        (
+            current,
+            current_log_prob,
+            current_evaluation,
+            counts_b,
+            accepted_b,
+            accepted_mask_b,
+            auxiliary_b,
+        ) = self._apply_half(
+            current,
+            current_log_prob,
+            current_evaluation,
+            group_b,
+            complementary_b,
+            kernel,
+            transform,
+            transform_auxiliary,
+            context,
+            rng,
+        )
+        counts = counts + counts_b
+        accepted_population = xpx.at(accepted_population, group_b).set(
+            accepted_mask_b, copy=True, xp=xp
+        )
+        transition = None
+        if self.metrics.needs_transition:
+            # Restore particle-aligned auxiliary to population order.
+            order = xp.argsort(xp.concat((group_a, group_b)))
+            transition = MutationTransition(
+                displacement=current - previous,
+                kernel_auxiliary=optree.tree_map(
+                    lambda a, b: namespace(a, b).concat((a, b), axis=0)[order],
+                    auxiliary_a,
+                    auxiliary_b,
+                    namespace=OPTREE_NAMESPACE,
+                ),
+            )
+        accepted_sweep = accepted_a + accepted_b
+        mutation_state = self.metrics.update(
+            mutation_state,
+            current,
+            accepted_population,
+            context,
+            transition=transition,
+        )
+        return (
+            current,
+            current_log_prob,
+            current_evaluation,
+            mutation_state,
+            counts,
+            accepted_sweep,
+            xp.stack(
+                (accepted_a / group_a.shape[0], accepted_b / group_b.shape[0])
+            ),
+        )
+
     def apply(
         self,
         state: ParticleState,
@@ -648,95 +761,29 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         acceptance_by_half: list[tuple[float, float]] = []
         chain: list[Array] = []
         for _ in range(n_steps):
-            previous = current
-            accepted_population = xp.zeros_like(
-                current_log_prob, dtype=xp.bool
-            )
-            group_a, group_b = self._split_indices(
-                n_particles,
-                rng,
-            )
-            complementary_a = current[group_b]
             (
                 current,
                 current_log_prob,
                 current_evaluation,
-                counts_a,
-                accepted_a,
-                accepted_mask_a,
-                auxiliary_a,
-            ) = self._apply_half(
+                mutation_state,
+                sweep_counts,
+                accepted_sweep,
+                halves,
+            ) = self._sweep(
                 current,
                 current_log_prob,
                 current_evaluation,
-                group_a,
-                complementary_a,
-                kernel,
-                transform,
-                transform_auxiliary,
-                context,
-                rng,
+                mutation_state,
+                kernel=kernel,
+                transform=transform,
+                transform_auxiliary=transform_auxiliary,
+                context=context,
+                rng=rng,
             )
-            counts = counts + counts_a
-            accepted_population = xpx.at(accepted_population, group_a).set(
-                accepted_mask_a, copy=True, xp=xp
-            )
-            complementary_b = current[group_a]
-            (
-                current,
-                current_log_prob,
-                current_evaluation,
-                counts_b,
-                accepted_b,
-                accepted_mask_b,
-                auxiliary_b,
-            ) = self._apply_half(
-                current,
-                current_log_prob,
-                current_evaluation,
-                group_b,
-                complementary_b,
-                kernel,
-                transform,
-                transform_auxiliary,
-                context,
-                rng,
-            )
-            counts = counts + counts_b
-            accepted_population = xpx.at(accepted_population, group_b).set(
-                accepted_mask_b, copy=True, xp=xp
-            )
-            transition = None
-            if self.metrics.needs_transition:
-                # Restore particle-aligned auxiliary to population order.
-                order = xp.argsort(xp.concat((group_a, group_b)))
-                transition = MutationTransition(
-                    displacement=current - previous,
-                    kernel_auxiliary=optree.tree_map(
-                        lambda a, b: namespace(a, b).concat((a, b), axis=0)[
-                            order
-                        ],
-                        auxiliary_a,
-                        auxiliary_b,
-                        namespace=OPTREE_NAMESPACE,
-                    ),
-                )
-            accepted_sweep = accepted_a + accepted_b
+            counts = counts + sweep_counts
             accepted_total += accepted_sweep
             acceptance_by_step.append(accepted_sweep / n_particles)
-            acceptance_by_half.append(
-                (
-                    accepted_a / group_a.shape[0],
-                    accepted_b / group_b.shape[0],
-                )
-            )
-            mutation_state = self.metrics.update(
-                mutation_state,
-                current,
-                accepted_population,
-                context,
-                transition=transition,
-            )
+            acceptance_by_half.append((halves[0], halves[1]))
             if self._store_chains:
                 chain.append(current)
 
