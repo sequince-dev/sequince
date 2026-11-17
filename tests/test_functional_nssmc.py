@@ -368,10 +368,6 @@ def test_uncompiled_schedule_stopiteration_and_exceptions() -> None:
         ({"logging_frequency": 1}, "logging_frequency=0"),
         ({"mutation": "emcee"}, "EmceeMutation"),
         ({"mutation": "eryn"}, "ErynMutation"),
-        (
-            {"mutation": "differential-evolution"},
-            "DifferentialEvolutionMutation",
-        ),
     ],
 )
 def test_unsupported_configurations(
@@ -649,3 +645,25 @@ def test_mixed_precision_bookkeeping_and_thresholds(
         np.testing.assert_array_equal(
             jax.random.key_data(key), jax.random.key_data(expected_key)
         )
+
+
+@pytest.mark.parametrize("mode", ["functional", "compiled"])
+def test_differential_evolution_matches_eager(mode: str) -> None:
+    state = ParticleState(jnp.arange(8.0)[:, None])
+    # Dyadic proposals keep this integration comparison exact in float32;
+    # mixtures and noisy proposals are covered by the DE kernel tests.
+    options = dict(
+        mutation="differential-evolution",
+        mutation_n_steps=2,
+        mutation_kwargs={
+            "gamma": 0.5,
+            "gamma_one_probability": 0,
+            "noise_scale": 0,
+        },
+    )
+    expected, expected_key = run_mode("eager", state, **options)
+    actual, key = run_mode(mode, state, **options)
+    assert_results(actual, expected)
+    np.testing.assert_array_equal(
+        jax.random.key_data(key), jax.random.key_data(expected_key)
+    )
