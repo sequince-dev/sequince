@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Any, Callable, TypeGuard
 
 import array_api_extra as xpx
 import optree
+from acai import cond, fori_loop
 from array_api_compat import device as get_device
+from orng import RandomGenerator
 
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
@@ -35,8 +37,7 @@ from .metrics import (
 )
 
 if TYPE_CHECKING:
-    from orng import RandomGenerator
-
+    from ...smc import SMCConfig
     from ...state import ParticleState
     from ...target import Target, TargetEvaluation
 
@@ -906,4 +907,292 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
             transform_refit=transform_refit,
             store_chains=store_chains,
             metrics=metrics,
+        )
+
+    def validate_dynamic_budget_configuration(
+        self, state: ParticleState, *, max_steps: int
+    ) -> None:
+        """Validate static dynamic-execution requirements before compilation."""
+        validate_n_steps(max_steps)
+        if state.particles.ndim != 2 or state.particles.shape[0] < 4:
+            raise ValueError(
+                "Functional DE requires a 2D population of at least four particles."
+            )
+        if callable(self._transform_refit):
+            raise NotImplementedError(
+                "Callable transform_refit is not functional."
+            )
+
+    def validate_functional_configuration(
+        self, config: SMCConfig, state: ParticleState
+    ) -> None:
+        self.validate_dynamic_budget_configuration(
+            state, max_steps=self.n_steps
+        )
+
+    def initialize_functional_state_and_context(
+        self, state: ParticleState, context: StepContext
+    ) -> tuple[ParticleState, StepContext]:
+        self.validate_dynamic_budget_configuration(
+            state, max_steps=self.n_steps
+        )
+        return super().initialize_functional_state_and_context(state, context)
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, Any]:
+        state, context, random_state, output, metric_state = (
+            self.apply_dynamic_budget(
+                state,
+                context,
+                random_state,
+                n_steps=namespace(state.particles).asarray(
+                    self.n_steps, dtype="int32"
+                ),
+                max_steps=self.n_steps,
+            )
+        )
+        return (
+            state,
+            context,
+            random_state,
+            {**output, "metrics": self.metrics.result(metric_state, context)},
+        )
+
+    def apply_dynamic_budget(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+        *,
+        n_steps: Array,
+        max_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState, StepContext, Any, dict[str, Any], MutationStepState
+    ]:
+        """Run complete sweeps with fixed-capacity diagnostics under JAX.
+
+        Parameters
+        ----------
+        state : ParticleState
+            Initialized particles with shape (n_particles, n_dimensions),
+            floating dtype, and any shape-complete target cache.
+        context : StepContext
+            Initialized acceptance and optional functional transform metadata.
+        random_state : object
+            Backend-native state returned by ``orng.RandomGenerator.state()``,
+            threaded explicitly through executed sweeps. For JAX this is a
+            PRNG key array. Pass the state rather than the ORNG generator
+            object; ORNG wrappers are reconstructed internally for draws.
+        n_steps : array, shape ()
+            Integer budget in [0, max_steps]. Bounds are a caller precondition;
+            compiled runtime values are not checked.
+        max_steps : int
+            Static non-negative capacity bounding the executed sweep count.
+        mutation_state : MutationStepState or None
+            Continuing block metrics, or None to initialize a new block.
+
+        Returns
+        -------
+        state : ParticleState
+            Updated original-coordinate particles and target cache.
+        context : StepContext
+            Updated transform, acceptance metadata and evaluation counters.
+        random_state : object
+            Advanced backend-native ORNG state, unchanged when the budget is
+            zero. For JAX this is a PRNG key array.
+        output : dict
+            ``steps`` is the scalar executed count. Only this many leading rows
+            of ``acceptance_by_step`` (max_steps,) and ``acceptance_by_half``
+            (max_steps, 2) are valid. Optional ``chain`` has shape (max_steps,
+            n_particles, n_dimensions) in original coordinates. Unused rows are
+            zero. No chain buffer is allocated when storage is disabled.
+        mutation_state : MutationStepState
+            Accumulated metrics, independent of padded histories, for the block
+            owner to finalize once. ``output["metrics"]`` remains None.
+
+        Notes
+        -----
+        Call functional metadata and state/context initialization before JIT.
+        One-time initialization may fit transforms and populate target caches.
+        Block execution with a zero budget performs no transform preparation,
+        target evaluation or RNG draw. Transforms remain fixed per segment.
+        """
+        self.validate_dynamic_budget_configuration(state, max_steps=max_steps)
+        xp = namespace(state.particles)
+        if n_steps.shape != () or not xp.isdtype(n_steps.dtype, "integral"):
+            raise TypeError("n_steps must be a scalar integer array.")
+        zeros = xp.zeros((max_steps,), dtype=state.particles.dtype)
+        halves = xp.zeros((max_steps, 2), dtype=state.particles.dtype)
+        chain = (
+            xp.zeros(
+                (max_steps, *state.particles.shape),
+                dtype=state.particles.dtype,
+            )
+            if self.store_chains
+            else None
+        )
+
+        def execute(_: None) -> tuple[Any, ...]:
+            rng = RandomGenerator.from_xp(xp, generator=random_state)
+            transform, prepared = self._prepare_transform(
+                state.particles, context, rng=rng
+            )
+            current, auxiliary = self._forward_transform(
+                state.particles, transform, prepared, rng=rng
+            )
+            current = asarray(current, xp=xp, like=state.particles)
+            metrics = (
+                self.metrics.initialize(current, state.log_weights, prepared)
+                if mutation_state is None
+                else self.metrics.prepare(mutation_state, current, prepared)
+            )
+            accepted_before = metrics.n_accepted
+            log_prob, evaluation, counts = self._evaluate_log_prob(
+                current,
+                transform,
+                prepared,
+                state.evaluation,
+                auxiliary=auxiliary,
+            )
+
+            def sweep(index: Array, carry: tuple[Any, ...]) -> tuple[Any, ...]:
+                (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    counts,
+                    key,
+                    history,
+                    half_history,
+                    chains,
+                ) = carry
+                rng = RandomGenerator.from_xp(xp, generator=key)
+                (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    work,
+                    acceptance,
+                    half,
+                ) = self._sweep(
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    kernel=self.kernel,
+                    transform=transform,
+                    transform_auxiliary=auxiliary,
+                    context=prepared,
+                    rng=rng,
+                )
+                if self.store_chains:
+                    original, _ = self._inverse_transform(
+                        current, transform, prepared, auxiliary=auxiliary
+                    )
+                    chains = chains.at[index].set(original)
+                return (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    counts + work,
+                    rng.state(),
+                    history.at[index].set(acceptance / current.shape[0]),
+                    half_history.at[index].set(half),
+                    chains,
+                )
+
+            (
+                current,
+                _,
+                evaluation,
+                metrics,
+                counts,
+                key,
+                history,
+                half_history,
+                chains,
+            ) = fori_loop(
+                0,
+                n_steps,
+                sweep,
+                (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    counts,
+                    rng.state(),
+                    zeros,
+                    halves,
+                    chain,
+                ),
+                xp=xp,
+            )
+            original, _ = self._inverse_transform(
+                current, transform, prepared, auxiliary=auxiliary
+            )
+            acceptance = xp.astype(
+                metrics.n_accepted - accepted_before, current.dtype
+            ) / (current.shape[0] * n_steps)
+            prepared = prepared.add_evaluation_counts(counts).with_metadata(
+                metropolis_hastings_acceptance=acceptance
+            )
+            return (
+                state.replace_particles(original, evaluation=evaluation),
+                prepared,
+                key,
+                history,
+                half_history,
+                chains,
+                metrics,
+            )
+
+        def skip(_: None) -> tuple[Any, ...]:
+            return (
+                state,
+                context,
+                random_state,
+                zeros,
+                halves,
+                chain,
+                (
+                    self.metrics.initialize(
+                        state.particles, state.log_weights, context
+                    )
+                    if mutation_state is None
+                    else self.metrics.prepare(
+                        mutation_state, state.particles, context
+                    )
+                ),
+            )
+
+        result = (
+            skip(None)
+            if max_steps == 0
+            else cond(
+                n_steps > 0,
+                execute,
+                skip,
+                None,
+                xp=xp,
+            )
+        )
+        state, context, key, history, half_history, chain, metrics = result
+        return (
+            state,
+            context,
+            key,
+            {
+                "acceptance_by_step": history,
+                "acceptance_by_half": half_history,
+                "steps": n_steps,
+                "chain": chain,
+                "metrics": None,
+            },
+            metrics,
         )
