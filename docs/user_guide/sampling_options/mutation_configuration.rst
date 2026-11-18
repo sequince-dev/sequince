@@ -142,7 +142,7 @@ Install ``sequince[minipcn]`` and use ``mutation="minipcn"`` to select MiniPCN
 explicitly. The persistent SMC,
 nested-sampling SMC, standalone MCMC, and additional-posterior-sample helpers
 also default to differential evolution. Functional nested-sampling execution
-requires an explicit ``mutation="minipcn"`` or ``mutation="blackjax"``.
+supports DE, MiniPCN and BlackJAX with JAX-compatible targets and transforms.
 
 The helper defaults to ``particle_transform="affine"``; configure it through
 ``particle_transform_kwargs`` or pass a transform object. With default ESS
@@ -160,8 +160,8 @@ Adaptive mutation kernels
 -------------------------
 
 Adaptation can adjust the mutation budget or proposal parameters between
-iterations using completed diagnostics. The adaptation wrappers support eager
-execution only. Place conditional steps outside them, for example
+iterations using completed diagnostics. Place conditional steps outside the
+adaptation wrappers, for example
 ``MutateIfResampled(mutation_step)``.
 
 Acceptance-based mutation budgets
@@ -183,7 +183,10 @@ of transitions from the previous iteration's acceptance rate. Named
 ``mutation_n_steps`` sets the initial budget and must lie within the bounds.
 The mapping defaults to ``min_steps=0``, ``max_steps=1000``, and
 ``target_accepted_moves=5.0``. Omit it or set ``enabled=False`` to keep a fixed
-budget.
+budget. Acceptance-based budgets require ``max_steps <= 2**24``.
+
+Adaptive DE budgets also support JAX compilation. See
+:doc:`../advanced_workflows/jax_support` for running a compiled sampler.
 
 Each mutation block uses a fixed budget; its acceptance rate determines the
 next block's budget, clipped to the bounds. Accepted moves need not be

@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Support JAX JIT execution of differential-evolution mutation with adaptive
+  step budgets, including repeated mutation blocks.
+
 - Support differential-evolution scale-weight adaptation through the mutation
   step factory. ([#147](https://github.com/sequince-dev/sequince/pull/147))
 - Support acceptance-based mutation budgets through the mutation step factory.
@@ -16,6 +19,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   beta increment, including through `make_standard_bayesian_smc`'s
   `weighting_kwargs`. The default continues to use `min_delta` as the tolerance.
   ([#146](https://github.com/sequince-dev/sequince/pull/146))
+
+### Changed
+
+- Store eager mutation budgets in a complete `MutationBudgetState`, with both
+  budgets initially equal to `initial_steps` and unset iterations marked -1.
+  The adapter checkpoint now contains a `budget` mapping; old optional-field
+  adapter checkpoints are not supported. Eager and functional execution share
+  initialization and transition rules, including advancement without an update.
+
+- Use the same floating-point calculation for eager and functional acceptance
+  budgets. Near integer thresholds, eager decisions may differ from the previous
+  exact-ratio ceiling (for example, 11 rather than 12), changing subsequent RNG
+  consumption and sample paths. Acceptance policies now require `max_steps <=
+  2**24` in both modes; saved pending checkpoint decisions are preserved.
 
 ## [0.1.0] - 2026-10-29
 

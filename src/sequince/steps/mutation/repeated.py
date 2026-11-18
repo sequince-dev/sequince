@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ...array_api import namespace
 from ...utils.pytrees import pytree_dataclass
-from ..base import SMCStep, validate_n_steps
+from ..base import DynamicBudgetMutation, SMCStep, validate_n_steps
 from ..context import StepContext
 from .base import MutationStep
 from .metrics import (
@@ -15,9 +16,12 @@ from .metrics import (
     MutationMetricsOutput,
     MutationStepState,
 )
+from .metrics.base import with_metrics
 
 if TYPE_CHECKING:
+    from ...smc import SMCConfig
     from ...state import ParticleState
+    from ...typing import Array
 
 
 @pytree_dataclass(
@@ -101,10 +105,7 @@ class RepeatedMutationStep(SMCStep):
         return (
             state,
             context,
-            replace(
-                output,
-                metrics=self.metrics.result(mutation_state, context),
-            ),
+            with_metrics(output, self.metrics.result(mutation_state, context)),
         )
 
     def apply_with_mutation_state(
@@ -156,7 +157,150 @@ class RepeatedMutationStep(SMCStep):
             mutation_state,
         )
 
-    def initialize_functional_state_and_context(self, state, context):
+    def _validate_after_round(self) -> None:
+        """Require an explicit functional implementation for post-round work."""
+        if (
+            self.after_round is not None
+            and type(self.after_round).apply_functional
+            is SMCStep.apply_functional
+        ):
+            raise NotImplementedError(
+                "after_round must explicitly implement apply_functional()."
+            )
+
+    def validate_functional_configuration(
+        self,
+        config: SMCConfig,
+        state: ParticleState,
+        *,
+        max_steps: int | None = None,
+    ) -> None:
+        """Validate each child once with its effective per-round capacity."""
+        capacity = (
+            self.n_steps if max_steps is None else validate_n_steps(max_steps)
+        )
+        if isinstance(self.mutation, DynamicBudgetMutation):
+            self.mutation.validate_functional_configuration(
+                config,
+                state,
+                max_steps=(capacity + self.n_rounds - 1) // self.n_rounds,
+            )
+            self._validate_after_round()
+        elif max_steps is not None:
+            raise NotImplementedError(
+                "Repeated mutation child must support DynamicBudgetMutation."
+            )
+        else:
+            self.mutation.validate_functional_configuration(config, state)
+        if self.after_round is not None:
+            self.after_round.validate_functional_configuration(config, state)
+
+    def initialize_functional_metadata(
+        self, state: ParticleState, metadata: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        metadata = self.mutation.initialize_functional_metadata(
+            state, metadata
+        )
+        if self.after_round is not None:
+            metadata = self.after_round.initialize_functional_metadata(
+                state, metadata
+            )
+        return metadata
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, Any]:
+        if not isinstance(self.mutation, DynamicBudgetMutation):
+            # Preserve the existing static functional path for other backends.
+            return super().apply_functional(state, context, random_state)
+        state, context, random_state, output, metrics = (
+            self.apply_dynamic_budget(
+                state,
+                context,
+                random_state,
+                n_steps=namespace(state.particles).asarray(
+                    self.n_steps, dtype="int32"
+                ),
+                max_steps=self.n_steps,
+            )
+        )
+        return (
+            state,
+            context,
+            random_state,
+            with_metrics(output, self.metrics.result(metrics, context)),
+        )
+
+    def apply_dynamic_budget(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+        *,
+        n_steps: Array,
+        max_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState,
+        StepContext,
+        Any,
+        RepeatedMutationStepOutput,
+        MutationStepState,
+    ]:
+        """Split a runtime total by quotient/remainder and share metric state.
+
+        Round capacities use the same split of max_steps, so their sum is
+        exactly max_steps. Each round exposes its own executed count.
+        Post-round steps run even for zero-budget rounds.
+        """
+        validate_n_steps(max_steps)
+        if n_steps.shape != () or not namespace(n_steps).isdtype(
+            n_steps.dtype, "integral"
+        ):
+            raise TypeError("n_steps must be a scalar integer array.")
+        if not isinstance(self.mutation, DynamicBudgetMutation):
+            raise NotImplementedError(
+                "Child must support DynamicBudgetMutation."
+            )
+        self._validate_after_round()
+        quotient, remainder = n_steps // self.n_rounds, n_steps % self.n_rounds
+        max_quotient, max_remainder = divmod(max_steps, self.n_rounds)
+        outputs, after_outputs = [], []
+        for index in range(self.n_rounds):
+            state, context, random_state, output, mutation_state = (
+                self.mutation.apply_dynamic_budget(
+                    state,
+                    context,
+                    random_state,
+                    n_steps=quotient
+                    + (index < remainder).astype(n_steps.dtype),
+                    max_steps=max_quotient + (index < max_remainder),
+                    mutation_state=mutation_state,
+                )
+            )
+            outputs.append(output)
+            after_output = None
+            if self.after_round is not None:
+                state, context, random_state, after_output = (
+                    self.after_round.apply_functional(
+                        state, context, random_state
+                    )
+                )
+            after_outputs.append(after_output)
+        assert mutation_state is not None  # At least one round always runs.
+        return (
+            state,
+            context,
+            random_state,
+            RepeatedMutationStepOutput(
+                tuple(outputs), tuple(after_outputs), None
+            ),
+            mutation_state,
+        )
+
+    def initialize_functional_state_and_context(
+        self, state: ParticleState, context: StepContext
+    ) -> tuple[ParticleState, StepContext]:
         state, context = self.mutation.initialize_functional_state_and_context(
             state, context
         )

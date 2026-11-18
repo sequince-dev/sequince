@@ -649,9 +649,8 @@ def make_nested_sampling_smc(
 
     Functional execution requires JAX arrays, unconditional resampling with
     unchanged population size, logging_frequency=0, and traceable mutation
-    (BlackJAX or MiniPCN). Select one explicitly with ``mutation``; the default
-    differential-evolution mutation is not supported for functional nested
-    sampling. Use callbacks for host-side logging. Initialize with
+    (differential evolution, BlackJAX or MiniPCN). Use callbacks for host-side
+    logging. Initialize with
     run_functional or initialize_functional before compiling iterations.
     Compiled schedules must use backend operations and return a scalar array;
     positive infinity finalizes the live tail. Python StopIteration is supported

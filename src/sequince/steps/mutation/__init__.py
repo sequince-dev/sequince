@@ -1,6 +1,6 @@
 """Mutation steps, kernels, and configuration helpers."""
 
-from ..base import FixedLengthMutation
+from ..base import DynamicBudgetMutation, FixedLengthMutation
 from .adaptive import (
     AcceptanceRateRhoPolicy,
     AdaptDEScaleWeights,
@@ -10,7 +10,9 @@ from .adaptive import (
     AdaptMutationSteps,
     DEScaleWeightPolicy,
     ESJDScaleWeightPolicy,
+    FunctionalMutationStepPolicy,
     MiniPCNRhoPolicy,
+    MutationBudgetState,
     MutationStepPolicy,
     RelativeJumpDistancePolicy,
 )
@@ -91,6 +93,7 @@ __all__ = [
     "EmceeMutation",
     "ErynMutation",
     "FixedLengthMutation",
+    "DynamicBudgetMutation",
     "GaussianRandomWalk",
     "GenerativeProposal",
     "MUTATION_KERNELS",
@@ -110,6 +113,8 @@ __all__ = [
     "MutationMetric",
     "MutationMetrics",
     "MutationStep",
+    "FunctionalMutationStepPolicy",
+    "MutationBudgetState",
     "MutationStepPolicy",
     "MutateIfResampled",
     "PARTICLE_TRANSFORM_KEY",

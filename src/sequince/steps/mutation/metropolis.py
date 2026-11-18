@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Any, Callable, TypeGuard
 
 import array_api_extra as xpx
 import optree
+from acai import cond, fori_loop
 from array_api_compat import device as get_device
+from orng import RandomGenerator
 
 from ...array_api import asarray, namespace, to_numpy
 from ...target import EvaluationCounts
@@ -33,10 +35,10 @@ from .metrics import (
     MutationStepState,
     MutationTransition,
 )
+from .metrics.base import with_metrics
 
 if TYPE_CHECKING:
-    from orng import RandomGenerator
-
+    from ...smc import SMCConfig
     from ...state import ParticleState
     from ...target import Target, TargetEvaluation
 
@@ -553,6 +555,119 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             proposal.auxiliary,
         )
 
+    def _sweep(
+        self,
+        current: Array,
+        current_log_prob: Array,
+        current_evaluation: TargetEvaluation | None,
+        mutation_state: MutationStepState,
+        *,
+        kernel: ComplementaryEnsembleKernel,
+        transform: ParticleTransform | None,
+        transform_auxiliary: Any,
+        context: StepContext,
+        rng: RandomGenerator,
+    ) -> tuple[
+        Array,
+        Array,
+        TargetEvaluation | None,
+        MutationStepState,
+        EvaluationCounts,
+        Array,
+        Array,
+    ]:
+        """Execute one complete sweep, shared by eager and dynamic execution."""
+        xp = namespace(current)
+        n_particles = current.shape[0]
+        previous = current
+        accepted_population = xp.zeros_like(current_log_prob, dtype=xp.bool)
+        group_a, group_b = self._split_indices(
+            n_particles,
+            rng,
+        )
+        complementary_a = current[group_b]
+        (
+            current,
+            current_log_prob,
+            current_evaluation,
+            counts_a,
+            accepted_a,
+            accepted_mask_a,
+            auxiliary_a,
+        ) = self._apply_half(
+            current,
+            current_log_prob,
+            current_evaluation,
+            group_a,
+            complementary_a,
+            kernel,
+            transform,
+            transform_auxiliary,
+            context,
+            rng,
+        )
+        counts = counts_a
+        accepted_population = xpx.at(accepted_population, group_a).set(
+            accepted_mask_a, copy=True, xp=xp
+        )
+        complementary_b = current[group_a]
+        (
+            current,
+            current_log_prob,
+            current_evaluation,
+            counts_b,
+            accepted_b,
+            accepted_mask_b,
+            auxiliary_b,
+        ) = self._apply_half(
+            current,
+            current_log_prob,
+            current_evaluation,
+            group_b,
+            complementary_b,
+            kernel,
+            transform,
+            transform_auxiliary,
+            context,
+            rng,
+        )
+        counts = counts + counts_b
+        accepted_population = xpx.at(accepted_population, group_b).set(
+            accepted_mask_b, copy=True, xp=xp
+        )
+        transition = None
+        if self.metrics.needs_transition:
+            # Restore particle-aligned auxiliary to population order.
+            order = xp.argsort(xp.concat((group_a, group_b)))
+            transition = MutationTransition(
+                displacement=current - previous,
+                kernel_auxiliary=optree.tree_map(
+                    lambda a, b: namespace(a, b).concat((a, b), axis=0)[order],
+                    auxiliary_a,
+                    auxiliary_b,
+                    namespace=OPTREE_NAMESPACE,
+                ),
+            )
+        accepted_sweep = accepted_a + accepted_b
+        mutation_state = self.metrics.update(
+            mutation_state,
+            current,
+            accepted_population,
+            context,
+            transition=transition,
+        )
+        return (
+            current,
+            current_log_prob,
+            current_evaluation,
+            mutation_state,
+            counts,
+            accepted_sweep,
+            xp.stack(
+                (accepted_a / group_a.shape[0], accepted_b / group_b.shape[0])
+            ),
+        )
+
     def apply(
         self,
         state: ParticleState,
@@ -562,6 +677,87 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         return self.apply_with_n_steps(
             state, context, rng, n_steps=self._n_steps
         )
+
+    def _prepare_block(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: RandomGenerator,
+        mutation_state: MutationStepState | None,
+    ) -> tuple[
+        Array,
+        ParticleTransform | None,
+        Any,
+        StepContext,
+        MutationStepState,
+        Array,
+        TargetEvaluation | None,
+        EvaluationCounts,
+    ]:
+        """Prepare coordinates, metrics and starting density for a segment."""
+        transform, context = self._prepare_transform(
+            state.particles, context, rng=rng
+        )
+        current, auxiliary = self._forward_transform(
+            state.particles, transform, context, rng=rng
+        )
+        current = asarray(current, like=state.particles)
+        metrics = self._prepare_block_metrics(
+            current, state, context, mutation_state
+        )
+        if current.shape[0] < 2:
+            raise ValueError(
+                "A red-blue update requires at least two particles."
+            )
+        log_prob, evaluation, counts = self._evaluate_log_prob(
+            current, transform, context, state.evaluation, auxiliary=auxiliary
+        )
+        return (
+            current,
+            transform,
+            auxiliary,
+            context,
+            metrics,
+            log_prob,
+            evaluation,
+            counts,
+        )
+
+    def _prepare_block_metrics(
+        self,
+        current: Array,
+        state: ParticleState,
+        context: StepContext,
+        mutation_state: MutationStepState | None,
+    ) -> MutationStepState:
+        """Start metrics or continue the enclosing block in current coordinates."""
+        return (
+            self.metrics.initialize(current, state.log_weights, context)
+            if mutation_state is None
+            else self.metrics.prepare(mutation_state, current, context)
+        )
+
+    def _finish_block(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        current: Array,
+        evaluation: TargetEvaluation | None,
+        counts: EvaluationCounts,
+        acceptance: Array | float,
+        transform: ParticleTransform | None,
+        auxiliary: Any,
+    ) -> tuple[ParticleState, StepContext]:
+        """Return to physical coordinates and record completed segment work."""
+        particles, _ = self._inverse_transform(
+            current, transform, context, auxiliary=auxiliary
+        )
+        context = context.add_evaluation_counts(counts).with_metadata(
+            metropolis_hastings_acceptance=acceptance
+        )
+        return state.replace_particles(
+            particles, evaluation=evaluation
+        ), context
 
     def apply_with_mutation_state(
         self,
@@ -578,14 +774,8 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
-            mutation_state = (
-                self.metrics.initialize(
-                    state.particles, state.log_weights, context
-                )
-                if mutation_state is None
-                else self.metrics.prepare(
-                    mutation_state, state.particles, context
-                )
+            mutation_state = self._prepare_block_metrics(
+                state.particles, state, context, mutation_state
             )
             empty_chain = (
                 xp.empty(
@@ -609,143 +799,49 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 mutation_state,
             )
         xp = namespace(state.particles)
-        transform, context = self._prepare_transform(
-            state.particles,
-            context,
-            rng=rng,
-        )
-        current, transform_auxiliary = self._forward_transform(
-            state.particles,
-            transform,
-            context,
-            rng=rng,
-        )
-        current = asarray(current, xp=xp, like=state.particles)
-        n_particles = current.shape[0]
-        mutation_state = (
-            self.metrics.initialize(current, state.log_weights, context)
-            if mutation_state is None
-            else self.metrics.prepare(mutation_state, current, context)
-        )
-        if n_particles < 2:
-            raise ValueError(
-                "A red-blue update requires at least two particles."
-            )
         (
+            current,
+            transform,
+            transform_auxiliary,
+            context,
+            mutation_state,
             current_log_prob,
             current_evaluation,
             counts,
-        ) = self._evaluate_log_prob(
-            current,
-            transform,
-            context,
-            state.evaluation,
-            auxiliary=transform_auxiliary,
-        )
+        ) = self._prepare_block(state, context, rng, mutation_state)
+        n_particles = current.shape[0]
 
         accepted_total = 0
         acceptance_by_step: list[float] = []
         acceptance_by_half: list[tuple[float, float]] = []
         chain: list[Array] = []
         for _ in range(n_steps):
-            previous = current
-            accepted_population = xp.zeros_like(
-                current_log_prob, dtype=xp.bool
-            )
-            group_a, group_b = self._split_indices(
-                n_particles,
-                rng,
-            )
-            complementary_a = current[group_b]
             (
                 current,
                 current_log_prob,
                 current_evaluation,
-                counts_a,
-                accepted_a,
-                accepted_mask_a,
-                auxiliary_a,
-            ) = self._apply_half(
+                mutation_state,
+                sweep_counts,
+                accepted_sweep,
+                halves,
+            ) = self._sweep(
                 current,
                 current_log_prob,
                 current_evaluation,
-                group_a,
-                complementary_a,
-                kernel,
-                transform,
-                transform_auxiliary,
-                context,
-                rng,
+                mutation_state,
+                kernel=kernel,
+                transform=transform,
+                transform_auxiliary=transform_auxiliary,
+                context=context,
+                rng=rng,
             )
-            counts = counts + counts_a
-            accepted_population = xpx.at(accepted_population, group_a).set(
-                accepted_mask_a, copy=True, xp=xp
-            )
-            complementary_b = current[group_a]
-            (
-                current,
-                current_log_prob,
-                current_evaluation,
-                counts_b,
-                accepted_b,
-                accepted_mask_b,
-                auxiliary_b,
-            ) = self._apply_half(
-                current,
-                current_log_prob,
-                current_evaluation,
-                group_b,
-                complementary_b,
-                kernel,
-                transform,
-                transform_auxiliary,
-                context,
-                rng,
-            )
-            counts = counts + counts_b
-            accepted_population = xpx.at(accepted_population, group_b).set(
-                accepted_mask_b, copy=True, xp=xp
-            )
-            transition = None
-            if self.metrics.needs_transition:
-                # Restore particle-aligned auxiliary to population order.
-                order = xp.argsort(xp.concat((group_a, group_b)))
-                transition = MutationTransition(
-                    displacement=current - previous,
-                    kernel_auxiliary=optree.tree_map(
-                        lambda a, b: namespace(a, b).concat((a, b), axis=0)[
-                            order
-                        ],
-                        auxiliary_a,
-                        auxiliary_b,
-                        namespace=OPTREE_NAMESPACE,
-                    ),
-                )
-            accepted_sweep = accepted_a + accepted_b
+            counts = counts + sweep_counts
             accepted_total += accepted_sweep
             acceptance_by_step.append(accepted_sweep / n_particles)
-            acceptance_by_half.append(
-                (
-                    accepted_a / group_a.shape[0],
-                    accepted_b / group_b.shape[0],
-                )
-            )
-            mutation_state = self.metrics.update(
-                mutation_state,
-                current,
-                accepted_population,
-                context,
-                transition=transition,
-            )
+            acceptance_by_half.append((halves[0], halves[1]))
             if self._store_chains:
                 chain.append(current)
 
-        new_particles, _ = self._inverse_transform(
-            current,
-            transform,
-            context,
-            auxiliary=transform_auxiliary,
-        )
         acceptance = accepted_total / (n_particles * n_steps)
         stored_chain = None
         if self._store_chains:
@@ -756,8 +852,15 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 auxiliary=transform_auxiliary,
                 like=state.particles,
             )
-        context = context.add_evaluation_counts(counts).with_metadata(
-            metropolis_hastings_acceptance=acceptance
+        state, context = self._finish_block(
+            state,
+            context,
+            current,
+            current_evaluation,
+            counts,
+            acceptance,
+            transform,
+            transform_auxiliary,
         )
         logger.debug(
             "RedBlueMetropolisHastingsMutation completed: acceptance=%.3f "
@@ -773,10 +876,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             "metrics": None,
         }
         return (
-            state.replace_particles(
-                new_particles,
-                evaluation=current_evaluation,
-            ),
+            state,
             context,
             output,
             mutation_state,
@@ -859,4 +959,278 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
             transform_refit=transform_refit,
             store_chains=store_chains,
             metrics=metrics,
+        )
+
+    def _validate_dynamic_budget(
+        self, state: ParticleState, *, max_steps: int
+    ) -> None:
+        """Validate static dynamic-execution requirements before compilation."""
+        validate_n_steps(max_steps)
+        if state.particles.ndim != 2 or state.particles.shape[0] < 4:
+            raise ValueError(
+                "Functional DE requires a 2D population of at least four particles."
+            )
+        if callable(self._transform_refit):
+            raise NotImplementedError(
+                "Callable transform_refit is not functional."
+            )
+
+    def validate_functional_configuration(
+        self,
+        config: SMCConfig,
+        state: ParticleState,
+        *,
+        max_steps: int | None = None,
+    ) -> None:
+        """Validate the effective capacity supplied by an enclosing adapter."""
+        self._validate_dynamic_budget(
+            state, max_steps=self.n_steps if max_steps is None else max_steps
+        )
+
+    def apply_functional(
+        self, state: ParticleState, context: StepContext, random_state: Any
+    ) -> tuple[ParticleState, StepContext, Any, Any]:
+        state, context, random_state, output, metric_state = (
+            self.apply_dynamic_budget(
+                state,
+                context,
+                random_state,
+                n_steps=namespace(state.particles).asarray(
+                    self.n_steps, dtype="int32"
+                ),
+                max_steps=self.n_steps,
+            )
+        )
+        return (
+            state,
+            context,
+            random_state,
+            with_metrics(output, self.metrics.result(metric_state, context)),
+        )
+
+    def apply_dynamic_budget(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        random_state: Any,
+        *,
+        n_steps: Array,
+        max_steps: int,
+        mutation_state: MutationStepState | None = None,
+    ) -> tuple[
+        ParticleState, StepContext, Any, dict[str, Any], MutationStepState
+    ]:
+        """Run complete sweeps with fixed-capacity diagnostics under JAX.
+
+        Parameters
+        ----------
+        state : ParticleState
+            Initialized particles with shape (n_particles, n_dimensions),
+            floating dtype, and any shape-complete target cache.
+        context : StepContext
+            Initialized acceptance and optional functional transform metadata.
+        random_state : object
+            Backend-native state returned by ``orng.RandomGenerator.state()``,
+            threaded explicitly through executed sweeps. For JAX this is a
+            PRNG key array. Pass the state rather than the ORNG generator
+            object; ORNG wrappers are reconstructed internally for draws.
+        n_steps : array, shape ()
+            Integer budget in [0, max_steps]. Bounds are a caller precondition;
+            compiled runtime values are not checked.
+        max_steps : int
+            Static non-negative capacity bounding the executed sweep count.
+        mutation_state : MutationStepState or None
+            Continuing block metrics, or None to initialize a new block.
+
+        Returns
+        -------
+        state : ParticleState
+            Updated original-coordinate particles and target cache.
+        context : StepContext
+            Updated transform, acceptance metadata and evaluation counters.
+        random_state : object
+            Advanced backend-native ORNG state, unchanged when the budget is
+            zero. For JAX this is a PRNG key array.
+        output : dict
+            ``steps`` is the scalar executed count. Only this many leading rows
+            of ``acceptance_by_step`` (max_steps,) and ``acceptance_by_half``
+            (max_steps, 2) are valid. Optional ``chain`` has shape (max_steps,
+            n_particles, n_dimensions) in original coordinates. Unused rows are
+            zero. No chain buffer is allocated when storage is disabled.
+        mutation_state : MutationStepState
+            Accumulated metrics, independent of padded histories, for the block
+            owner to finalize once. ``output["metrics"]`` remains None.
+
+        Notes
+        -----
+        Call functional metadata and state/context initialization before JIT.
+        One-time initialization may fit transforms and populate target caches.
+        Block execution with a zero budget performs no transform preparation,
+        target evaluation or RNG draw. Transforms remain fixed per segment.
+        """
+        self._validate_dynamic_budget(state, max_steps=max_steps)
+        xp = namespace(state.particles)
+        if n_steps.shape != () or not xp.isdtype(n_steps.dtype, "integral"):
+            raise TypeError("n_steps must be a scalar integer array.")
+        zeros = xp.zeros((max_steps,), dtype=state.particles.dtype)
+        halves = xp.zeros((max_steps, 2), dtype=state.particles.dtype)
+        chain = (
+            xp.zeros(
+                (max_steps, *state.particles.shape),
+                dtype=state.particles.dtype,
+            )
+            if self.store_chains
+            else None
+        )
+
+        def execute(_: None) -> tuple[Any, ...]:
+            rng = RandomGenerator.from_xp(xp, generator=random_state)
+            (
+                current,
+                transform,
+                auxiliary,
+                prepared,
+                metrics,
+                log_prob,
+                evaluation,
+                counts,
+            ) = self._prepare_block(state, context, rng, mutation_state)
+            accepted_before = metrics.n_accepted
+
+            def sweep(index: Array, carry: tuple[Any, ...]) -> tuple[Any, ...]:
+                (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    counts,
+                    key,
+                    history,
+                    half_history,
+                    chains,
+                ) = carry
+                rng = RandomGenerator.from_xp(xp, generator=key)
+                (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    work,
+                    acceptance,
+                    half,
+                ) = self._sweep(
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    kernel=self.kernel,
+                    transform=transform,
+                    transform_auxiliary=auxiliary,
+                    context=prepared,
+                    rng=rng,
+                )
+                if self.store_chains:
+                    original, _ = self._inverse_transform(
+                        current, transform, prepared, auxiliary=auxiliary
+                    )
+                    chains = chains.at[index].set(original)
+                return (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    counts + work,
+                    rng.state(),
+                    history.at[index].set(acceptance / current.shape[0]),
+                    half_history.at[index].set(half),
+                    chains,
+                )
+
+            (
+                current,
+                _,
+                evaluation,
+                metrics,
+                counts,
+                key,
+                history,
+                half_history,
+                chains,
+            ) = fori_loop(
+                0,
+                n_steps,
+                sweep,
+                (
+                    current,
+                    log_prob,
+                    evaluation,
+                    metrics,
+                    counts,
+                    rng.state(),
+                    zeros,
+                    halves,
+                    chain,
+                ),
+                xp=xp,
+            )
+            acceptance = xp.astype(
+                metrics.n_accepted - accepted_before, current.dtype
+            ) / (current.shape[0] * n_steps)
+            updated, prepared = self._finish_block(
+                state,
+                prepared,
+                current,
+                evaluation,
+                counts,
+                acceptance,
+                transform,
+                auxiliary,
+            )
+            return (
+                updated,
+                prepared,
+                key,
+                history,
+                half_history,
+                chains,
+                metrics,
+            )
+
+        def skip(_: None) -> tuple[Any, ...]:
+            return (
+                state,
+                context,
+                random_state,
+                zeros,
+                halves,
+                chain,
+                self._prepare_block_metrics(
+                    state.particles, state, context, mutation_state
+                ),
+            )
+
+        result = (
+            skip(None)
+            if max_steps == 0
+            else cond(
+                n_steps > 0,
+                execute,
+                skip,
+                None,
+                xp=xp,
+            )
+        )
+        state, context, key, history, half_history, chain, metrics = result
+        return (
+            state,
+            context,
+            key,
+            {
+                "acceptance_by_step": history,
+                "acceptance_by_half": half_history,
+                "steps": n_steps,
+                "chain": chain,
+                "metrics": None,
+            },
+            metrics,
         )

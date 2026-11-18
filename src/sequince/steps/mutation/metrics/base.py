@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Protocol, overload
 
 from ....array_api import asarray, namespace
 from ....typing import Array
@@ -157,6 +157,14 @@ class MutationMetrics:
             n_accepted=metric_state.n_accepted
             + xp.sum(asarray(accepted, xp=xp)),
         )
+
+    @overload
+    def result(
+        self, metric_state: MutationStepState, context: StepContext
+    ) -> MutationMetricsOutput: ...
+
+    @overload
+    def result(self, metric_state: None, context: StepContext) -> None: ...
 
     def result(
         self,
