@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 
 _Scalar = TypeVar("_Scalar", int, Array)
-_Result = TypeVar("_Result")
 
 
 class AdaptMutationSteps(AdaptiveMutationStep):
@@ -224,18 +223,13 @@ class AdaptMutationSteps(AdaptiveMutationStep):
     def validate_functional_configuration(
         self, config: SMCConfig, state: ParticleState
     ) -> None:
-        self._functional_policy().validate_functional_configuration()
-        self._dynamic_child().validate_dynamic_budget_configuration(
-            state, max_steps=self._max_steps
+        self._dynamic_child().validate_functional_configuration(
+            config, state, max_steps=self._max_steps
         )
-        self._dynamic_child().validate_functional_configuration(config, state)
 
     def initialize_functional_state_and_context(
         self, state: ParticleState, context: StepContext
     ) -> tuple[ParticleState, StepContext]:
-        self._dynamic_child().validate_dynamic_budget_configuration(
-            state, max_steps=self._max_steps
-        )
         return self._dynamic_child().initialize_functional_state_and_context(
             state, context
         )
@@ -272,20 +266,6 @@ class AdaptMutationSteps(AdaptiveMutationStep):
         """The pending budget, initially equal to initial_steps."""
         return self._budget.next_n_steps
 
-    @staticmethod
-    def _budget_cond(
-        predicate: bool | Array,
-        yes: Callable[[], _Result],
-        no: Callable[[], _Result],
-        *,
-        xp: Any | None,
-    ) -> _Result:
-        # Host policies can have side effects; call only the selected branch.
-        # Array predicates use compiled control flow, never Python truth tests.
-        if xp is None:
-            return yes() if predicate else no()
-        return cond(predicate, lambda _: yes(), lambda _: no(), None, xp=xp)
-
     def _bound_policy_decision(
         self, value: int | Array, *, xp: Any | None = None
     ) -> int | Array:
@@ -305,12 +285,15 @@ class AdaptMutationSteps(AdaptiveMutationStep):
     ) -> MutationBudgetState[_Scalar]:
         """Choose once, clip, and freeze; promote pending on advancement."""
 
-        def prepare() -> MutationBudgetState[_Scalar]:
-            budget = self._budget_cond(
+        control_xp = namespace() if xp is None else xp
+
+        def prepare(_: None) -> MutationBudgetState[_Scalar]:
+            budget = cond(
                 carry.current_iteration >= 0,
-                lambda: carry.next_n_steps,
-                initialise,
-                xp=xp,
+                lambda _: carry.next_n_steps,
+                lambda _: initialise(),
+                None,
+                xp=control_xp,
             )
             budget = self._bound_policy_decision(budget, xp=xp)
             return replace(
@@ -320,11 +303,12 @@ class AdaptMutationSteps(AdaptiveMutationStep):
                 next_n_steps=budget,
             )
 
-        return self._budget_cond(
+        return cond(
             carry.current_iteration == iteration,
-            lambda: carry,
+            lambda _: carry,
             prepare,
-            xp=xp,
+            None,
+            xp=control_xp,
         )
 
     def _update_budget(
@@ -336,19 +320,20 @@ class AdaptMutationSteps(AdaptiveMutationStep):
     ) -> MutationBudgetState[_Scalar]:
         """Accept the first completed block's bounded pending decision."""
 
-        def update() -> MutationBudgetState[_Scalar]:
+        def update(_: None) -> MutationBudgetState[_Scalar]:
             return replace(
                 carry,
                 next_n_steps=self._bound_policy_decision(propose(), xp=xp),
                 last_updated_iteration=carry.current_iteration,
             )
 
-        return self._budget_cond(
+        return cond(
             (carry.current_iteration >= 0)
             & (carry.last_updated_iteration != carry.current_iteration),
             update,
-            lambda: carry,
-            xp=xp,
+            lambda _: carry,
+            None,
+            xp=namespace() if xp is None else xp,
         )
 
     def _freeze_budget(self, context: StepContext) -> int:

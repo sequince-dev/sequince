@@ -41,6 +41,17 @@ class CachedGaussian(Target):
 
 
 def initialize(step: Any, state: ParticleState) -> tuple[Any, Any]:
+    from sequince.smc import SMCConfig
+
+    step.validate_functional_configuration(
+        SMCConfig(
+            steps=(step,),
+            callbacks=(),
+            checkpoint_writers=(),
+            auto_normalize=True,
+        ),
+        state,
+    )
     context = StepContext(
         t=jnp.asarray(0, dtype=jnp.int32),
         metadata=step.initialize_functional_metadata(state, {}),
@@ -428,3 +439,65 @@ def test_compiled_adapter_pipeline_signature() -> None:
     assert int(carry.current_iteration) == 3
     assert int(carry.last_updated_iteration) == 3
     assert int(carry.current_n_steps) > 1
+
+
+def test_validation_uses_effective_capacity_once() -> None:
+    capacities: list[int] = []
+
+    class RecordingDE(DifferentialEvolutionMutation):
+        def _validate_dynamic_budget(
+            self, state: ParticleState, *, max_steps: int
+        ) -> None:
+            capacities.append(max_steps)
+            super()._validate_dynamic_budget(state, max_steps=max_steps)
+
+    step = AdaptMutationSteps(
+        RepeatedMutationStep(RecordingDE(gaussian, n_steps=99), n_rounds=3),
+        initial_steps=1,
+        min_steps=0,
+        max_steps=7,
+    )
+    initialize(step, ParticleState(jnp.ones((5, 2))))
+    assert capacities == [3]
+
+
+@pytest.mark.parametrize("repeated", [False, True])
+@pytest.mark.parametrize("budget", [jnp.array([1]), jnp.array(1.0)])
+def test_direct_dynamic_budget_rejects_invalid_arguments(
+    repeated: bool, budget: Any
+) -> None:
+    child = DifferentialEvolutionMutation(gaussian)
+    step = RepeatedMutationStep(child) if repeated else child
+    state, context = initialize(step, ParticleState(jnp.ones((5, 2))))
+    key = jax.random.key(0)
+    with pytest.raises(TypeError, match="scalar integer"):
+        step.apply_dynamic_budget(
+            state, context, key, n_steps=budget, max_steps=2
+        )
+    with pytest.raises(ValueError, match="n_steps"):
+        step.apply_dynamic_budget(
+            state, context, key, n_steps=jnp.array(1), max_steps=-1
+        )
+
+
+def test_repeated_rejects_eager_child_for_dynamic_budget() -> None:
+    from sequince.steps.mutation import (
+        GaussianRandomWalk,
+        MetropolisHastingsMutation,
+    )
+
+    child = RepeatedMutationStep(
+        MetropolisHastingsMutation(gaussian, GaussianRandomWalk())
+    )
+    step = AdaptMutationSteps(child, initial_steps=1, min_steps=0, max_steps=5)
+    state = ParticleState(jnp.ones((5, 2)))
+    with pytest.raises(NotImplementedError, match="DynamicBudgetMutation"):
+        initialize(step, state)
+    with pytest.raises(NotImplementedError, match="DynamicBudgetMutation"):
+        child.apply_dynamic_budget(
+            state,
+            StepContext(t=0),
+            jax.random.key(0),
+            n_steps=jnp.array(1),
+            max_steps=5,
+        )

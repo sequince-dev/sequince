@@ -35,6 +35,7 @@ from .metrics import (
     MutationStepState,
     MutationTransition,
 )
+from .metrics.base import with_metrics
 
 if TYPE_CHECKING:
     from ...smc import SMCConfig
@@ -677,6 +678,87 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             state, context, rng, n_steps=self._n_steps
         )
 
+    def _prepare_block(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        rng: RandomGenerator,
+        mutation_state: MutationStepState | None,
+    ) -> tuple[
+        Array,
+        ParticleTransform | None,
+        Any,
+        StepContext,
+        MutationStepState,
+        Array,
+        TargetEvaluation | None,
+        EvaluationCounts,
+    ]:
+        """Prepare coordinates, metrics and starting density for a segment."""
+        transform, context = self._prepare_transform(
+            state.particles, context, rng=rng
+        )
+        current, auxiliary = self._forward_transform(
+            state.particles, transform, context, rng=rng
+        )
+        current = asarray(current, like=state.particles)
+        metrics = self._prepare_block_metrics(
+            current, state, context, mutation_state
+        )
+        if current.shape[0] < 2:
+            raise ValueError(
+                "A red-blue update requires at least two particles."
+            )
+        log_prob, evaluation, counts = self._evaluate_log_prob(
+            current, transform, context, state.evaluation, auxiliary=auxiliary
+        )
+        return (
+            current,
+            transform,
+            auxiliary,
+            context,
+            metrics,
+            log_prob,
+            evaluation,
+            counts,
+        )
+
+    def _prepare_block_metrics(
+        self,
+        current: Array,
+        state: ParticleState,
+        context: StepContext,
+        mutation_state: MutationStepState | None,
+    ) -> MutationStepState:
+        """Start metrics or continue the enclosing block in current coordinates."""
+        return (
+            self.metrics.initialize(current, state.log_weights, context)
+            if mutation_state is None
+            else self.metrics.prepare(mutation_state, current, context)
+        )
+
+    def _finish_block(
+        self,
+        state: ParticleState,
+        context: StepContext,
+        current: Array,
+        evaluation: TargetEvaluation | None,
+        counts: EvaluationCounts,
+        acceptance: Array | float,
+        transform: ParticleTransform | None,
+        auxiliary: Any,
+    ) -> tuple[ParticleState, StepContext]:
+        """Return to physical coordinates and record completed segment work."""
+        particles, _ = self._inverse_transform(
+            current, transform, context, auxiliary=auxiliary
+        )
+        context = context.add_evaluation_counts(counts).with_metadata(
+            metropolis_hastings_acceptance=acceptance
+        )
+        return state.replace_particles(
+            particles, evaluation=evaluation
+        ), context
+
     def apply_with_mutation_state(
         self,
         state: ParticleState,
@@ -692,14 +774,8 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
         n_steps = validate_n_steps(n_steps)
         if n_steps == 0:
             xp = namespace(state.particles)
-            mutation_state = (
-                self.metrics.initialize(
-                    state.particles, state.log_weights, context
-                )
-                if mutation_state is None
-                else self.metrics.prepare(
-                    mutation_state, state.particles, context
-                )
+            mutation_state = self._prepare_block_metrics(
+                state.particles, state, context, mutation_state
             )
             empty_chain = (
                 xp.empty(
@@ -723,39 +799,17 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 mutation_state,
             )
         xp = namespace(state.particles)
-        transform, context = self._prepare_transform(
-            state.particles,
-            context,
-            rng=rng,
-        )
-        current, transform_auxiliary = self._forward_transform(
-            state.particles,
-            transform,
-            context,
-            rng=rng,
-        )
-        current = asarray(current, xp=xp, like=state.particles)
-        n_particles = current.shape[0]
-        mutation_state = (
-            self.metrics.initialize(current, state.log_weights, context)
-            if mutation_state is None
-            else self.metrics.prepare(mutation_state, current, context)
-        )
-        if n_particles < 2:
-            raise ValueError(
-                "A red-blue update requires at least two particles."
-            )
         (
+            current,
+            transform,
+            transform_auxiliary,
+            context,
+            mutation_state,
             current_log_prob,
             current_evaluation,
             counts,
-        ) = self._evaluate_log_prob(
-            current,
-            transform,
-            context,
-            state.evaluation,
-            auxiliary=transform_auxiliary,
-        )
+        ) = self._prepare_block(state, context, rng, mutation_state)
+        n_particles = current.shape[0]
 
         accepted_total = 0
         acceptance_by_step: list[float] = []
@@ -788,12 +842,6 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             if self._store_chains:
                 chain.append(current)
 
-        new_particles, _ = self._inverse_transform(
-            current,
-            transform,
-            context,
-            auxiliary=transform_auxiliary,
-        )
         acceptance = accepted_total / (n_particles * n_steps)
         stored_chain = None
         if self._store_chains:
@@ -804,8 +852,15 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
                 auxiliary=transform_auxiliary,
                 like=state.particles,
             )
-        context = context.add_evaluation_counts(counts).with_metadata(
-            metropolis_hastings_acceptance=acceptance
+        state, context = self._finish_block(
+            state,
+            context,
+            current,
+            current_evaluation,
+            counts,
+            acceptance,
+            transform,
+            transform_auxiliary,
         )
         logger.debug(
             "RedBlueMetropolisHastingsMutation completed: acceptance=%.3f "
@@ -821,10 +876,7 @@ class RedBlueMetropolisHastingsMutation(MetropolisHastingsMutation):
             "metrics": None,
         }
         return (
-            state.replace_particles(
-                new_particles,
-                evaluation=current_evaluation,
-            ),
+            state,
             context,
             output,
             mutation_state,
@@ -909,7 +961,7 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
             metrics=metrics,
         )
 
-    def validate_dynamic_budget_configuration(
+    def _validate_dynamic_budget(
         self, state: ParticleState, *, max_steps: int
     ) -> None:
         """Validate static dynamic-execution requirements before compilation."""
@@ -924,19 +976,16 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
             )
 
     def validate_functional_configuration(
-        self, config: SMCConfig, state: ParticleState
+        self,
+        config: SMCConfig,
+        state: ParticleState,
+        *,
+        max_steps: int | None = None,
     ) -> None:
-        self.validate_dynamic_budget_configuration(
-            state, max_steps=self.n_steps
+        """Validate the effective capacity supplied by an enclosing adapter."""
+        self._validate_dynamic_budget(
+            state, max_steps=self.n_steps if max_steps is None else max_steps
         )
-
-    def initialize_functional_state_and_context(
-        self, state: ParticleState, context: StepContext
-    ) -> tuple[ParticleState, StepContext]:
-        self.validate_dynamic_budget_configuration(
-            state, max_steps=self.n_steps
-        )
-        return super().initialize_functional_state_and_context(state, context)
 
     def apply_functional(
         self, state: ParticleState, context: StepContext, random_state: Any
@@ -956,7 +1005,7 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
             state,
             context,
             random_state,
-            {**output, "metrics": self.metrics.result(metric_state, context)},
+            with_metrics(output, self.metrics.result(metric_state, context)),
         )
 
     def apply_dynamic_budget(
@@ -1019,7 +1068,7 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
         Block execution with a zero budget performs no transform preparation,
         target evaluation or RNG draw. Transforms remain fixed per segment.
         """
-        self.validate_dynamic_budget_configuration(state, max_steps=max_steps)
+        self._validate_dynamic_budget(state, max_steps=max_steps)
         xp = namespace(state.particles)
         if n_steps.shape != () or not xp.isdtype(n_steps.dtype, "integral"):
             raise TypeError("n_steps must be a scalar integer array.")
@@ -1036,26 +1085,17 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
 
         def execute(_: None) -> tuple[Any, ...]:
             rng = RandomGenerator.from_xp(xp, generator=random_state)
-            transform, prepared = self._prepare_transform(
-                state.particles, context, rng=rng
-            )
-            current, auxiliary = self._forward_transform(
-                state.particles, transform, prepared, rng=rng
-            )
-            current = asarray(current, xp=xp, like=state.particles)
-            metrics = (
-                self.metrics.initialize(current, state.log_weights, prepared)
-                if mutation_state is None
-                else self.metrics.prepare(mutation_state, current, prepared)
-            )
-            accepted_before = metrics.n_accepted
-            log_prob, evaluation, counts = self._evaluate_log_prob(
+            (
                 current,
                 transform,
+                auxiliary,
                 prepared,
-                state.evaluation,
-                auxiliary=auxiliary,
-            )
+                metrics,
+                log_prob,
+                evaluation,
+                counts,
+            ) = self._prepare_block(state, context, rng, mutation_state)
+            accepted_before = metrics.n_accepted
 
             def sweep(index: Array, carry: tuple[Any, ...]) -> tuple[Any, ...]:
                 (
@@ -1133,17 +1173,21 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
                 ),
                 xp=xp,
             )
-            original, _ = self._inverse_transform(
-                current, transform, prepared, auxiliary=auxiliary
-            )
             acceptance = xp.astype(
                 metrics.n_accepted - accepted_before, current.dtype
             ) / (current.shape[0] * n_steps)
-            prepared = prepared.add_evaluation_counts(counts).with_metadata(
-                metropolis_hastings_acceptance=acceptance
+            updated, prepared = self._finish_block(
+                state,
+                prepared,
+                current,
+                evaluation,
+                counts,
+                acceptance,
+                transform,
+                auxiliary,
             )
             return (
-                state.replace_particles(original, evaluation=evaluation),
+                updated,
                 prepared,
                 key,
                 history,
@@ -1160,14 +1204,8 @@ class DifferentialEvolutionMutation(RedBlueMetropolisHastingsMutation):
                 zeros,
                 halves,
                 chain,
-                (
-                    self.metrics.initialize(
-                        state.particles, state.log_weights, context
-                    )
-                    if mutation_state is None
-                    else self.metrics.prepare(
-                        mutation_state, state.particles, context
-                    )
+                self._prepare_block_metrics(
+                    state.particles, state, context, mutation_state
                 ),
             )
 

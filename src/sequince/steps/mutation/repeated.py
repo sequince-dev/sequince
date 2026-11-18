@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ...array_api import namespace
 from ...utils.pytrees import pytree_dataclass
 from ..base import DynamicBudgetMutation, SMCStep, validate_n_steps
 from ..context import StepContext
@@ -15,6 +16,7 @@ from .metrics import (
     MutationMetricsOutput,
     MutationStepState,
 )
+from .metrics.base import with_metrics
 
 if TYPE_CHECKING:
     from ...smc import SMCConfig
@@ -103,10 +105,7 @@ class RepeatedMutationStep(SMCStep):
         return (
             state,
             context,
-            replace(
-                output,
-                metrics=self.metrics.result(mutation_state, context),
-            ),
+            with_metrics(output, self.metrics.result(mutation_state, context)),
         )
 
     def apply_with_mutation_state(
@@ -158,18 +157,8 @@ class RepeatedMutationStep(SMCStep):
             mutation_state,
         )
 
-    def validate_dynamic_budget_configuration(
-        self, state: ParticleState, *, max_steps: int
-    ) -> None:
-        """Reject unsupported children and post-round steps before tracing."""
-        validate_n_steps(max_steps)
-        if not isinstance(self.mutation, DynamicBudgetMutation):
-            raise NotImplementedError(
-                "Repeated mutation child must support DynamicBudgetMutation."
-            )
-        self.mutation.validate_dynamic_budget_configuration(
-            state, max_steps=(max_steps + self.n_rounds - 1) // self.n_rounds
-        )
+    def _validate_after_round(self) -> None:
+        """Require an explicit functional implementation for post-round work."""
         if (
             self.after_round is not None
             and type(self.after_round).apply_functional
@@ -180,13 +169,29 @@ class RepeatedMutationStep(SMCStep):
             )
 
     def validate_functional_configuration(
-        self, config: SMCConfig, state: ParticleState
+        self,
+        config: SMCConfig,
+        state: ParticleState,
+        *,
+        max_steps: int | None = None,
     ) -> None:
+        """Validate each child once with its effective per-round capacity."""
+        capacity = (
+            self.n_steps if max_steps is None else validate_n_steps(max_steps)
+        )
         if isinstance(self.mutation, DynamicBudgetMutation):
-            self.validate_dynamic_budget_configuration(
-                state, max_steps=self.n_steps
+            self.mutation.validate_functional_configuration(
+                config,
+                state,
+                max_steps=(capacity + self.n_rounds - 1) // self.n_rounds,
             )
-        self.mutation.validate_functional_configuration(config, state)
+            self._validate_after_round()
+        elif max_steps is not None:
+            raise NotImplementedError(
+                "Repeated mutation child must support DynamicBudgetMutation."
+            )
+        else:
+            self.mutation.validate_functional_configuration(config, state)
         if self.after_round is not None:
             self.after_round.validate_functional_configuration(config, state)
 
@@ -208,8 +213,6 @@ class RepeatedMutationStep(SMCStep):
         if not isinstance(self.mutation, DynamicBudgetMutation):
             # Preserve the existing static functional path for other backends.
             return super().apply_functional(state, context, random_state)
-        from ...array_api import namespace
-
         state, context, random_state, output, metrics = (
             self.apply_dynamic_budget(
                 state,
@@ -225,7 +228,7 @@ class RepeatedMutationStep(SMCStep):
             state,
             context,
             random_state,
-            replace(output, metrics=self.metrics.result(metrics, context)),
+            with_metrics(output, self.metrics.result(metrics, context)),
         )
 
     def apply_dynamic_budget(
@@ -250,11 +253,16 @@ class RepeatedMutationStep(SMCStep):
         exactly max_steps. Each round exposes its own executed count.
         Post-round steps run even for zero-budget rounds.
         """
-        self.validate_dynamic_budget_configuration(state, max_steps=max_steps)
+        validate_n_steps(max_steps)
+        if n_steps.shape != () or not namespace(n_steps).isdtype(
+            n_steps.dtype, "integral"
+        ):
+            raise TypeError("n_steps must be a scalar integer array.")
         if not isinstance(self.mutation, DynamicBudgetMutation):
             raise NotImplementedError(
                 "Child must support DynamicBudgetMutation."
             )
+        self._validate_after_round()
         quotient, remainder = n_steps // self.n_rounds, n_steps % self.n_rounds
         max_quotient, max_remainder = divmod(max_steps, self.n_rounds)
         outputs, after_outputs = [], []
@@ -293,10 +301,6 @@ class RepeatedMutationStep(SMCStep):
     def initialize_functional_state_and_context(
         self, state: ParticleState, context: StepContext
     ) -> tuple[ParticleState, StepContext]:
-        if isinstance(self.mutation, DynamicBudgetMutation):
-            self.validate_dynamic_budget_configuration(
-                state, max_steps=self.n_steps
-            )
         state, context = self.mutation.initialize_functional_state_and_context(
             state, context
         )

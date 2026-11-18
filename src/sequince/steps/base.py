@@ -57,7 +57,9 @@ class DynamicBudgetMutation(Protocol):
     ``random_state`` is the backend-native state returned by
     ``orng.RandomGenerator.state()``; for JAX it is a PRNG key array. Functional
     calls accept and return that state, while eager methods accept the ORNG
-    generator object.
+    generator object. Configuration validation accepts an optional ``max_steps``
+    override so enclosing adapters validate the effective history capacity rather
+    than the child's default sweep count.
     """
 
     @property
@@ -72,11 +74,11 @@ class DynamicBudgetMutation(Protocol):
     ) -> tuple[ParticleState, StepContext]: ...
 
     def validate_functional_configuration(
-        self, config: SMCConfig, state: ParticleState
-    ) -> None: ...
-
-    def validate_dynamic_budget_configuration(
-        self, state: ParticleState, *, max_steps: int
+        self,
+        config: SMCConfig,
+        state: ParticleState,
+        *,
+        max_steps: int | None = None,
     ) -> None: ...
 
     def apply_dynamic_budget(
