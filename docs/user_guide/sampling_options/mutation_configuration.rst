@@ -160,8 +160,8 @@ Adaptive mutation kernels
 -------------------------
 
 Adaptation can adjust the mutation budget or proposal parameters between
-iterations using completed diagnostics. The adaptation wrappers support eager
-execution only. Place conditional steps outside them, for example
+iterations using completed diagnostics. Place conditional steps outside the
+adaptation wrappers, for example
 ``MutateIfResampled(mutation_step)``.
 
 Acceptance-based mutation budgets
@@ -183,7 +183,10 @@ of transitions from the previous iteration's acceptance rate. Named
 ``mutation_n_steps`` sets the initial budget and must lie within the bounds.
 The mapping defaults to ``min_steps=0``, ``max_steps=1000``, and
 ``target_accepted_moves=5.0``. Omit it or set ``enabled=False`` to keep a fixed
-budget.
+budget. Acceptance-based budgets require ``max_steps <= 2**24``.
+
+Adaptive DE budgets also support JAX compilation. See
+:doc:`../advanced_workflows/jax_support` for running a compiled sampler.
 
 Each mutation block uses a fixed budget; its acceptance rate determines the
 next block's budget, clipped to the bounds. Accepted moves need not be
@@ -273,153 +276,3 @@ Gaussian proposal scale adaptation
 
 Use :class:`~sequince.steps.mutation.adaptive.proposal.AdaptiveGaussianProposal`
 to update a scale in context metadata for a kernel factory to read.
-
-Functional mutation budget state
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``AdaptMutationSteps`` exposes budget operations independently of mutation
-execution. Call ``initialize_functional_metadata(state, metadata)`` on the host
-before compiling, then ``prepare_budget_functional(context)`` before a complete
-mutation block. It returns a new context and the frozen scalar array budget.
-After the block, call ``update_budget_functional(metrics, context)`` with its
-completed ``MutationMetricsOutput``. Keep the block's iteration in the context
-until this update finishes. The first completed block in an iteration proposes
-the pending budget; subsequent calls in that iteration retain both decisions.
-The pending budget becomes current when preparation sees the next iteration.
-Iterations must increase (repeated iterations are allowed), be nonnegative,
-and fit in int32. A skipped block needs no update.
-
-The immutable, registered pytree ``MutationBudgetState`` lives at
-``context.metadata[adapter.metadata_key]``. Its ``current_iteration``,
-``current_n_steps``, ``next_n_steps``, and ``last_updated_iteration`` are scalar
-int32 arrays. Both budgets initially contain ``initial_steps``; iteration fields
-start at -1. No leaves or metadata keys are added during compiled transitions.
-The default key is ``"mutation_budget"``. Assign a distinct explicit
-``metadata_key`` to each adapter sharing a context, and reuse those keys when
-reconstructing a pipeline. Do not use object identities or creation-order keys.
-Initialization preserves an existing carry, including frozen and pending
-checkpoint decisions. Resume with the same backend, bounds, and policy
-configuration. Functional state is saved through context metadata; the eager
-``state_dict`` and eager budget properties continue to describe eager execution
-only. Independent functional runs may share the same adapter object.
-
-Both APIs use the same complete ``MutationBudgetState`` and lifecycle
-transitions. Eager execution stores host integer fields on the adapter;
-functional execution stores scalar int32 array fields in context metadata.
-Both budget slots initially equal ``initial_steps`` and unset iterations use -1.
-The eager ``current_n_steps`` and ``next_n_steps`` properties therefore return
-the initial budget before preparation, rather than ``None``. Preparation without
-a completed-metrics update retains the frozen budget for the next iteration.
-Host validation and eager-only policy calls stay at the eager boundary;
-functional operations use backend conditionals without Python truth tests on
-array predicates.
-
-Eager ``state_dict()`` now stores the four budget fields under ``"budget"``,
-alongside nested mutation and policy state. This intentionally replaces the
-previous optional-field payload and ``policy_initialised`` flag; older
-``AdaptMutationSteps`` checkpoint payloads are not supported. Reconstruct
-checkpoints produced by this version with matching bounds and policy settings.
-The top-level SMC checkpoint format is unchanged.
-
-``FixedMutationStepPolicy`` and ``AcceptanceRatePolicy`` implement
-``FunctionalMutationStepPolicy``. Custom policies opt in by implementing
-``validate_functional_configuration()``, ``initialise_functional`` and
-``update_functional`` in addition to the eager interface. Functional decisions
-must be pure scalar integer arrays with the input budget's dtype and device.
-The adapter clips decisions to its own bounds. Policies cannot modify themselves,
-the context, or metric inputs; these methods return only a decision, so custom
-mutable policy state has no functional update channel in this interface.
-Backend conditionals execute updates at most once per iteration; JAX may trace
-both branches, so Python side effects are never valid policy operations.
-Existing eager-only policies remain supported by eager execution and raise a
-clear error if functional budget initialization is requested.
-
-Constructor validation remains on the host. ``AcceptanceRatePolicy`` requires
-``max_steps <= 2**24`` for both eager and functional decisions, ensuring bounds
-are exactly representable even in float32. Functional initialization also checks
-policy support and the adapter's ``max_steps <= 2**24`` limit before compilation.
-Functional budgets and iteration counters use int32.
-Acceptance counts must be finite, nonnegative scalar arrays, with accepted
-counts no greater than attempts. Fractional accepted counts are supported.
-Compiled operations check static count shapes but do not raise value-dependent
-validation errors; callers must supply valid counts and prepared contexts.
-
-Eager acceptance updates validate counts, convert them to NumPy float64 arrays,
-and call the same count-based calculation as functional updates, without
-rebuilding the metrics object. Both APIs round the quotient before
-taking its ceiling. This intentionally replaces the previous eager exact-ratio
-calculation: for example, target 1.1 with acceptance 1/10 now proposes 11 instead
-of 12. Backend precision can still affect decisions near integer thresholds;
-very small values may underflow in float32. Positive targets propose at least one
-step before bounds, and zero-attempt blocks retain the current budget or recover
-to one, subject to bounds. Large finite targets are capped before array creation,
-and proposals are bounded before integer conversion. This preserves the minimum
-acceptance safeguard and prevents overflow in budget decisions.
-
-Dynamic-budget differential evolution
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``AdaptMutationSteps.apply_functional(state, context, random_state)`` now
-executes DE and ``RepeatedMutationStep`` blocks containing DE. It returns
-``(state, context, random_state, output)`` and finalizes metrics once at the
-complete block boundary. The existing budget carry freezes the count before
-any proposal; repeated calls within one outer iteration reuse that count and
-only the first completed block supplies the pending decision.
-
-The child capability is ``DynamicBudgetMutation``. Its
-``apply_dynamic_budget(state, context, random_state, *, n_steps, max_steps,
-mutation_state=None)`` returns ``(state, context, random_state, output,
-mutation_state)``. ``random_state`` is the backend-native state returned by
-``orng.RandomGenerator.state()``; for JAX this is a PRNG key array. Functional
-calls accept and return that state, and reconstruct ORNG wrappers internally
-for random draws. Eager methods accept the ORNG generator object directly.
-``n_steps`` is a scalar integer array and ``max_steps`` a
-static host integer. Callers must ensure ``0 <= n_steps <= max_steps``;
-compiled runtime bounds are not checked. The continuing metric state follows
-the existing initialize/prepare/update lifecycle and is not finalized by this
-child interface. Kernel parameters and static capacity must remain fixed for a
-compiled function.
-
-Before compiling, call ``validate_functional_configuration(config, state)``,
-``initialize_functional_metadata(state, metadata)`` and
-``initialize_functional_state_and_context(state, context)`` on the wrapper.
-These hooks forward through repeated blocks and adapters. Initialization may
-fit a transform and populate target caches, recording their evaluation costs.
-This one-time work is separate from executing a zero-budget block, which does
-not fit transforms, draw mutation randomness or evaluate targets. The input
-state and context must already have their full pytree structure, including
-cache, transform and acceptance metadata leaves. Use array scalar context
-counters for a ``lax.scan`` carry from its first iteration.
-
-DE executes exactly ``n_steps`` complete red-blue sweeps with fixed transforms
-within each segment. Dynamic outputs have ``acceptance_by_step`` shape
-``(max_steps,)``, ``acceptance_by_half`` shape ``(max_steps, 2)``, and scalar
-integer ``steps``. When enabled, ``chain`` has shape
-``(max_steps, n_particles, n_dimensions)`` in original coordinates; otherwise it
-is ``None`` and no chain buffer is allocated. Only the leading ``steps`` rows
-are valid. On the host, slice ``history[:int(output["steps"])]``. Inside JIT,
-use a mask such as ``arange(max_steps) < output["steps"]``. All unused rows,
-including chains, are zero. They do not consume randomness or target work,
-update metrics, or affect aggregate acceptance and policy decisions. Eager
-outputs retain their existing variable-length tuples and chain shapes.
-
-Repeated blocks split the total by quotient/remainder, assigning one extra
-step to the first remainder rounds. Round capacities use the same static split
-of ``max_steps`` and sum to exactly ``max_steps``; each round has its own
-``steps`` count. Metric state is shared
-across all rounds, with references refreshed on entry to the next segment and
-frozen metric scaling retained. ``after_round`` runs after every round,
-including zero-step rounds and the final round. It must explicitly implement
-``apply_functional`` and preserve the initialized carry structure; unsupported
-children and post-round configurations are rejected during host validation.
-Existing static functional execution for other mutation children is retained.
-
-DE requires at least four particles. Custom metrics, transforms and post-round
-steps must be pure, JAX-compatible operations with fixed-shape/dtype pytrees.
-Callable transform-refit policies are unsupported. Functional DE scale-weight
-adaptation and MiniPCN integration remain future work.
-
-Acceptance calculation changes can affect budgets near rounding thresholds,
-and therefore subsequent RNG consumption and sample paths. Saved pending budgets remain authoritative on resume; subsequent
-policy updates use the new arithmetic. The target, weighting, and evidence
-formulas are unchanged.
