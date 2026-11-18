@@ -251,9 +251,7 @@ class AdaptMutationSteps(AdaptiveMutationStep):
         )
         metrics = child.metrics.result(metric_state, context)
         output = with_metrics(output, metrics)
-        context = self.update_budget_functional(
-            self._completed_metrics(output), context
-        )
+        context = self.update_budget_functional(metrics, context)
         return state, context, random_state, output
 
     @property
