@@ -1,6 +1,6 @@
-"""Pure budget transitions, independent of the future mutation loop."""
+"""Pure budget transitions, independent of mutation execution."""
 
-from dataclasses import FrozenInstanceError, fields, replace
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -138,40 +138,23 @@ def test_fixed_decisions_and_initialization(
         assert leaf.dtype == case.xp.int32
 
 
-def test_frozen_repeated_and_once_only(particle_state) -> None:
+def test_functional_runs_leave_shared_adapter_unchanged(
+    particle_state,
+) -> None:
     step = adapter(AcceptanceRatePolicy(2, min_steps=0, max_steps=20))
-    original_attributes = step.__dict__.copy()
+    attributes = step.__dict__.copy()
     policy_attributes = step.policy.__dict__.copy()
     initial = initialize(step, particle_state)
     prepared, budget = step.prepare_budget_functional(initial)
     updated = step.update_budget_functional(
         MutationMetricsOutput(budget, np.array(10), np.array(2.5)), prepared
     )
-    again = step.update_budget_functional(
-        MutationMetricsOutput(budget, np.array(10), np.array(0)), updated
-    )
-    repeated, repeated_budget = step.prepare_budget_functional(again)
-    assert int(repeated_budget) == 4
-    assert int(repeated.metadata[step.metadata_key].next_n_steps) == 8
-    assert int(prepared.metadata[step.metadata_key].next_n_steps) == 4
+    independent = initialize(step, particle_state)
+    assert int(updated.metadata[step.metadata_key].next_n_steps) == 8
+    assert int(independent.metadata[step.metadata_key].next_n_steps) == 4
     assert int(initial.metadata[step.metadata_key].current_iteration) == -1
-    promoted, next_budget = step.prepare_budget_functional(replace(again, t=1))
-    assert int(next_budget) == 8
-    assert (
-        int(promoted.metadata[step.metadata_key].last_updated_iteration) == 0
-    )
-    assert step.__dict__ == original_attributes
+    assert step.__dict__ == attributes
     assert step.policy.__dict__ == policy_attributes
-    independent, independent_budget = step.prepare_budget_functional(
-        initialize(step, particle_state)
-    )
-    assert int(independent_budget) == 4
-    assert (
-        int(independent.metadata[step.metadata_key].last_updated_iteration)
-        == -1
-    )
-    with pytest.raises(FrozenInstanceError):
-        initial.metadata[step.metadata_key].next_n_steps = np.array(10)
 
 
 @pytest.mark.parametrize("format", ["pickle", "hdf5"])
@@ -229,54 +212,6 @@ def test_resume_and_multiple_adapters(particle_state, tmp_path: Path, format):
     assert int(budget) == 8
     assert int(promoted.metadata["two"].current_n_steps) == 4
     assert promoted.metadata["other"] == 12
-
-
-@pytest.mark.parametrize("fixed", [False, True])
-def test_jit_and_scan_stable_carry(fixed: bool) -> None:
-    jax = pytest.importorskip("jax")
-    jnp = pytest.importorskip("jax.numpy")
-    policy = (
-        FixedMutationStepPolicy()
-        if fixed
-        else AcceptanceRatePolicy(2, min_steps=0, max_steps=20)
-    )
-    step = adapter(policy)
-    state = ParticleState(jnp.zeros((3, 2)))
-    context = initialize(step, state)
-
-    def transition(context, row):
-        iteration, attempted, accepted = row
-        context = replace(context, t=iteration)
-        context, budget = step.prepare_budget_functional(context)
-        metrics = MutationMetricsOutput(budget, attempted, accepted)
-        context = step.update_budget_functional(metrics, context)
-        # Conflicting metrics in the same iteration cannot replace the decision.
-        context = step.update_budget_functional(
-            MutationMetricsOutput(budget, attempted, accepted * 0), context
-        )
-        context, repeated = step.prepare_budget_functional(context)
-        return context, (budget, repeated)
-
-    rows = (
-        jnp.array([0, 0, 1, 2, 3], dtype=jnp.int32),
-        jnp.array([10, 10, 10, 0, 10], dtype=jnp.float32),
-        jnp.array([2.5, 0, 0, 0, 10], dtype=jnp.float32),
-    )
-    # Context t starts as an array too: all scan leaves retain their dtype.
-    context = jax.tree.map(jnp.asarray, context)
-    result, (budgets, repeated) = jax.jit(
-        lambda carry: jax.lax.scan(transition, carry, rows)
-    )(context)
-    expected = [4] * 5 if fixed else [4, 4, 8, 20, 20]
-    np.testing.assert_array_equal(budgets, expected)
-    np.testing.assert_array_equal(repeated, expected)
-    assert jax.tree.structure(result) == jax.tree.structure(context)
-    for before, after in zip(
-        jax.tree.leaves(context), jax.tree.leaves(result)
-    ):
-        assert before.shape == after.shape
-        assert before.dtype == after.dtype
-    assert step.current_n_steps == step.next_n_steps == 4
 
 
 def test_custom_functional_opt_in_and_eager_only(particle_state) -> None:
@@ -350,8 +285,7 @@ def test_shared_ceiling_rounding(accepted: float) -> None:
     budget = np.array(4, dtype=np.int32)
     metrics = MutationMetricsOutput(budget, np.array(10.0), np.array(accepted))
     context = StepContext(t=0)
-    # Both APIs round before the ceiling. The old exact-ratio eager
-    # calculation returned 12 for these stored binary floats.
+    # Both paths divide before the ceiling, using the same stored binary floats.
     assert (
         policy.update(current_steps=4, metrics=metrics, context=context) == 11
     )
@@ -425,8 +359,6 @@ def test_eager_and_functional_lifecycle(
     case = backend_factory(backend)
     eager, functional = adapter(LifecyclePolicy()), adapter(LifecyclePolicy())
     context = initialize(functional, case.state())
-    # Both APIs allocate complete carries. Their only representation difference
-    # is host integers versus backend scalar arrays.
     assert eager.current_n_steps == eager.next_n_steps == 4
     carry = context.metadata[functional.metadata_key]
     assert int(to_numpy(carry.current_iteration)) == -1

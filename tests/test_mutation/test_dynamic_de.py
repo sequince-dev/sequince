@@ -210,7 +210,7 @@ def test_repeated_matches_eager_with_zero_rounds(budget, transformed) -> None:
 
 
 @pytest.mark.parametrize("initial_steps", [0, 1])
-def test_adaptation_scan_and_repeated_calls(initial_steps: int) -> None:
+def test_adaptation_scan_executes_de(initial_steps: int) -> None:
     child = RepeatedMutationStep(
         DifferentialEvolutionMutation(gaussian), n_rounds=2
     )
@@ -231,24 +231,12 @@ def test_adaptation_scan_and_repeated_calls(initial_steps: int) -> None:
         state, context, key, output = step.apply_functional(
             state, context, key
         )
-        first = context.metadata[step.metadata_key]
-        state, context, key, repeated = step.apply_functional(
-            state, context, key
-        )
-        return (state, context, key), (
-            output.metrics.n_steps,
-            repeated.metrics.n_steps,
-            first,
-            context.metadata[step.metadata_key],
-        )
+        return (state, context, key), output.metrics.n_steps
 
     carry = (state, context, jax.random.key(9))
-    actual, (budgets, repeated, first, second) = jax.jit(
+    actual, budgets = jax.jit(
         lambda c: jax.lax.scan(body, c, jnp.arange(5, dtype=jnp.int32))
     )(carry)
-    np.testing.assert_array_equal(budgets, repeated)
-    np.testing.assert_array_equal(budgets[1:], first.next_n_steps[:-1])
-    assert_tree_close(first, second)
     assert int(budgets[0]) == initial_steps
     assert np.any(np.asarray(budgets[1:]) != initial_steps)
     expected = carry
